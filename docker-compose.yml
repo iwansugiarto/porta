@@ -1,0 +1,28 @@
+version: "3.8"
+
+services:
+  porta:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: porta
+    restart: unless-stopped
+    ports:
+      - "${PORTA_PORT:-3170}:3170"
+    environment:
+      - PORTA_PORT=3170
+      - PORTA_HOST=0.0.0.0
+      # Authentication (uncomment and set)
+      # - PORTA_AUTH_TOKEN=your-secret-token-here
+      # - PORTA_AUTH_USER=admin
+      # - PORTA_AUTH_PASSWORD=your-password-here
+      # - PORTA_SESSION_TTL=24
+      # - PORTA_RATE_LIMIT=100
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3170/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

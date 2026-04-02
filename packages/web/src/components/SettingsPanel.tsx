@@ -1,16 +1,7 @@
-/**
- * Settings panel — global client configuration.
- *
- * Currently supports:
- *   - Default model selection
- *   - Default planner type (Fast / Plan)
- *
- * Settings are stored client-side in localStorage.
- */
-
 import { useState, useEffect, useCallback } from "react";
 import { IconChevronLeft, IconCheck } from "./Icons";
 import { api } from "../api/client";
+import { usePwaInstall } from "../hooks/usePwaInstall";
 import type { ClientSettings } from "../types";
 import type { PlannerType } from "./ChatInput";
 
@@ -36,6 +27,25 @@ interface ModelConfig {
   quotaInfo?: { remainingFraction: number };
 }
 
+interface HealthData {
+  status: string;
+  proxy: { port: number; uptime: number };
+  languageServers: {
+    pid: number;
+    httpsPort: number;
+    workspaceId?: string;
+    source: string;
+  }[];
+}
+
+function formatUptime(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m`;
+  return `${Math.floor(seconds)}s`;
+}
+
 interface Props {
   settings: ClientSettings;
   onUpdate: (patch: Partial<ClientSettings>) => void;
@@ -46,6 +56,8 @@ export function SettingsPanel({ settings, onUpdate, onBack }: Props) {
   const [models, setModels] = useState<ModelConfig[]>([]);
   const [fetchError, setFetchError] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
+  const { canInstall, isInstalled, promptInstall } = usePwaInstall();
+  const [health, setHealth] = useState<HealthData | null>(null);
 
   const fetchModels = useCallback(async (retries = 3) => {
     for (let i = 0; i < retries; i++) {
@@ -65,6 +77,7 @@ export function SettingsPanel({ settings, onUpdate, onBack }: Props) {
 
   useEffect(() => {
     fetchModels();
+    api.health().then(setHealth).catch(() => {});
   }, [fetchModels]);
 
   const flashSaved = useCallback(() => {
@@ -217,6 +230,79 @@ export function SettingsPanel({ settings, onUpdate, onBack }: Props) {
             </div>
           </div>
         </div>
+
+        {/* ── System Status ── */}
+        {health && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">System Status</h2>
+            <div className="settings-shortcuts">
+              <div className="shortcut-row">
+                <span className="shortcut-desc">Proxy</span>
+                <span style={{ color: health.status === "ok" ? "rgb(var(--c-success))" : "var(--status-error)", fontSize: 13, fontWeight: 500 }}>
+                  {health.status === "ok" ? "● Running" : "● Error"}
+                </span>
+              </div>
+              <div className="shortcut-row">
+                <span className="shortcut-desc">Port</span>
+                <span style={{ fontSize: 13, color: "var(--text-primary)", fontFamily: "var(--font-mono)" }}>
+                  {health.proxy.port}
+                </span>
+              </div>
+              <div className="shortcut-row">
+                <span className="shortcut-desc">Uptime</span>
+                <span style={{ fontSize: 13, color: "var(--text-primary)" }}>
+                  {formatUptime(health.proxy.uptime)}
+                </span>
+              </div>
+              <div className="shortcut-row">
+                <span className="shortcut-desc">Language Servers</span>
+                <span style={{ fontSize: 13, color: health.languageServers.length > 0 ? "rgb(var(--c-success))" : "var(--text-tertiary)", fontWeight: 500 }}>
+                  {health.languageServers.length > 0
+                    ? `${health.languageServers.length} connected`
+                    : "None detected"}
+                </span>
+              </div>
+              {health.languageServers.map((ls, i) => (
+                <div key={i} className="shortcut-row" style={{ paddingLeft: 32 }}>
+                  <span className="shortcut-desc" style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
+                    PID {ls.pid} · :{ls.httpsPort}
+                  </span>
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                    {ls.source}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Install App ── */}
+        {(canInstall || isInstalled) && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">App</h2>
+            <div className="settings-row">
+              <div className="settings-row-info">
+                <span className="settings-row-label">
+                  {isInstalled ? "Installed" : "Install Porta"}
+                </span>
+                <span className="settings-row-desc">
+                  {isInstalled
+                    ? "Porta is installed as an app on this device."
+                    : "Install Porta as a standalone app for quick access."}
+                </span>
+              </div>
+              {canInstall && (
+                <button
+                  className="settings-select"
+                  style={{ cursor: "pointer", textAlign: "center", minWidth: 100 }}
+                  onClick={() => promptInstall()}
+                >
+                  Install
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* ── Reset ── */}
         <button className="settings-reset-btn" onClick={handleReset}>

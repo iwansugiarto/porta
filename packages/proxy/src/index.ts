@@ -46,6 +46,7 @@ import {
   getClientIp,
 } from "./rate-limit.js";
 import { requestLogger } from "./request-logger.js";
+import { compressionMiddleware } from "./compression.js";
 
 const PORT = parseInt(process.env.PORTA_PORT ?? "3170", 10);
 const HOST = resolveProxyHost();
@@ -72,7 +73,10 @@ app.use(
   }),
 );
 
-// 2. Request logging
+// 2. Response compression (gzip/deflate for responses > 1KB)
+app.use("/api/*", compressionMiddleware());
+
+// 3. Request logging
 app.use("/api/*", requestLogger());
 
 // 3. Rate limiting
