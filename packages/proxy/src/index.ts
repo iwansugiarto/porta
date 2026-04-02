@@ -23,6 +23,26 @@ import {
 } from "./exposure.js";
 import { getAllowedOrigins, resolveCorsOrigin } from "./origins.js";
 import { setupWebSocket } from "./ws.js";
+import {
+  resolveAuthConfig,
+  authMiddleware,
+  isAuthRequired,
+  logAuthStatus,
+  extractBearerToken,
+  validateToken,
+  getAuthMethods,
+  validateCredentials,
+  generateSessionToken,
+  addSession,
+  isValidSession,
+} from "./auth.js";
+import {
+  RateLimiter,
+  resolveRateLimitConfig,
+  rateLimitMiddleware,
+  getClientIp,
+} from "./rate-limit.js";
+import { requestLogger } from "./request-logger.js";
 
 const PORT = parseInt(process.env.PORTA_PORT ?? "3170", 10);
 const HOST = resolveProxyHost();
@@ -31,8 +51,15 @@ assertSupportedListenHost(HOST, process.env);
 
 const app = new Hono();
 
-// ── Middleware ──
+// ── Auth & Rate Limit Config ──
 
+const authConfig = resolveAuthConfig();
+const rateLimitConfig = resolveRateLimitConfig();
+const rateLimiter = new RateLimiter(rateLimitConfig);
+
+// ── Middleware (order matters) ──
+
+// 1. CORS
 const ALLOWED_ORIGINS = getAllowedOrigins();
 
 app.use(
@@ -41,6 +68,91 @@ app.use(
     origin: (origin) => resolveCorsOrigin(origin, ALLOWED_ORIGINS),
   }),
 );
+
+// 2. Request logging
+app.use("/api/*", requestLogger());
+
+// 3. Rate limiting
+app.use("/api/*", rateLimitMiddleware(rateLimiter));
+
+// 4. Authentication
+app.use("/api/*", authMiddleware(authConfig));
+
+// Track auth failures for lockout
+app.use("/api/*", async (c, next) => {
+  await next();
+  const ip = getClientIp(c);
+  if (c.res.status === 401) {
+    rateLimiter.recordAuthFailure(ip);
+  } else if (c.res.status === 200 || c.res.status === 201) {
+    rateLimiter.clearAuthFailures(ip);
+  }
+});
+
+// ── Auth Endpoints ──
+// These are publicly accessible (bypassed by auth middleware via publicPaths).
+
+// Check auth status and available methods
+app.get("/api/auth/check", (c) => {
+  const required = isAuthRequired(authConfig);
+  const methods = getAuthMethods(authConfig);
+
+  if (!required) {
+    return c.json({ authRequired: false, authenticated: true, methods });
+  }
+
+  // Check if the provided token is valid (static token or session token)
+  const token = extractBearerToken(c.req.header("Authorization"));
+  let authenticated = false;
+  if (token) {
+    if (authConfig.token && validateToken(token, authConfig.token)) {
+      authenticated = true;
+    } else if (isValidSession(token)) {
+      authenticated = true;
+    }
+  }
+
+  return c.json({ authRequired: true, authenticated, methods });
+});
+
+// Username/password login → returns a session token
+app.post("/api/auth/login", async (c) => {
+  const methods = getAuthMethods(authConfig);
+  if (!methods.password) {
+    return c.json(
+      { error: "Password authentication is not configured" },
+      400,
+    );
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const { username, password } = body as {
+    username?: string;
+    password?: string;
+  };
+
+  if (!username || !password) {
+    return c.json(
+      { error: "Username and password are required" },
+      400,
+    );
+  }
+
+  if (!validateCredentials(username, password, authConfig)) {
+    return c.json(
+      { error: "Invalid username or password" },
+      401,
+    );
+  }
+
+  // Generate and store session token
+  const sessionToken = generateSessionToken();
+  addSession(sessionToken);
+
+  console.log(`🔑 User "${username}" logged in successfully`);
+
+  return c.json({ token: sessionToken });
+});
 
 // ── Health ──
 
@@ -71,11 +183,12 @@ registerRpcPassthroughRoutes(app);
 
 const listenAddress = formatListenAddress(HOST, PORT);
 
+logAuthStatus(authConfig);
 console.log(`🚀 Porta proxy starting on ${listenAddress}`);
 
 const server = createAdaptorServer({ fetch: app.fetch, port: PORT });
 
-setupWebSocket(server, PORT, ALLOWED_ORIGINS);
+setupWebSocket(server, PORT, ALLOWED_ORIGINS, authConfig.token);
 
 void discovery
   .getInstances()

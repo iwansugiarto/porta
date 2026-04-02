@@ -13,6 +13,7 @@ import { ChatPanel } from "./components/ChatPanel";
 import { ChatInput } from "./components/ChatInput";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { WorkspaceSelector } from "./components/WorkspaceSelector";
+import { LoginPage } from "./components/LoginPage";
 import { IconFolder } from "./components/Icons";
 import { useConversations } from "./hooks/useConversations";
 import { usePolling } from "./hooks/usePolling";
@@ -20,12 +21,110 @@ import { useWorkspaces, slugFromUri } from "./hooks/useWorkspaces";
 import { useDraftText } from "./hooks/useDraftText";
 import { useChatActions } from "./hooks/useChatActions";
 import { useClientSettings } from "./hooks/useClientSettings";
-import { api } from "./api/client";
+import { api, getAuthToken, clearAuthToken } from "./api/client";
 import { isUnconfirmedOptimisticMessage } from "./utils/optimisticMessages";
 import type { HealthResponse, MediaAttachment } from "./types";
 import type { PlannerType } from "./components/ChatInput";
 
+// ── Auth State ──
+
+type AuthState = "loading" | "login" | "authenticated";
+type AuthMethods = { token: boolean; password: boolean };
+
+function useAuthGate(): {
+  authState: AuthState;
+  authMethods: AuthMethods | undefined;
+  onAuthenticated: () => void;
+} {
+  const [authState, setAuthState] = useState<AuthState>("loading");
+  const [authMethods, setAuthMethods] = useState<AuthMethods | undefined>();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const checkAuth = async () => {
+      try {
+        const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+        const token = getAuthToken();
+        const headers: Record<string, string> = {};
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+
+        const res = await fetch(`${API_BASE}/api/auth/check`, { headers });
+        if (cancelled) return;
+
+        if (!res.ok) {
+          setAuthState("login");
+          return;
+        }
+
+        const data = await res.json();
+        if (cancelled) return;
+
+        // Store available auth methods
+        if (data.methods) setAuthMethods(data.methods);
+
+        if (!data.authRequired) {
+          setAuthState("authenticated");
+        } else if (data.authenticated) {
+          setAuthState("authenticated");
+        } else {
+          clearAuthToken();
+          setAuthState("login");
+        }
+      } catch {
+        if (!cancelled) setAuthState("authenticated");
+      }
+    };
+
+    checkAuth();
+
+    const handleAuthRequired = () => {
+      clearAuthToken();
+      setAuthState("login");
+    };
+    window.addEventListener("porta:auth-required", handleAuthRequired);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("porta:auth-required", handleAuthRequired);
+    };
+  }, []);
+
+  const onAuthenticated = useCallback(() => {
+    setAuthState("authenticated");
+  }, []);
+
+  return { authState, authMethods, onAuthenticated };
+}
+
 export default function App() {
+  const { authState, authMethods, onAuthenticated } = useAuthGate();
+
+  if (authState === "loading") {
+    return (
+      <div className="login-page">
+        <div className="login-card" style={{ textAlign: "center", padding: "48px 32px" }}>
+          <div className="login-logo">
+            <div className="login-logo-icon">
+              <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zM12 17c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"
+                  fill="white"
+                />
+              </svg>
+            </div>
+            <div className="login-title">Porta</div>
+            <div className="login-subtitle">Connecting…</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (authState === "login") {
+    return <LoginPage onAuthenticated={onAuthenticated} methods={authMethods} />;
+  }
+
   return (
     <Routes>
       <Route path="/" element={<RootRedirect />} />

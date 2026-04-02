@@ -24,6 +24,7 @@ import type { Duplex } from "node:stream";
 import { rpcForConversation, getStepCount } from "./routing.js";
 import { messageTracker } from "./message-tracker.js";
 import { getAllowedOrigins, isAllowedOrigin, type AllowedOrigin } from "./origins.js";
+import { validateWebSocketToken } from "./auth.js";
 import {
   oversizedStepOffset,
   isRecoverableStepError,
@@ -77,7 +78,7 @@ type PollState = "idle" | "active";
 
 type UpgradeValidationResult =
   | { ok: true; cascadeId: string }
-  | { ok: false; code: "not_found" | "forbidden_origin" };
+  | { ok: false; code: "not_found" | "forbidden_origin" | "unauthorized" };
 
 function unrefTimer(
   timer: ReturnType<typeof setTimeout> | ReturnType<typeof setInterval>,
@@ -145,6 +146,8 @@ export function validateWebSocketUpgrade(
   origin: string | undefined,
   port: number,
   allowedOrigins: AllowedOrigin[] = getAllowedOrigins(),
+  authHeader?: string | undefined,
+  authToken?: string | undefined,
 ): UpgradeValidationResult {
   const url = new URL(reqUrl ?? "", `http://localhost:${port}`);
   const match = url.pathname.match(/^\/api\/conversations\/([^/]+)\/ws$/);
@@ -154,6 +157,11 @@ export function validateWebSocketUpgrade(
   if (!isWebSocketOriginAllowed(origin, allowedOrigins)) {
     return { ok: false, code: "forbidden_origin" };
   }
+  // Validate auth token (query param or Authorization header)
+  const queryToken = url.searchParams.get("token") ?? undefined;
+  if (!validateWebSocketToken(queryToken, authHeader, authToken)) {
+    return { ok: false, code: "unauthorized" };
+  }
   return { ok: true, cascadeId: match[1] };
 }
 
@@ -161,6 +169,7 @@ export function setupWebSocket(
   server: { on: Function },
   port: number,
   allowedOrigins: AllowedOrigin[] = getAllowedOrigins(),
+  authToken?: string | undefined,
 ): void {
   const wss = new WebSocketServer({ noServer: true });
 
@@ -170,10 +179,14 @@ export function setupWebSocket(
       req.headers.origin,
       port,
       allowedOrigins,
+      req.headers.authorization,
+      authToken,
     );
 
     if (!upgrade.ok) {
-      if (upgrade.code === "forbidden_origin") {
+      if (upgrade.code === "unauthorized") {
+        socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+      } else if (upgrade.code === "forbidden_origin") {
         socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
       } else {
         socket.destroy();

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../api/client";
+import { api, getAuthToken } from "../api/client";
 import type { TrajectoryStep } from "../types";
 import { useAppResume } from "./useAppResume";
 
@@ -142,6 +142,12 @@ export function useStepsStream(
       } else {
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         url = `${protocol}//${window.location.host}/api/conversations/${cascadeId}/ws`;
+      }
+      // Append auth token for WebSocket authentication
+      const authToken = getAuthToken();
+      if (authToken) {
+        const sep = url.includes("?") ? "&" : "?";
+        url = `${url}${sep}token=${encodeURIComponent(authToken)}`;
       }
       const gen = genRef.current;
 

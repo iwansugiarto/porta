@@ -1,5 +1,35 @@
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
+// ── Auth token management ──
+
+const AUTH_TOKEN_KEY = "porta_auth_token";
+
+export function getAuthToken(): string | null {
+  try {
+    return localStorage.getItem(AUTH_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setAuthToken(token: string): void {
+  try {
+    localStorage.setItem(AUTH_TOKEN_KEY, token);
+  } catch {
+    // localStorage not available
+  }
+}
+
+export function clearAuthToken(): void {
+  try {
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+  } catch {
+    // localStorage not available
+  }
+}
+
+// ── API client ──
+
 function previewBody(text: string): string {
   const singleLine = text.replace(/\s+/g, " ").trim();
   if (singleLine.length <= 120) return singleLine;
@@ -12,10 +42,22 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     ...((options.headers as Record<string, string>) ?? {}),
   };
 
+  // Attach auth token if available
+  const token = getAuthToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers,
   });
+
+  if (res.status === 401) {
+    // Dispatch a global event so the app can redirect to login
+    window.dispatchEvent(new CustomEvent("porta:auth-required"));
+    throw new Error("Authentication required");
+  }
 
   if (!res.ok) {
     const body = await res.text();
@@ -41,6 +83,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export const api = {
   health: () => request<import("../types").HealthResponse>("/api/health"),
+
+  /** Check if auth is required and if current token is valid. */
+  authCheck: () =>
+    request<{ authRequired: boolean; authenticated: boolean }>(
+      "/api/auth/check",
+    ),
 
   conversations: () =>
     request<import("../types").ConversationsResponse>("/api/conversations"),
