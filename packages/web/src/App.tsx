@@ -14,6 +14,7 @@ import { ChatInput } from "./components/ChatInput";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { WorkspaceSelector } from "./components/WorkspaceSelector";
 import { LoginPage } from "./components/LoginPage";
+import { ConnectionBanner } from "./components/ConnectionBanner";
 import { IconFolder } from "./components/Icons";
 import { useConversations } from "./hooks/useConversations";
 import { usePolling } from "./hooks/usePolling";
@@ -21,6 +22,7 @@ import { useWorkspaces, slugFromUri } from "./hooks/useWorkspaces";
 import { useDraftText } from "./hooks/useDraftText";
 import { useChatActions } from "./hooks/useChatActions";
 import { useClientSettings } from "./hooks/useClientSettings";
+import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { api, getAuthToken, clearAuthToken } from "./api/client";
 import { isUnconfirmedOptimisticMessage } from "./utils/optimisticMessages";
 import type { HealthResponse, MediaAttachment } from "./types";
@@ -132,12 +134,15 @@ export default function App() {
   }
 
   return (
-    <Routes>
-      <Route path="/" element={<RootRedirect />} />
-      <Route path="/:projectSlug/settings" element={<ChatView onLogout={onLogout} />} />
-      <Route path="/:projectSlug" element={<ChatView onLogout={onLogout} />} />
-      <Route path="/:projectSlug/:chatId" element={<ChatView onLogout={onLogout} />} />
-    </Routes>
+    <>
+      <ConnectionBanner />
+      <Routes>
+        <Route path="/" element={<RootRedirect />} />
+        <Route path="/:projectSlug/settings" element={<ChatView onLogout={onLogout} />} />
+        <Route path="/:projectSlug" element={<ChatView onLogout={onLogout} />} />
+        <Route path="/:projectSlug/:chatId" element={<ChatView onLogout={onLogout} />} />
+      </Routes>
+    </>
   );
 }
 
@@ -302,6 +307,18 @@ function ChatView({ onLogout }: { onLogout?: () => void }) {
     setOptimisticMessages([]);
     if (isMobile()) setSidebarOpen(false);
   }, [navigate, projectSlug, setOptimisticMessages]);
+
+  // Global keyboard shortcuts
+  useKeyboardShortcuts({
+    onSearch: useCallback(() => {
+      // Dispatch custom event that Sidebar listens for
+      window.dispatchEvent(new CustomEvent("porta:open-search"));
+    }, []),
+    onNewChat: handleNew,
+    onEscape: useCallback(() => {
+      if (isMobile()) setSidebarOpen(false);
+    }, []),
+  });
 
   // Header info
   const headerTitle = activeId

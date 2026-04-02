@@ -10,6 +10,7 @@ import {
   IconGear,
 } from "./Icons";
 import { api } from "../api/client";
+import { exportConversation } from "../utils/exportConversation";
 
 interface Props {
   conversations: ConversationEntry[];
@@ -61,9 +62,13 @@ function isArchived(conv: ConversationEntry): boolean {
 /** Three-dot context menu */
 function ContextMenu({
   onDelete,
+  onExportMarkdown,
+  onExportJson,
   onClose,
 }: {
   onDelete: () => void;
+  onExportMarkdown: () => void;
+  onExportJson: () => void;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -80,6 +85,26 @@ function ContextMenu({
 
   return (
     <div ref={ref} className="context-menu">
+      <button
+        className="context-menu-item"
+        onClick={(e) => {
+          e.stopPropagation();
+          onExportMarkdown();
+          onClose();
+        }}
+      >
+        Export as Markdown
+      </button>
+      <button
+        className="context-menu-item"
+        onClick={(e) => {
+          e.stopPropagation();
+          onExportJson();
+          onClose();
+        }}
+      >
+        Export as JSON
+      </button>
       <button
         className="context-menu-item danger"
         onClick={(e) => {
@@ -133,6 +158,16 @@ export function Sidebar({
   const [searching, setSearching] = useState(false);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Listen for external search trigger (Cmd+K)
+  useEffect(() => {
+    const openSearch = () => {
+      setSearchOpen(true);
+      setTimeout(() => searchInputRef.current?.focus(), 50);
+    };
+    window.addEventListener("porta:open-search", openSearch);
+    return () => window.removeEventListener("porta:open-search", openSearch);
+  }, []);
 
   const closeMenu = useCallback(() => setMenuOpen(null), []);
 
@@ -338,6 +373,20 @@ export function Sidebar({
           {menuOpen === conv.id && (
             <ContextMenu
               onDelete={() => onDelete(conv.id)}
+              onExportMarkdown={() =>
+                exportConversation(
+                  conv.id,
+                  conv.summary.summary || "conversation",
+                  "markdown",
+                )
+              }
+              onExportJson={() =>
+                exportConversation(
+                  conv.id,
+                  conv.summary.summary || "conversation",
+                  "json",
+                )
+              }
               onClose={closeMenu}
             />
           )}

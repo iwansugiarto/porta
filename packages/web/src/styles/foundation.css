@@ -54,6 +54,43 @@
   /* ── Transitions ── */
   --transition-fast: 120ms ease;
   --transition-normal: 200ms ease;
+
+  /* ── Aliases (used by components.css) ── */
+  --accent-primary: var(--accent);
+  --border-primary: var(--border-default);
+  --status-error: #ef5350;
+}
+
+/* ── Light Theme ── */
+
+[data-theme="light"] {
+  --c-accent: 66 99 235;
+  --c-lift: 0 0 0;
+
+  --bg-primary: #f5f6fa;
+  --bg-secondary: #ebedf5;
+  --bg-tertiary: #e0e3ee;
+  --bg-surface: #ffffff;
+  --bg-hover: #dde0eb;
+  --bg-active: #d0d4e3;
+
+  --border-subtle: #d0d4e3;
+  --border-default: #bcc1d4;
+  --border-primary: var(--border-default);
+
+  --text-primary: #1a1d2b;
+  --text-secondary: #5b6178;
+  --text-tertiary: #8890a5;
+  --text-accent: #4263eb;
+  --text-on-solid: #ffffff;
+
+  --accent: rgb(var(--c-accent));
+  --accent-hover: #5c85f5;
+  --accent-primary: var(--accent);
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.16);
 }
 
 /* ── Reset ── */

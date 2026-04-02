@@ -14,6 +14,20 @@ import { api } from "../api/client";
 import type { ClientSettings } from "../types";
 import type { PlannerType } from "./ChatInput";
 
+/** Apply a theme by toggling a data attribute on the root element. */
+export function applyTheme(theme: string) {
+  const root = document.documentElement;
+  if (theme === "system") {
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    root.setAttribute("data-theme", prefersDark ? "dark" : "light");
+  } else {
+    root.setAttribute("data-theme", theme);
+  }
+}
+
+// Apply the saved theme on import
+applyTheme(localStorage.getItem("porta:theme") ?? "dark");
+
 interface ModelConfig {
   label: string;
   modelOrAlias: { model: string };
@@ -148,6 +162,59 @@ export function SettingsPanel({ settings, onUpdate, onBack }: Props) {
               <option value="conversational">Fast</option>
               <option value="planning">Plan</option>
             </select>
+          </div>
+        </div>
+
+        {/* ── Appearance ── */}
+        <div className="settings-section">
+          <h2 className="settings-section-title">Appearance</h2>
+          <div className="settings-row">
+            <div className="settings-row-info">
+              <span className="settings-row-label">Theme</span>
+              <span className="settings-row-desc">
+                Choose between dark and light mode, or follow your system
+                preference.
+              </span>
+            </div>
+            <select
+              className="settings-select"
+              value={localStorage.getItem("porta:theme") ?? "dark"}
+              onChange={(e) => {
+                const theme = e.target.value;
+                localStorage.setItem("porta:theme", theme);
+                applyTheme(theme);
+                flashSaved();
+              }}
+            >
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+              <option value="system">System</option>
+            </select>
+          </div>
+        </div>
+
+        {/* ── Keyboard Shortcuts ── */}
+        <div className="settings-section">
+          <h2 className="settings-section-title">Keyboard Shortcuts</h2>
+          <div className="settings-shortcuts">
+            <div className="shortcut-row">
+              <span className="shortcut-keys">
+                <kbd>⌘</kbd><kbd>K</kbd>
+              </span>
+              <span className="shortcut-desc">Search conversations</span>
+            </div>
+            <div className="shortcut-row">
+              <span className="shortcut-keys">
+                <kbd>⌘</kbd><kbd>N</kbd>
+              </span>
+              <span className="shortcut-desc">New chat</span>
+            </div>
+            <div className="shortcut-row">
+              <span className="shortcut-keys">
+                <kbd>Esc</kbd>
+              </span>
+              <span className="shortcut-desc">Close modal / sidebar</span>
+            </div>
           </div>
         </div>
 
