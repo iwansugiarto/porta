@@ -26,6 +26,7 @@ import { setupWebSocket } from "./ws.js";
 import {
   resolveAuthConfig,
   authMiddleware,
+  csrfProtection,
   isAuthRequired,
   logAuthStatus,
   extractBearerToken,
@@ -34,7 +35,9 @@ import {
   validateCredentials,
   generateSessionToken,
   addSession,
+  removeSession,
   isValidSession,
+  startSessionCleanup,
 } from "./auth.js";
 import {
   RateLimiter,
@@ -75,7 +78,10 @@ app.use("/api/*", requestLogger());
 // 3. Rate limiting
 app.use("/api/*", rateLimitMiddleware(rateLimiter));
 
-// 4. Authentication
+// 4. CSRF protection (mutating requests need X-Porta-Request header)
+app.use("/api/*", csrfProtection());
+
+// 5. Authentication
 app.use("/api/*", authMiddleware(authConfig));
 
 // Track auth failures for lockout
@@ -107,7 +113,7 @@ app.get("/api/auth/check", (c) => {
   if (token) {
     if (authConfig.token && validateToken(token, authConfig.token)) {
       authenticated = true;
-    } else if (isValidSession(token)) {
+    } else if (isValidSession(token, authConfig.sessionTtlMs)) {
       authenticated = true;
     }
   }
@@ -147,11 +153,22 @@ app.post("/api/auth/login", async (c) => {
 
   // Generate and store session token
   const sessionToken = generateSessionToken();
-  addSession(sessionToken);
+  addSession(sessionToken, authConfig.sessionTtlMs);
 
-  console.log(`🔑 User "${username}" logged in successfully`);
+  const ttlHours = Math.round(authConfig.sessionTtlMs / 3_600_000);
+  console.log(`🔑 User "${username}" logged in (session expires in ${ttlHours}h)`);
 
   return c.json({ token: sessionToken });
+});
+
+// Logout — invalidates the current session token
+app.post("/api/auth/logout", (c) => {
+  const token = extractBearerToken(c.req.header("Authorization"));
+  if (token) {
+    removeSession(token);
+    console.log("🔓 Session ended (logout)");
+  }
+  return c.json({ ok: true });
 });
 
 // ── Health ──
@@ -184,6 +201,7 @@ registerRpcPassthroughRoutes(app);
 const listenAddress = formatListenAddress(HOST, PORT);
 
 logAuthStatus(authConfig);
+startSessionCleanup(authConfig.sessionTtlMs);
 console.log(`🚀 Porta proxy starting on ${listenAddress}`);
 
 const server = createAdaptorServer({ fetch: app.fetch, port: PORT });

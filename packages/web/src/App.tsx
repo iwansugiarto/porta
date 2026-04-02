@@ -35,6 +35,7 @@ function useAuthGate(): {
   authState: AuthState;
   authMethods: AuthMethods | undefined;
   onAuthenticated: () => void;
+  onLogout: () => Promise<void>;
 } {
   const [authState, setAuthState] = useState<AuthState>("loading");
   const [authMethods, setAuthMethods] = useState<AuthMethods | undefined>();
@@ -94,11 +95,16 @@ function useAuthGate(): {
     setAuthState("authenticated");
   }, []);
 
-  return { authState, authMethods, onAuthenticated };
+  const onLogout = useCallback(async () => {
+    await api.logout();
+    setAuthState("login");
+  }, []);
+
+  return { authState, authMethods, onAuthenticated, onLogout };
 }
 
 export default function App() {
-  const { authState, authMethods, onAuthenticated } = useAuthGate();
+  const { authState, authMethods, onAuthenticated, onLogout } = useAuthGate();
 
   if (authState === "loading") {
     return (
@@ -128,9 +134,9 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<RootRedirect />} />
-      <Route path="/:projectSlug/settings" element={<ChatView />} />
-      <Route path="/:projectSlug" element={<ChatView />} />
-      <Route path="/:projectSlug/:chatId" element={<ChatView />} />
+      <Route path="/:projectSlug/settings" element={<ChatView onLogout={onLogout} />} />
+      <Route path="/:projectSlug" element={<ChatView onLogout={onLogout} />} />
+      <Route path="/:projectSlug/:chatId" element={<ChatView onLogout={onLogout} />} />
     </Routes>
   );
 }
@@ -164,7 +170,7 @@ function RootRedirect() {
 
 // ── Main Chat View ──
 
-function ChatView() {
+function ChatView({ onLogout }: { onLogout?: () => void }) {
   const { projectSlug, chatId } = useParams<{
     projectSlug: string;
     chatId: string;
@@ -354,6 +360,7 @@ function ChatView() {
           navigate(`/${projectSlug ?? "unknown"}/settings`);
           if (isMobile()) setSidebarOpen(false);
         }}
+        onLogout={onLogout}
         loading={loading}
         connected={connected}
         isOpen={sidebarOpen}

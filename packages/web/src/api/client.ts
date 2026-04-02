@@ -39,6 +39,7 @@ function previewBody(text: string): string {
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    "X-Porta-Request": "1",
     ...((options.headers as Record<string, string>) ?? {}),
   };
 
@@ -89,6 +90,17 @@ export const api = {
     request<{ authRequired: boolean; authenticated: boolean }>(
       "/api/auth/check",
     ),
+
+  /** Logout — invalidate current session token. */
+  logout: async () => {
+    try {
+      await request<{ ok: boolean }>("/api/auth/logout", { method: "POST" });
+    } catch {
+      // Ignore errors (token may already be invalid)
+    } finally {
+      clearAuthToken();
+    }
+  },
 
   conversations: () =>
     request<import("../types").ConversationsResponse>("/api/conversations"),

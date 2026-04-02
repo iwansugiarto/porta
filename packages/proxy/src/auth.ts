@@ -6,9 +6,8 @@
  *   2. Username/password (PORTA_AUTH_USER + PORTA_AUTH_PASSWORD) —
  *      web login returns a session token used as Bearer token
  *
- * Both methods result in a Bearer token for API requests.
- * Backward-compatible: auth is disabled when nothing is configured
- * and the proxy is bound to a loopback address.
+ * Password can be plaintext or bcrypt hash ($2a$/$2b$ prefix).
+ * Sessions have configurable TTL (default 24h).
  */
 
 import type { Context, Next } from "hono";
@@ -16,6 +15,7 @@ import {
   timingSafeEqual as cryptoTimingSafeEqual,
   randomBytes,
 } from "node:crypto";
+import { compareSync } from "bcryptjs";
 import { isLoopbackHost, resolveProxyHost } from "./exposure.js";
 
 // ── Config ──
@@ -25,19 +25,28 @@ export interface AuthConfig {
   token: string | undefined;
   /** Username for password-based auth. */
   username: string | undefined;
-  /** Password for password-based auth. */
+  /** Password (plaintext or bcrypt hash) for password-based auth. */
   password: string | undefined;
+  /** Session TTL in milliseconds. Default: 24 hours. */
+  sessionTtlMs: number;
   /** Paths that bypass authentication even when auth is configured. */
   publicPaths: string[];
+}
+
+/** Check if a string is a bcrypt hash. */
+function isBcryptHash(s: string): boolean {
+  return /^\$2[aby]\$\d{1,2}\$/.test(s);
 }
 
 export function resolveAuthConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): AuthConfig {
+  const ttlHours = parseInt(env.PORTA_SESSION_TTL ?? "24", 10);
   return {
     token: env.PORTA_AUTH_TOKEN?.trim() || undefined,
     username: env.PORTA_AUTH_USER?.trim() || undefined,
     password: env.PORTA_AUTH_PASSWORD?.trim() || undefined,
+    sessionTtlMs: ttlHours * 60 * 60 * 1000,
     publicPaths: ["/api/health", "/api/auth/check", "/api/auth/login"],
   };
 }
@@ -73,38 +82,72 @@ export function validateToken(
 
 // ── Session token management ──
 
+interface SessionEntry {
+  token: string;
+  createdAt: number;
+}
+
 /**
  * In-memory session store for password-based auth.
- * When a user logs in with username/password, a random session token
- * is generated and stored here. The session token is then used as a
- * Bearer token for all subsequent API requests.
- *
- * Sessions are ephemeral — they're lost on proxy restart (user just
- * logs in again). This is acceptable for a single-user self-hosted tool.
+ * Sessions have a TTL — expired sessions are automatically cleaned up.
  */
-const activeSessions = new Set<string>();
+const activeSessions = new Map<string, SessionEntry>();
 
-/** Maximum number of active sessions (prevents memory leaks). */
+/** Maximum number of active sessions. */
 const MAX_SESSIONS = 50;
+
+/** Cleanup interval timer. */
+let sessionCleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Start the session cleanup timer. */
+export function startSessionCleanup(ttlMs: number): void {
+  if (sessionCleanupTimer) return;
+  // Clean up every 5 minutes
+  sessionCleanupTimer = setInterval(() => {
+    cleanupExpiredSessions(ttlMs);
+  }, 5 * 60_000);
+  sessionCleanupTimer.unref?.();
+}
+
+/** Remove expired sessions. */
+export function cleanupExpiredSessions(ttlMs: number): number {
+  const now = Date.now();
+  let removed = 0;
+  for (const [token, entry] of activeSessions) {
+    if (now - entry.createdAt > ttlMs) {
+      activeSessions.delete(token);
+      removed++;
+    }
+  }
+  return removed;
+}
 
 /** Generate a cryptographically random session token. */
 export function generateSessionToken(): string {
   return randomBytes(32).toString("hex");
 }
 
-/** Store a session token. Evicts oldest if limit reached. */
-export function addSession(token: string): void {
-  // Simple eviction: if at limit, clear all and start fresh.
-  // With MAX_SESSIONS=50 and single-user this is effectively never hit.
+/** Store a session token. Evicts expired first, then oldest if at limit. */
+export function addSession(token: string, ttlMs?: number): void {
+  // Evict expired sessions first
+  if (ttlMs) cleanupExpiredSessions(ttlMs);
+
+  // If still at limit, clear all and start fresh
   if (activeSessions.size >= MAX_SESSIONS) {
     activeSessions.clear();
   }
-  activeSessions.add(token);
+  activeSessions.set(token, { token, createdAt: Date.now() });
 }
 
-/** Check if a session token is valid. */
-export function isValidSession(token: string): boolean {
-  return activeSessions.has(token);
+/** Check if a session token is valid (exists and not expired). */
+export function isValidSession(token: string, ttlMs?: number): boolean {
+  const entry = activeSessions.get(token);
+  if (!entry) return false;
+  if (ttlMs && Date.now() - entry.createdAt > ttlMs) {
+    activeSessions.delete(token);
+    return false;
+  }
+  return true;
 }
 
 /** Remove a session token (logout). */
@@ -112,40 +155,92 @@ export function removeSession(token: string): void {
   activeSessions.delete(token);
 }
 
-/** Validate username/password credentials. */
+/** Get the count of active sessions. */
+export function getSessionCount(): number {
+  return activeSessions.size;
+}
+
+/** Validate username/password credentials. Supports bcrypt hashed passwords. */
 export function validateCredentials(
   username: string,
   password: string,
   config: AuthConfig,
 ): boolean {
   if (!config.username || !config.password) return false;
-  return (
-    timingSafeStringEqual(username, config.username) &&
-    timingSafeStringEqual(password, config.password)
-  );
+
+  // Username check (always timing-safe)
+  if (!timingSafeStringEqual(username, config.username)) return false;
+
+  // Password check — bcrypt or plaintext
+  if (isBcryptHash(config.password)) {
+    return compareSync(password, config.password);
+  }
+  return timingSafeStringEqual(password, config.password);
 }
 
-// ── Middleware ──
+// ── CSRF Protection ──
+
+/**
+ * Hono middleware that validates CSRF protection header.
+ *
+ * Since we use Bearer tokens (not cookies), CSRF is inherently mitigated
+ * for authenticated requests. However, as defense-in-depth, we require
+ * a custom header `X-Porta-Request: 1` on all mutating (non-GET/HEAD)
+ * requests. Browsers won't send this header cross-origin without CORS
+ * preflight approval.
+ *
+ * This protects against cross-origin form submissions that might bypass
+ * the auth check if cookies were ever introduced.
+ */
+export function csrfProtection() {
+  return async (c: Context, next: Next) => {
+    const method = c.req.method.toUpperCase();
+
+    // Safe methods don't need CSRF protection
+    if (method === "GET" || method === "HEAD" || method === "OPTIONS") {
+      return next();
+    }
+
+    // Public auth endpoints are exempt (login needs to work from the form)
+    const path = new URL(c.req.url).pathname;
+    if (path === "/api/auth/login" || path === "/api/auth/logout") {
+      return next();
+    }
+
+    // Require custom header on mutating requests
+    const csrfHeader = c.req.header("X-Porta-Request");
+    if (!csrfHeader) {
+      return c.json(
+        {
+          error: "Forbidden",
+          message: "Missing X-Porta-Request header",
+        },
+        403,
+      );
+    }
+
+    return next();
+  };
+}
+
+// ── Auth Middleware ──
 
 /**
  * Hono middleware that enforces authentication.
  *
  * Accepts Bearer tokens from two sources:
  *   1. Static PORTA_AUTH_TOKEN
- *   2. Session tokens from password-based login
- *
- * When neither auth method is configured, all requests pass through.
+ *   2. Session tokens from password-based login (with TTL check)
  */
 export function authMiddleware(config: AuthConfig) {
-  const authEnabled = !!config.token || (!!config.username && !!config.password);
+  const authEnabled =
+    !!config.token || (!!config.username && !!config.password);
 
   return async (c: Context, next: Next) => {
-    // Auth disabled — pass through
     if (!authEnabled) {
       return next();
     }
 
-    // Public paths bypass auth
     const path = new URL(c.req.url).pathname;
     if (
       config.publicPaths.some((p) => path === p || path.startsWith(p + "/"))
@@ -153,16 +248,15 @@ export function authMiddleware(config: AuthConfig) {
       return next();
     }
 
-    // Extract and validate token
     const token = extractBearerToken(c.req.header("Authorization"));
 
-    // Check against static token
+    // Check static token
     if (config.token && validateToken(token, config.token)) {
       return next();
     }
 
-    // Check against session tokens (from password login)
-    if (token && isValidSession(token)) {
+    // Check session token (with TTL)
+    if (token && isValidSession(token, config.sessionTtlMs)) {
       return next();
     }
 
@@ -178,33 +272,28 @@ export function authMiddleware(config: AuthConfig) {
 
 // ── WebSocket auth ──
 
-/**
- * Validate token for WebSocket upgrade requests.
- * Browsers cannot send custom headers on WebSocket, so the token
- * is passed via query parameter: `?token=<token>`.
- * Also supports the Authorization header for non-browser clients.
- */
 export function validateWebSocketToken(
   queryToken: string | undefined,
   authHeader: string | undefined,
   secret: string | undefined,
-  /** Check session tokens too (for password-based auth). */
   checkSessions = true,
+  sessionTtlMs?: number,
 ): boolean {
-  // No auth configured → pass through
-  if (!secret && activeSessions.size === 0) return true;
+  const hasStaticAuth = !!secret;
+  const hasSessionAuth = checkSessions && activeSessions.size > 0;
+  if (!hasStaticAuth && !hasSessionAuth) return true;
 
-  // Try query parameter first (browser WebSocket)
   if (queryToken) {
     if (secret && validateToken(queryToken, secret)) return true;
-    if (checkSessions && isValidSession(queryToken)) return true;
+    if (checkSessions && isValidSession(queryToken, sessionTtlMs))
+      return true;
   }
 
-  // Try Authorization header (non-browser clients)
   const headerToken = extractBearerToken(authHeader);
   if (headerToken) {
     if (secret && validateToken(headerToken, secret)) return true;
-    if (checkSessions && isValidSession(headerToken)) return true;
+    if (checkSessions && isValidSession(headerToken, sessionTtlMs))
+      return true;
   }
 
   return false;
@@ -212,7 +301,6 @@ export function validateWebSocketToken(
 
 // ── Startup helpers ──
 
-/** Log auth status at startup. */
 export function logAuthStatus(
   config: AuthConfig,
   env: NodeJS.ProcessEnv = process.env,
@@ -220,16 +308,20 @@ export function logAuthStatus(
   const host = resolveProxyHost(env);
   const hasToken = !!config.token;
   const hasPassword = !!config.username && !!config.password;
+  const ttlHours = Math.round(config.sessionTtlMs / 3_600_000);
+  const hashType = config.password && isBcryptHash(config.password)
+    ? " [bcrypt]"
+    : "";
 
   if (hasToken && hasPassword) {
     console.log(
-      "🔒 Authentication enabled (token + password)",
+      `🔒 Authentication enabled (token + password${hashType}, session TTL: ${ttlHours}h)`,
     );
   } else if (hasToken) {
     console.log("🔒 Authentication enabled (PORTA_AUTH_TOKEN)");
   } else if (hasPassword) {
     console.log(
-      `🔒 Authentication enabled (user: ${config.username})`,
+      `🔒 Authentication enabled (user: ${config.username}${hashType}, session TTL: ${ttlHours}h)`,
     );
   } else if (isLoopbackHost(host)) {
     console.log(
@@ -245,12 +337,10 @@ export function logAuthStatus(
   }
 }
 
-/** Check if auth is required (for the web client to know). */
 export function isAuthRequired(config: AuthConfig): boolean {
   return !!config.token || (!!config.username && !!config.password);
 }
 
-/** Which auth methods are available (for the web client to render the right form). */
 export function getAuthMethods(config: AuthConfig): {
   token: boolean;
   password: boolean;

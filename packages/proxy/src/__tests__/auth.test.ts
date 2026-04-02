@@ -18,6 +18,7 @@ const baseConfig: AuthConfig = {
   token: undefined,
   username: undefined,
   password: undefined,
+  sessionTtlMs: 24 * 60 * 60 * 1000,
   publicPaths: [],
 };
 
