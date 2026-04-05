@@ -14,8 +14,25 @@ const CONVERSATIONS_DIR = join(
 );
 
 /**
+ * Whether the server-side auto-approve setting is enabled.
+ *
+ * Reads `PORTA_AUTO_APPROVE` from the environment (loaded via `--env-file`).
+ *   - `true` (default) — the LS auto-approves commands and file access.
+ *   - `false` — the LS enters WAITING status for unsafe commands and
+ *     file access outside the workspace, enabling approval UI in the frontend.
+ */
+export function isAutoApproveEnabled(): boolean {
+  const val = process.env.PORTA_AUTO_APPROVE;
+  if (val === undefined || val === "") return true; // Default: on
+  return val.toLowerCase() !== "false" && val !== "0";
+}
+
+/**
  * Build the metadata object that the LS requires on write RPCs.
  * Mirrors what the VS Code extension sends via MetadataProvider.
+ *
+ * When `PORTA_AUTO_APPROVE=false`, the metadata omits `allWorkspaceTrustGranted`
+ * so the LS pauses for user approval on unsafe operations.
  */
 export async function getMetadata(
   fileAccessGranted = false,
@@ -25,9 +42,13 @@ export async function getMetadata(
     ideVersion: "0.1.0",
     extensionVersion: "0.1.0",
   };
+  const autoApprove = isAutoApproveEnabled();
   if (fileAccessGranted) {
     meta.allowFileAccess = true;
-    meta.allWorkspaceTrustGranted = true;
+    // Only auto-grant full workspace trust when env allows it
+    if (autoApprove) {
+      meta.allWorkspaceTrustGranted = true;
+    }
   }
   return meta;
 }

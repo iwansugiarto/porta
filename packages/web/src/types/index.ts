@@ -37,6 +37,7 @@ export interface ConversationDetail {
 export interface HealthResponse {
   status: string;
   proxy: { port: number; uptime: number };
+  autoApprove?: boolean;
   languageServers: {
     pid: number;
     httpsPort: number;

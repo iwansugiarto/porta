@@ -8,8 +8,8 @@ export const darwinAdapter: PlatformAdapter = {
     if (!hasAliveSignal(pid)) return false;
 
     try {
-      const comm = await runCommand("ps", ["-p", String(pid), "-o", "comm="]);
-      return comm.includes("language_server");
+      const args = await runCommand("ps", ["-p", String(pid), "-o", "args="]);
+      return args.includes("language_server");
     } catch {
       return false;
     }

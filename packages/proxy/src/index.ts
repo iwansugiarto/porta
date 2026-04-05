@@ -47,6 +47,7 @@ import {
 } from "./rate-limit.js";
 import { requestLogger } from "./request-logger.js";
 import { compressionMiddleware } from "./compression.js";
+import { isAutoApproveEnabled } from "./metadata.js";
 
 const PORT = parseInt(process.env.PORTA_PORT ?? "3170", 10);
 const HOST = resolveProxyHost();
@@ -182,6 +183,7 @@ app.get("/api/health", async (c) => {
   return c.json({
     status: "ok",
     proxy: { port: PORT, uptime: process.uptime() },
+    autoApprove: isAutoApproveEnabled(),
     languageServers: instances.map((i) => ({
       pid: i.pid,
       httpsPort: i.httpsPort,

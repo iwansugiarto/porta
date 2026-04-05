@@ -23,6 +23,7 @@ import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { rpcForConversation, getStepCount } from "./routing.js";
 import { messageTracker } from "./message-tracker.js";
+import { isAutoApproveEnabled } from "./metadata.js";
 import { getAllowedOrigins, isAllowedOrigin, type AllowedOrigin } from "./origins.js";
 import { validateWebSocketToken } from "./auth.js";
 import {
@@ -35,6 +36,80 @@ import { conversationSignals } from "./signals.js";
 
 /** Active polling interval (ms). */
 const ACTIVE_INTERVAL = 50;
+
+/**
+ * Track which WAITING steps we've already auto-approved to prevent
+ * duplicate approval requests. Keyed by `{cascadeId}:{stepIndex}`.
+ */
+const autoApprovedSteps = new Set<string>();
+
+/**
+ * Auto-approve a WAITING step (command or file permission).
+ * Only called when PORTA_AUTO_APPROVE=true.
+ */
+async function autoApproveStep(
+  cascadeId: string,
+  step: Record<string, unknown>,
+): Promise<void> {
+  const meta = step.metadata as
+    | { sourceTrajectoryStepInfo?: { trajectoryId?: string; stepIndex?: number } }
+    | undefined;
+  const trajectoryId = meta?.sourceTrajectoryStepInfo?.trajectoryId;
+  const stepIndex = meta?.sourceTrajectoryStepInfo?.stepIndex;
+  if (!trajectoryId || stepIndex === undefined) return;
+
+  const key = `${cascadeId}:${stepIndex}`;
+  if (autoApprovedSteps.has(key)) return;
+  autoApprovedSteps.add(key);
+
+  // Determine what type of approval is needed
+  const runCommand = step.runCommand as Record<string, unknown> | undefined;
+  const fpr = (
+    step.filePermissionRequest ??
+    (step.viewFile as Record<string, unknown> | undefined)?.filePermissionRequest ??
+    (step.listDirectory as Record<string, unknown> | undefined)?.filePermissionRequest ??
+    (step.codeAction as Record<string, unknown> | undefined)?.filePermissionRequest ??
+    (step.grepSearch as Record<string, unknown> | undefined)?.filePermissionRequest ??
+    (step.viewFileOutline as Record<string, unknown> | undefined)?.filePermissionRequest ??
+    (step.viewCodeItem as Record<string, unknown> | undefined)?.filePermissionRequest
+  ) as { absolutePathUri?: string } | undefined;
+
+  try {
+    if (runCommand) {
+      // Auto-approve command
+      console.log(`[auto-approve] command step=${stepIndex} in ${cascadeId.slice(0, 8)}`);
+      await rpcForConversation("HandleCascadeUserInteraction", cascadeId, {
+        cascadeId,
+        interaction: {
+          trajectoryId,
+          stepIndex: Number(stepIndex),
+          commandAction: { approved: true },
+        },
+      });
+    } else if (fpr?.absolutePathUri) {
+      // Auto-approve file permission (scope=2 = conversation)
+      console.log(`[auto-approve] file-access step=${stepIndex} in ${cascadeId.slice(0, 8)}`);
+      await rpcForConversation("HandleCascadeUserInteraction", cascadeId, {
+        cascadeId,
+        interaction: {
+          trajectoryId,
+          stepIndex: Number(stepIndex),
+          filePermission: {
+            allow: true,
+            scope: 2, // CONVERSATION scope
+            absolutePathUri: fpr.absolutePathUri,
+          },
+        },
+      });
+    }
+  } catch (err) {
+    // Non-fatal: let the UI handle it as fallback
+    console.warn(
+      `[auto-approve] failed step=${stepIndex}: ${(err as Error).message}`,
+    );
+    autoApprovedSteps.delete(key);
+  }
+}
 /** Idle polling interval (ms) for externally-originated updates. */
 const HEARTBEAT_INTERVAL = 5000;
 /** Transport keepalive interval (ms) for detecting dead idle sockets. */
@@ -339,6 +414,16 @@ export function setupWebSocket(
                 steps: annotatedSteps,
               }),
             );
+          }
+
+          // Auto-approve any WAITING steps if auto-approve is enabled
+          if (isAutoApproveEnabled()) {
+            for (const step of newSteps) {
+              const s = step as Record<string, unknown>;
+              if (s.status === "CORTEX_STEP_STATUS_WAITING") {
+                void autoApproveStep(cascadeId, s);
+              }
+            }
           }
 
           lastStepCount = newEnd;

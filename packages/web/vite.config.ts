@@ -40,6 +40,8 @@ export default defineConfig(({ mode }) => {
     ],
     envDir: repoRoot,
     server: {
+      host: true,
+      allowedHosts: ["porta.infinia.id"],
       proxy: {
         "/api": {
           target: toHttpOrigin(proxyHost, proxyPort),
