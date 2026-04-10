@@ -145,21 +145,14 @@ export async function discoverOwnerInstance(
     return wsOwners[0].inst;
   }
 
-  // No workspace metadata.
+  // No workspace metadata. Use heuristics:
+  //   - RUNNING LS is definitively the active owner.
+  //   - Highest stepCount indicates the LS that last processed this conversation.
   //
-  // For writes (readOnly=false) with MULTIPLE candidates: return null.
-  // Without a workspace URI we cannot determine definitive ownership.
-  // Returning a heuristic guess here would let mutations reach a non-owner LS.
-  //
-  // For writes with EXACTLY ONE candidate: it's safe — only one LS has
-  // this conversation loaded, so ownership is unambiguous.
-  //
-  // For reads (readOnly=true): use RUNNING status + stepCount heuristics.
-  // A RUNNING LS is definitively the active owner (only one LS can execute
-  // a conversation at a time). Affinity is NOT learned because we don't
-  // know the workspace URI.
-  if (!readOnly && candidates.length > 1) return null;
-
+  // In multi-LS setups with shared conversation directories, all LSes may
+  // report having the conversation via GetAllCascadeTrajectories. The one
+  // with the highest stepCount is the one that actually loaded and processed
+  // it, making it the safest target for both reads and writes.
   candidates.sort((a, b) => {
     const aRunning = a.status === RUNNING_STATUS ? 1 : 0;
     const bRunning = b.status === RUNNING_STATUS ? 1 : 0;
