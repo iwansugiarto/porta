@@ -697,9 +697,12 @@ function connectStreamer(
     session.cascadeId,
   );
 
+  let receivedContent = false;
+
   const wsConn = client.connectWebSocket(
     session.cascadeId,
     (msg) => {
+      receivedContent = true;
       void streamer.onMessage(msg);
     },
   );
@@ -711,9 +714,18 @@ function connectStreamer(
       session.wsConnection = null;
     }
     void streamer.finalize().then(() => {
-      // Proactive completion notification for long tasks (>30s)
       const elapsed = Date.now() - startTime;
-      if (elapsed > 30_000) {
+
+      if (!receivedContent && elapsed < 10_000) {
+        // WS closed quickly without any content — agent didn't start
+        void api.sendMessage(
+          chatId,
+          "⚠️ Agent tidak merespon. Conversation mungkin sedang aktif di Antigravity desktop.\n\n" +
+            "<i>Coba /new untuk buat conversation baru.</i>",
+          { parse_mode: "HTML" },
+        ).catch(() => {});
+      } else if (elapsed > 30_000) {
+        // Proactive completion notification for long tasks
         const duration = formatUptime(elapsed / 1000);
         void api.sendMessage(
           chatId,
