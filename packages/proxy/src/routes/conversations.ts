@@ -440,14 +440,12 @@ export function registerConversationRoutes(app: Hono): void {
         const typeConfig =
           plannerType === "planning" ? { planning: {} } : { conversational: {} };
 
-        if (model || plannerType) {
-          req.cascadeConfig = {
-            plannerConfig: {
-              plannerTypeConfig: typeConfig,
-              ...(model ? { requestedModel: { model } } : {}),
-            },
-          };
-        }
+        req.cascadeConfig = {
+          plannerConfig: {
+            plannerTypeConfig: typeConfig,
+            ...(model ? { requestedModel: { model } } : {}),
+          },
+        };
 
         const data = await rpcForConversation(
           "SendUserCascadeMessage",
