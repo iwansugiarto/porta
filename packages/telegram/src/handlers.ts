@@ -5,6 +5,7 @@
  * Each command validates the session state and delegates to PortaClient.
  */
 
+import { InlineKeyboard } from "grammy";
 import type { Bot, Context } from "grammy";
 import type { TelegramConfig } from "./config.js";
 import { PortaClient } from "./porta-client.js";
@@ -120,26 +121,31 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
       const currentSession = getSession(chatId);
 
       let text = "📋 <b>Conversations</b>\n\n";
-      for (const conv of items) {
-        const shortId = conv.id.slice(0, 8);
-        const isActive = currentSession?.cascadeId === conv.id;
-        const marker = isActive ? " 👈" : "";
-        const statusIcon = conv.status === "CASCADE_RUN_STATUS_RUNNING" ? "🟢" : "⚪";
-        const summary = conv.summary.length > 60
-          ? conv.summary.slice(0, 57) + "..."
-          : conv.summary;
-
-        text += `${statusIcon} <code>${shortId}</code> ${escapeHtml(summary)}${marker}\n`;
-      }
-
-      text += `\n<i>Gunakan /use &lt;id&gt; untuk switch.</i>`;
+      text += "<i>Tap untuk switch:</i>";
 
       if (conversations.length > 10) {
         text += `\n<i>(${conversations.length - 10} lainnya tidak ditampilkan)</i>`;
       }
 
+      const keyboard = new InlineKeyboard();
+      for (const conv of items) {
+        const shortId = conv.id.slice(0, 8);
+        const isActive = currentSession?.cascadeId === conv.id;
+        const statusIcon = conv.status === "CASCADE_RUN_STATUS_RUNNING" ? "🟢" : "⚪";
+        const marker = isActive ? " 👈" : "";
+        const summary = conv.summary.length > 35
+          ? conv.summary.slice(0, 32) + "..."
+          : conv.summary;
+
+        keyboard.text(
+          `${statusIcon} ${shortId} ${summary}${marker}`,
+          `use:${conv.id}`,
+        ).row();
+      }
+
       await ctx.api.editMessageText(chatId, statusMsg.message_id, text, {
         parse_mode: "HTML",
+        reply_markup: keyboard,
       });
     } catch (err) {
       await ctx.api.editMessageText(
@@ -301,18 +307,23 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
 
       const session = getSession(ctx.chat.id);
       let text = "🤖 <b>Model Tersedia</b>\n\n";
+      text += "<i>Tap untuk memilih:</i>";
+
+      const keyboard = new InlineKeyboard();
       for (const m of models) {
         const isSelected = session?.selectedModel === m.name;
         const marker = isSelected ? " 👈" : "";
-        text += `• <b>${escapeHtml(m.displayName)}</b>${marker}\n`;
+        keyboard.text(
+          `${m.displayName}${marker}`,
+          `model:${m.name}`,
+        ).row();
       }
-      text += "\n<i>Gunakan /model &lt;name&gt; untuk memilih.</i>";
 
       await ctx.api.editMessageText(
         ctx.chat.id,
         statusMsg.message_id,
         text,
-        { parse_mode: "HTML" },
+        { parse_mode: "HTML", reply_markup: keyboard },
       );
     } catch (err) {
       await ctx.api.editMessageText(
@@ -386,6 +397,57 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
 
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery.data;
+
+    // ── Handle "use:<cascadeId>" (conversation switch) ──
+    if (data.startsWith("use:")) {
+      const cascadeId = data.slice(4);
+      const chatId = ctx.chat!.id;
+      switchSession(chatId, cascadeId);
+      const shortId = cascadeId.slice(0, 8);
+      await ctx.answerCallbackQuery({ text: `Switched ke ${shortId}` });
+      try {
+        await ctx.editMessageText(
+          `✅ Switched ke conversation: <code>${shortId}</code>\n\n` +
+            "<i>Kirim pesan untuk melanjutkan chat.</i>",
+          { parse_mode: "HTML" },
+        );
+      } catch { /* message unchanged */ }
+      return;
+    }
+
+    // ── Handle "model:<modelId>" (model selection) ──
+    if (data.startsWith("model:")) {
+      const modelId = data.slice(6);
+      const chatId = ctx.chat!.id;
+      let session = getSession(chatId);
+      if (!session) {
+        try {
+          const result = await client.createConversation(config.workspaceUri);
+          session = createSession(chatId, result.cascadeId);
+        } catch {
+          await ctx.answerCallbackQuery({ text: "Gagal membuat session" });
+          return;
+        }
+      }
+      session.selectedModel = modelId;
+      // Find display name
+      let label = modelId;
+      try {
+        const models = await client.listModels();
+        const match = models.find((m) => m.name === modelId);
+        if (match) label = match.displayName;
+      } catch { /* use raw id */ }
+      await ctx.answerCallbackQuery({ text: `Model: ${label}` });
+      try {
+        await ctx.editMessageText(
+          `✅ Model diubah ke: <b>${escapeHtml(label)}</b>`,
+          { parse_mode: "HTML" },
+        );
+      } catch { /* message unchanged */ }
+      return;
+    }
+
+    // ── Handle approve/reject callbacks ──
     // Format: "approve:type:cascadeId:trajectoryId:stepIndex"
     // or:     "reject:type:cascadeId:trajectoryId:stepIndex"
 
