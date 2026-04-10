@@ -342,6 +342,7 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
 
     // Try to match by display name (case-insensitive partial match)
     let resolvedModel = modelArg;
+    let resolvedLabel = modelArg;
     try {
       const models = await client.listModels();
       const lowerArg = modelArg.toLowerCase();
@@ -354,6 +355,7 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
       );
       if (match) {
         resolvedModel = match.name;
+        resolvedLabel = match.displayName;
       }
     } catch {
       // If listing fails, use the raw arg
@@ -375,7 +377,7 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
 
     session.selectedModel = resolvedModel;
     await ctx.reply(
-      `✅ Model diubah ke: <code>${escapeHtml(resolvedModel)}</code>`,
+      `✅ Model diubah ke: <b>${escapeHtml(resolvedLabel)}</b>`,
       { parse_mode: "HTML" },
     );
   });
