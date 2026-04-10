@@ -573,10 +573,20 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
     try {
       await client.sendMessage(session.cascadeId, text, session.selectedModel);
     } catch (err) {
-      await ctx.reply(
-        `❌ Gagal mengirim pesan: ${escapeHtml((err as Error).message)}`,
-        { parse_mode: "HTML" },
-      );
+      const errMsg = (err as Error).message;
+      if (errMsg.includes("not_found") || errMsg.includes("502")) {
+        destroySession(chatId);
+        await ctx.reply(
+          "⚠️ Conversation sudah tidak aktif di Language Server.\n\n" +
+            "<i>Ketik /new untuk buat conversation baru, atau kirim pesan langsung.</i>",
+          { parse_mode: "HTML" },
+        );
+      } else {
+        await ctx.reply(
+          `❌ Gagal mengirim pesan: ${escapeHtml(errMsg)}`,
+          { parse_mode: "HTML" },
+        );
+      }
       return;
     }
 
