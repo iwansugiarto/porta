@@ -74,28 +74,14 @@ export function formatStep(step: Record<string, unknown>): string | null {
     return text;
   }
 
-  // View file
-  const viewFile = step.viewFile as Record<string, unknown> | undefined;
-  if (viewFile) {
-    const file = viewFile.filePath as string | undefined;
-    const name = file ? file.split("/").pop() : "file";
-    return `👁 <b>View:</b> ${escapeHtml(name ?? "file")}`;
-  }
+  // View file — skip (noise for Telegram)
+  if (step.viewFile) return null;
 
-  // Grep search
-  const grepSearch = step.grepSearch as Record<string, unknown> | undefined;
-  if (grepSearch) {
-    const query = (grepSearch.query as string) ?? "";
-    return `🔍 <b>Search:</b> <code>${escapeHtml(truncate(query, 200))}</code>`;
-  }
+  // Grep search — skip (noise for Telegram)
+  if (step.grepSearch) return null;
 
-  // List directory
-  const listDir = step.listDirectory as Record<string, unknown> | undefined;
-  if (listDir) {
-    const dir = (listDir.directoryPath as string) ?? "";
-    const name = dir.split("/").pop() || dir;
-    return `📂 <b>List:</b> ${escapeHtml(name)}`;
-  }
+  // List directory — skip (noise for Telegram)
+  if (step.listDirectory) return null;
 
   // File permission request (waiting)
   const fpr = step.filePermissionRequest as Record<string, unknown> | undefined;
