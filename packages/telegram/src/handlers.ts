@@ -304,7 +304,7 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
       for (const m of models) {
         const isSelected = session?.selectedModel === m.name;
         const marker = isSelected ? " 👈" : "";
-        text += `• <code>${escapeHtml(m.name)}</code>${marker}\n`;
+        text += `• <b>${escapeHtml(m.displayName)}</b>${marker}\n`;
       }
       text += "\n<i>Gunakan /model &lt;name&gt; untuk memilih.</i>";
 
@@ -340,6 +340,25 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
       return;
     }
 
+    // Try to match by display name (case-insensitive partial match)
+    let resolvedModel = modelArg;
+    try {
+      const models = await client.listModels();
+      const lowerArg = modelArg.toLowerCase();
+      const match = models.find(
+        (m) =>
+          m.displayName.toLowerCase() === lowerArg ||
+          m.displayName.toLowerCase().includes(lowerArg) ||
+          m.name.toLowerCase() === lowerArg ||
+          m.name.toLowerCase().includes(lowerArg),
+      );
+      if (match) {
+        resolvedModel = match.name;
+      }
+    } catch {
+      // If listing fails, use the raw arg
+    }
+
     // Create a session if none exists (model can be set before conversation)
     if (!session) {
       try {
@@ -354,9 +373,9 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
       }
     }
 
-    session.selectedModel = modelArg;
+    session.selectedModel = resolvedModel;
     await ctx.reply(
-      `✅ Model diubah ke: <code>${escapeHtml(modelArg)}</code>`,
+      `✅ Model diubah ke: <code>${escapeHtml(resolvedModel)}</code>`,
       { parse_mode: "HTML" },
     );
   });
