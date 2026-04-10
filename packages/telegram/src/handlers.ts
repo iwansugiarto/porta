@@ -577,26 +577,38 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
     try {
       await client.sendMessage(session.cascadeId, text, session.selectedModel);
     } catch (err) {
-      // Clean up the WS we just opened
-      if (session.wsConnection) {
-        session.wsConnection.close();
-        session.wsConnection = null;
-      }
       const errMsg = (err as Error).message;
       if (errMsg.includes("not_found") || errMsg.includes("502")) {
-        destroySession(chatId);
-        await ctx.reply(
-          "⚠️ Conversation sudah tidak aktif di Language Server.\n\n" +
-            "<i>Ketik /new untuk buat conversation baru, atau kirim pesan langsung.</i>",
-          { parse_mode: "HTML" },
-        );
+        // Try to recall (load from disk) and retry once
+        try {
+          await client.recallConversation(session.cascadeId);
+          await client.sendMessage(session.cascadeId, text, session.selectedModel);
+        } catch (retryErr) {
+          // Clean up the WS we opened
+          if (session.wsConnection) {
+            session.wsConnection.close();
+            session.wsConnection = null;
+          }
+          destroySession(chatId);
+          await ctx.reply(
+            "⚠️ Conversation tidak bisa di-load dari disk.\n\n" +
+              "<i>Ketik /new untuk buat conversation baru, atau kirim pesan langsung.</i>",
+            { parse_mode: "HTML" },
+          );
+          return;
+        }
       } else {
+        // Clean up the WS on non-recoverable error
+        if (session.wsConnection) {
+          session.wsConnection.close();
+          session.wsConnection = null;
+        }
         await ctx.reply(
           `❌ Gagal mengirim pesan: ${escapeHtml(errMsg)}`,
           { parse_mode: "HTML" },
         );
+        return;
       }
-      return;
     }
   });
 

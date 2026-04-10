@@ -88,6 +88,15 @@ export class PortaClient {
     return this.post<{ cascadeId: string }>("/api/conversations", body);
   }
 
+  /**
+   * Force-load a conversation from disk into the LS.
+   * Uses a read-only GET which triggers the try-all fallback,
+   * causing the LS to load the .pb file and learn routing affinity.
+   */
+  async recallConversation(cascadeId: string): Promise<void> {
+    await this.get(`/api/conversations/${cascadeId}`);
+  }
+
   async sendMessage(
     cascadeId: string,
     text: string,
