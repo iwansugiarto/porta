@@ -147,16 +147,18 @@ export async function discoverOwnerInstance(
 
   // No workspace metadata.
   //
-  // For writes (readOnly=false): return null. Without a workspace URI we
-  // cannot determine definitive ownership. Returning a heuristic guess
-  // here would let mutations (SendUserCascadeMessage, RevertToCascadeStep,
-  // etc.) reach a non-owner LS — the exact bug this guard prevents.
+  // For writes (readOnly=false) with MULTIPLE candidates: return null.
+  // Without a workspace URI we cannot determine definitive ownership.
+  // Returning a heuristic guess here would let mutations reach a non-owner LS.
+  //
+  // For writes with EXACTLY ONE candidate: it's safe — only one LS has
+  // this conversation loaded, so ownership is unambiguous.
   //
   // For reads (readOnly=true): use RUNNING status + stepCount heuristics.
   // A RUNNING LS is definitively the active owner (only one LS can execute
   // a conversation at a time). Affinity is NOT learned because we don't
   // know the workspace URI.
-  if (!readOnly) return null;
+  if (!readOnly && candidates.length > 1) return null;
 
   candidates.sort((a, b) => {
     const aRunning = a.status === RUNNING_STATUS ? 1 : 0;
