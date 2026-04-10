@@ -89,7 +89,7 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 ```
 
 **Types**: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `ci`
-**Scopes**: `proxy`, `web`, or omit for repo-wide changes.
+**Scopes**: `proxy`, `web`, `telegram`, or omit for repo-wide changes.
 
 Examples:
 
@@ -166,10 +166,10 @@ This keeps the project history navigable and avoids orphan work.
 
 ## Code style
 
-- TypeScript strict mode is enabled for both `proxy` and `web`.
+- TypeScript strict mode is enabled for `proxy`, `web`, and `telegram`.
 - ESLint is configured for the `web` package (`pnpm lint`). The `proxy`
-  package does not have ESLint; it relies on TypeScript strict mode for
-  static checks.
+  and `telegram` packages do not have ESLint; they rely on TypeScript
+  strict mode for static checks.
 - No additional formatter is enforced — match the style of surrounding
   code.
 

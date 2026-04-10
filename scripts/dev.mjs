@@ -2,10 +2,14 @@ import path from "node:path";
 import {
   commandName,
   ensureLogsDir,
+  loadEnvFile,
   spawnLoggedProcess,
   terminateChild,
   waitForExit,
 } from "./common.mjs";
+
+// Load .env so we can check TELEGRAM_BOT_TOKEN
+loadEnvFile();
 
 const logsDir = ensureLogsDir();
 const runners = [
@@ -23,7 +27,22 @@ const runners = [
   ),
 ];
 
-console.log("✓ Porta dev - tail logs/proxy.log and logs/web.log");
+// Conditionally start Telegram bot if configured
+const labels = ["proxy", "web"];
+if (process.env.TELEGRAM_BOT_TOKEN) {
+  runners.push(
+    spawnLoggedProcess(
+      "telegram",
+      commandName("pnpm"),
+      ["--filter", "@porta/telegram", "dev"],
+      path.join(logsDir, "telegram.log"),
+    ),
+  );
+  labels.push("telegram");
+  console.log("✓ Porta dev - tail logs/proxy.log, logs/web.log, and logs/telegram.log");
+} else {
+  console.log("✓ Porta dev - tail logs/proxy.log and logs/web.log");
+}
 
 let shuttingDown = false;
 
@@ -51,7 +70,7 @@ const exits = runners.map(async ({ child }, index) => ({
 
 const firstExit = await Promise.race(exits);
 if (!shuttingDown) {
-  const label = firstExit.index === 0 ? "proxy" : "web";
+  const label = labels[firstExit.index] ?? "unknown";
   const code = typeof firstExit.code === "number" ? firstExit.code : 1;
   console.error(`${label} exited early`);
   await shutdown(code);

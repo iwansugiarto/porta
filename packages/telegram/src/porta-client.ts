@@ -1,0 +1,300 @@
+/**
+ * HTTP + WebSocket client for communicating with the Porta proxy.
+ *
+ * Wraps the proxy REST API and WebSocket streaming endpoint.
+ * All requests carry the auth token and CSRF header.
+ */
+
+import { request } from "node:http";
+import type { IncomingMessage } from "node:http";
+import WebSocket from "ws";
+
+export interface ConversationSummary {
+  id: string;
+  summary: string;
+  stepCount: number;
+  status: string;
+  lastModifiedTime?: string;
+  workspaces?: { workspaceFolderAbsoluteUri?: string }[];
+}
+
+export interface StepData {
+  type: string;
+  offset: number;
+  steps: Record<string, unknown>[];
+}
+
+export interface StatusData {
+  type: "status";
+  running: boolean;
+}
+
+export interface ReadyData {
+  type: "ready";
+  stepCount: number;
+}
+
+export type WSMessage = StepData | StatusData | ReadyData;
+
+export type StepCallback = (msg: WSMessage) => void;
+
+export interface WSConnection {
+  ws: WebSocket;
+  close: () => void;
+}
+
+export class PortaClient {
+  private readonly baseUrl: string;
+  private readonly authToken: string | undefined;
+
+  constructor(baseUrl: string, authToken?: string) {
+    this.baseUrl = baseUrl;
+    this.authToken = authToken;
+  }
+
+  // ── REST API ──
+
+  async listConversations(): Promise<ConversationSummary[]> {
+    const data = await this.get<{
+      trajectorySummaries: Record<string, Record<string, unknown>>;
+    }>("/api/conversations");
+
+    const summaries = data.trajectorySummaries ?? {};
+    return Object.entries(summaries)
+      .map(([id, s]) => ({
+        id,
+        summary: (s.summary as string) ?? id.slice(0, 8),
+        stepCount: (s.stepCount as number) ?? 0,
+        status: (s.status as string) ?? "unknown",
+        lastModifiedTime: s.lastModifiedTime as string | undefined,
+        workspaces: s.workspaces as
+          | { workspaceFolderAbsoluteUri?: string }[]
+          | undefined,
+      }))
+      .sort(
+        (a, b) =>
+          new Date(b.lastModifiedTime ?? 0).getTime() -
+          new Date(a.lastModifiedTime ?? 0).getTime(),
+      );
+  }
+
+  async createConversation(
+    workspaceUri?: string,
+  ): Promise<{ cascadeId: string }> {
+    const body: Record<string, unknown> = { fileAccessGranted: true };
+    if (workspaceUri) {
+      body.workspaceFolderAbsoluteUri = workspaceUri;
+    }
+    return this.post<{ cascadeId: string }>("/api/conversations", body);
+  }
+
+  async sendMessage(
+    cascadeId: string,
+    text: string,
+    model?: string,
+    media?: { mimeType: string; data: string }[],
+  ): Promise<void> {
+    const body: Record<string, unknown> = {
+      items: [{ textContent: text }],
+      fileAccessGranted: true,
+    };
+    if (model) body.model = model;
+    if (media && media.length > 0) body.media = media;
+    await this.post(`/api/conversations/${cascadeId}/messages`, body);
+  }
+
+  async stopConversation(cascadeId: string): Promise<void> {
+    await this.post(`/api/conversations/${cascadeId}/stop`, {});
+  }
+
+  async approveCommand(
+    cascadeId: string,
+    trajectoryId: string,
+    stepIndex: number,
+  ): Promise<void> {
+    await this.post(`/api/conversations/${cascadeId}/command-action`, {
+      trajectoryId,
+      stepIndex,
+      approved: true,
+    });
+  }
+
+  async rejectCommand(
+    cascadeId: string,
+    trajectoryId: string,
+    stepIndex: number,
+  ): Promise<void> {
+    await this.post(`/api/conversations/${cascadeId}/command-action`, {
+      trajectoryId,
+      stepIndex,
+      approved: false,
+    });
+  }
+
+  async approveFileAccess(
+    cascadeId: string,
+    trajectoryId: string,
+    stepIndex: number,
+    absolutePathUri: string,
+  ): Promise<void> {
+    await this.post(`/api/conversations/${cascadeId}/file-permission`, {
+      trajectoryId,
+      stepIndex,
+      allow: true,
+      scope: 2, // CONVERSATION scope
+      absolutePathUri,
+    });
+  }
+
+  async rejectFileAccess(
+    cascadeId: string,
+    trajectoryId: string,
+    stepIndex: number,
+    absolutePathUri: string,
+  ): Promise<void> {
+    await this.post(`/api/conversations/${cascadeId}/file-permission`, {
+      trajectoryId,
+      stepIndex,
+      allow: false,
+      scope: 0,
+      absolutePathUri,
+    });
+  }
+
+  async getHealth(): Promise<Record<string, unknown>> {
+    return this.get("/api/health");
+  }
+
+  async listModels(): Promise<{ name: string; displayName: string }[]> {
+    const data = await this.get<Record<string, unknown>>("/api/models");
+    // Extract model data from the LS response
+    const models = (data.models ?? data.modelConfigs ?? []) as Record<string, unknown>[];
+    return models.map((m) => ({
+      name: (m.model as string) ?? (m.name as string) ?? "unknown",
+      displayName: (m.displayName as string) ?? (m.model as string) ?? "unknown",
+    }));
+  }
+
+  // ── WebSocket ──
+
+  connectWebSocket(cascadeId: string, onMessage: StepCallback): WSConnection {
+    const wsUrl = this.baseUrl
+      .replace(/^http/, "ws")
+      .concat(`/api/conversations/${cascadeId}/ws`);
+
+    const protocols: string[] = [];
+    const headers: Record<string, string> = {};
+    if (this.authToken) {
+      headers["Authorization"] = `Bearer ${this.authToken}`;
+    }
+
+    const ws = new WebSocket(`${wsUrl}?token=${this.authToken ?? ""}`, protocols, {
+      headers,
+    });
+
+    ws.on("message", (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString()) as WSMessage;
+        onMessage(msg);
+      } catch {
+        // Skip non-JSON messages
+      }
+    });
+
+    ws.on("error", (err) => {
+      console.error(`[ws] Error: ${err.message}`);
+    });
+
+    return {
+      ws,
+      close: () => {
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
+        }
+      },
+    };
+  }
+
+  // ── Internal HTTP helpers ──
+
+  private buildHeaders(mutation: boolean): Record<string, string> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (this.authToken) {
+      headers["Authorization"] = `Bearer ${this.authToken}`;
+    }
+    if (mutation) {
+      headers["X-Porta-Request"] = "1";
+    }
+    return headers;
+  }
+
+  private get<T>(path: string): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const url = new URL(path, this.baseUrl);
+      const headers = this.buildHeaders(false);
+
+      const req = request(
+        {
+          hostname: url.hostname,
+          port: url.port,
+          path: url.pathname + url.search,
+          method: "GET",
+          headers,
+        },
+        (res: IncomingMessage) => {
+          this.consumeResponse<T>(res, resolve, reject);
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+  }
+
+  private post<T>(path: string, body: Record<string, unknown>): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const url = new URL(path, this.baseUrl);
+      const headers = this.buildHeaders(true);
+      const payload = JSON.stringify(body);
+      headers["Content-Length"] = String(Buffer.byteLength(payload));
+
+      const req = request(
+        {
+          hostname: url.hostname,
+          port: url.port,
+          path: url.pathname + url.search,
+          method: "POST",
+          headers,
+        },
+        (res: IncomingMessage) => {
+          this.consumeResponse<T>(res, resolve, reject);
+        },
+      );
+      req.on("error", reject);
+      req.write(payload);
+      req.end();
+    });
+  }
+
+  private consumeResponse<T>(
+    res: IncomingMessage,
+    resolve: (value: T) => void,
+    reject: (reason: Error) => void,
+  ): void {
+    const chunks: Buffer[] = [];
+    res.on("data", (chunk: Buffer) => chunks.push(chunk));
+    res.on("end", () => {
+      const raw = Buffer.concat(chunks).toString("utf-8");
+      if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+        reject(new Error(`HTTP ${res.statusCode}: ${raw}`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(raw) as T);
+      } catch {
+        resolve(raw as unknown as T);
+      }
+    });
+  }
+}

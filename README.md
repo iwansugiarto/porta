@@ -7,7 +7,7 @@
 Remote web interface for [Antigravity](https://antigravity.google/) Agent Manager.  
 Access your local Antigravity sessions from your phone, tablet, or any remote browser through a lightweight LSP bridge.
 
-Porta is a two-part system: a **proxy** that bridges your local Antigravity Language Server to the network, and a **web UI** (installable PWA) that gives you a mobile-friendly chat interface.
+Porta is a modular system: a **proxy** that bridges your local Antigravity Language Server to the network, a **web UI** (installable PWA) for a mobile-friendly chat interface, and an optional **Telegram bot** for chatting with Antigravity directly from Telegram.
 
 <p align="center">
   <img src="docs/screenshot.png" alt="Porta — desktop and mobile" width="720">
@@ -104,11 +104,35 @@ constraints are inherent to its LSP-bridge architecture:
 > run Porta from WSL2, **not** from Windows. The two environments cannot
 > see each other's processes.
 
+## Telegram Bot
+
+Porta includes an optional Telegram bot that lets you chat with
+Antigravity directly from Telegram — no browser needed.
+
+```bash
+# 1. Get a bot token from @BotFather on Telegram
+# 2. Get your user ID from @userinfobot on Telegram
+# 3. Add to .env:
+TELEGRAM_BOT_TOKEN=7123456789:AAH_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TELEGRAM_ALLOWED_USERS=123456789
+
+# 4. Start (bot launches automatically with pnpm dev)
+pnpm dev
+```
+
+Features: streaming responses, model selection (`/model`), photo/image
+support, inline approval buttons, and completion notifications.
+Only users listed in `TELEGRAM_ALLOWED_USERS` can interact with the bot.
+
+See [docs/telegram.md](docs/telegram.md) for full setup instructions,
+configuration reference, and troubleshooting.
+
 ## Remote access with Cloudflare
 
 ```mermaid
 flowchart LR
   Browser
+  TG["Telegram"]
 
   subgraph CF ["Cloudflare (optional)"]
     Pages["Pages(static SPA)"]
@@ -117,16 +141,19 @@ flowchart LR
   end
 
   subgraph Local ["Your machine"]
+    Bot["Telegram Bot"]
     Proxy["Proxy(:3170)"]
     LS["Antigravity LS"]
   end
 
   Browser -- HTTPS --> Pages --> ZT --> Tunnel --> Proxy --> LS
   Browser -. local .-> Proxy
+  TG <-.-> Bot --> Proxy
 ```
 
 - **Local-only mode** (Quick start above): Browser → Proxy → LS. No cloud services needed.
 - **Remote mode**: Cloudflare Pages + Tunnel + Zero Trust for secure remote access without exposing your network.
+- **Telegram mode**: Telegram Bot → Proxy → LS. Works from anywhere — no Cloudflare needed.
 
 Cloudflare can be used in two different ways:
 

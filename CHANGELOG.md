@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Telegram Bot bridge** — optional `@porta/telegram` package that bridges
+  Antigravity conversations to Telegram via grammY. Communicates with the
+  proxy over the same REST API + WebSocket used by the web UI.
+  ([docs/telegram.md](docs/telegram.md))
+  - Whitelist-based security: `TELEGRAM_ALLOWED_USERS` and
+    `TELEGRAM_ALLOWED_GROUPS` control who can interact with the bot.
+  - Real-time streaming responses via `editMessageText` with 1.5s batching.
+  - Inline keyboard buttons for command and file-access approval.
+  - Model selection: `/model <name>` to choose, `/models` to list available.
+  - Photo/image support: send screenshots with captions to Antigravity.
+  - Proactive completion notifications for tasks exceeding 30 seconds.
+  - Auto-starts with `pnpm dev` when `TELEGRAM_BOT_TOKEN` is configured;
+    also available standalone via `pnpm dev:telegram`.
+
 ## [0.3.0] - 2026-03-14
 
 ### Added

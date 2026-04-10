@@ -1,6 +1,7 @@
 packages:
   - packages/proxy
   - packages/web
+  - packages/telegram
 
 onlyBuiltDependencies:
   - '@swc/core'
