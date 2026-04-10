@@ -36,37 +36,35 @@ export function compressionMiddleware() {
     const contentType = c.res.headers.get("Content-Type");
     if (!isCompressible(contentType ?? undefined)) return;
 
-    // Read the response body
+    // Read the response body — this "disturbs" the original ReadableStream.
+    // We MUST replace c.res with a fresh Response to avoid Node 25
+    // "ReadableStream is locked" errors downstream.
+    const status = c.res.status;
+    const headers = new Headers(c.res.headers);
     const body = await c.res.arrayBuffer();
-    if (body.byteLength < MIN_SIZE) {
-      // Too small — not worth compressing, re-set the body
-      c.res = new Response(body, {
-        status: c.res.status,
-        headers: c.res.headers,
-      });
+    const buf = Buffer.from(body);
+
+    if (buf.byteLength < MIN_SIZE) {
+      // Too small — not worth compressing, but still need a fresh Response
+      c.res = new Response(buf, { status, headers });
       return;
     }
 
     const accept = c.req.header("Accept-Encoding") ?? "";
-    const buf = Buffer.from(body);
 
     if (accept.includes("gzip")) {
       const compressed = gzipSync(buf);
-      c.res = new Response(compressed, {
-        status: c.res.status,
-        headers: c.res.headers,
-      });
-      c.res.headers.set("Content-Encoding", "gzip");
-      c.res.headers.set("Content-Length", String(compressed.byteLength));
-      c.res.headers.delete("Content-Length"); // Let runtime handle it
+      headers.set("Content-Encoding", "gzip");
+      headers.set("Content-Length", String(compressed.byteLength));
+      c.res = new Response(compressed, { status, headers });
     } else if (accept.includes("deflate")) {
       const compressed = deflateSync(buf);
-      c.res = new Response(compressed, {
-        status: c.res.status,
-        headers: c.res.headers,
-      });
-      c.res.headers.set("Content-Encoding", "deflate");
-      c.res.headers.delete("Content-Length");
+      headers.set("Content-Encoding", "deflate");
+      headers.delete("Content-Length");
+      c.res = new Response(compressed, { status, headers });
+    } else {
+      // No compression accepted — still need a fresh Response
+      c.res = new Response(buf, { status, headers });
     }
   };
 }

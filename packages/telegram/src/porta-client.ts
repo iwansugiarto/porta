@@ -167,12 +167,14 @@ export class PortaClient {
 
   async listModels(): Promise<{ name: string; displayName: string }[]> {
     const data = await this.get<Record<string, unknown>>("/api/models");
-    // Extract model data from the LS response
-    const models = (data.models ?? data.modelConfigs ?? []) as Record<string, unknown>[];
-    return models.map((m) => ({
-      name: (m.model as string) ?? (m.name as string) ?? "unknown",
-      displayName: (m.displayName as string) ?? (m.model as string) ?? "unknown",
-    }));
+    // Extract model data from the LS response (field is clientModelConfigs)
+    const models = (data.clientModelConfigs ?? data.models ?? data.modelConfigs ?? []) as Record<string, unknown>[];
+    return models.map((m) => {
+      const modelOrAlias = m.modelOrAlias as Record<string, unknown> | undefined;
+      const modelId = (modelOrAlias?.model as string) ?? (m.model as string) ?? (m.name as string) ?? "unknown";
+      const label = (m.label as string) ?? modelId;
+      return { name: modelId, displayName: label };
+    });
   }
 
   // ── WebSocket ──

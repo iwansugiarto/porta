@@ -67,12 +67,26 @@ const rateLimiter = new RateLimiter(rateLimitConfig);
 // 1. CORS
 const ALLOWED_ORIGINS = getAllowedOrigins();
 
-app.use(
-  "*",
-  cors({
-    origin: (origin) => resolveCorsOrigin(origin, ALLOWED_ORIGINS),
-  }),
-);
+const corsHandler = cors({
+  origin: (origin) => resolveCorsOrigin(origin, ALLOWED_ORIGINS),
+});
+
+// Wrap CORS to suppress Node 25 "Response body should not be disturbed" errors.
+// The response is already sent successfully before the error occurs.
+app.use("*", async (c, next) => {
+  try {
+    await corsHandler(c, next);
+  } catch (err) {
+    if (
+      err instanceof TypeError &&
+      /disturbed|locked/i.test(err.message)
+    ) {
+      // Non-fatal: response was already sent. Suppress.
+      return;
+    }
+    throw err;
+  }
+});
 
 // 2. Response compression (gzip/deflate for responses > 1KB)
 app.use("/api/*", compressionMiddleware());
