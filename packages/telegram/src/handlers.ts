@@ -569,10 +569,19 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
     session.streamMessageId = null;
     session.streamBuffer = "";
 
-    // Send the message to Porta
+    // Connect WebSocket FIRST so it catches the "activate" signal
+    // emitted by the proxy when the message is processed.
+    connectStreamer(ctx.api, chatId, session, client, config);
+
+    // Send the message to Porta (triggers activate → WS transitions to ACTIVE)
     try {
       await client.sendMessage(session.cascadeId, text, session.selectedModel);
     } catch (err) {
+      // Clean up the WS we just opened
+      if (session.wsConnection) {
+        session.wsConnection.close();
+        session.wsConnection = null;
+      }
       const errMsg = (err as Error).message;
       if (errMsg.includes("not_found") || errMsg.includes("502")) {
         destroySession(chatId);
@@ -589,9 +598,6 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
       }
       return;
     }
-
-    // Connect WebSocket for streaming response
-    connectStreamer(ctx.api, chatId, session, client, config);
   });
 
   // ── Photo/image messages → send with media to Antigravity ──
@@ -637,6 +643,9 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
     const photos = ctx.message.photo;
     const bestPhoto = photos[photos.length - 1];
 
+    // Connect WebSocket FIRST
+    connectStreamer(ctx.api, chatId, session, client, config);
+
     try {
       const file = await ctx.api.getFile(bestPhoto.file_id);
       const fileUrl = `https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`;
@@ -667,15 +676,17 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
         [{ mimeType, data: base64Data }],
       );
     } catch (err) {
+      // Clean up the WS on error
+      if (session.wsConnection) {
+        session.wsConnection.close();
+        session.wsConnection = null;
+      }
       await ctx.reply(
         `❌ Gagal mengirim gambar: ${escapeHtml((err as Error).message)}`,
         { parse_mode: "HTML" },
       );
       return;
     }
-
-    // Connect WebSocket for streaming response
-    connectStreamer(ctx.api, chatId, session, client, config);
   });
 }
 
