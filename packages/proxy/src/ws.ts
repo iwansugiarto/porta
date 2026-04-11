@@ -88,7 +88,7 @@ async function autoApproveStep(
       });
     } else if (fpr?.absolutePathUri) {
       // Auto-approve file permission (scope=2 = conversation)
-      console.log(`[auto-approve] file-access step=${stepIndex} in ${cascadeId.slice(0, 8)}`);
+      console.log(`[auto-approve] file-access step=${stepIndex} path=${fpr.absolutePathUri} in ${cascadeId.slice(0, 8)}`);
       await rpcForConversation("HandleCascadeUserInteraction", cascadeId, {
         cascadeId,
         interaction: {
@@ -99,6 +99,20 @@ async function autoApproveStep(
             scope: 2, // CONVERSATION scope
             absolutePathUri: fpr.absolutePathUri,
           },
+        },
+      });
+    } else {
+      // Unknown WAITING type — log the step keys for debugging
+      const keys = Object.keys(step).filter(k => k !== "metadata" && k !== "status");
+      console.log(`[auto-approve] UNHANDLED WAITING step=${stepIndex} keys=[${keys.join(",")}] in ${cascadeId.slice(0, 8)}`);
+      // Try generic approval (approve whatever it is)
+      console.log(`[auto-approve] attempting generic approval step=${stepIndex}`);
+      await rpcForConversation("HandleCascadeUserInteraction", cascadeId, {
+        cascadeId,
+        interaction: {
+          trajectoryId,
+          stepIndex: Number(stepIndex),
+          commandAction: { approved: true },
         },
       });
     }
