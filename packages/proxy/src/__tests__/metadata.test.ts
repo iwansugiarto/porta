@@ -13,19 +13,22 @@ describe("getMetadata", () => {
     }
   });
 
-  it("returns base fields without file access", async () => {
+  it("auto-grants access when auto-approve is on (default)", async () => {
+    delete process.env.PORTA_AUTO_APPROVE;
     const meta = await getMetadata();
     expect(meta.ideName).toBe("porta");
     expect(meta.ideVersion).toBe("0.1.0");
     expect(meta.extensionVersion).toBe("0.1.0");
-    expect(meta.allowFileAccess).toBeUndefined();
-    expect(meta.allWorkspaceTrustGranted).toBeUndefined();
+    expect(meta.allowFileAccess).toBe(true);
+    expect(meta.allWorkspaceTrustGranted).toBe(true);
   });
 
-  it("returns base fields with fileAccessGranted=false", async () => {
+  it("auto-grants access even with fileAccessGranted=false when auto-approve on", async () => {
+    delete process.env.PORTA_AUTO_APPROVE;
     const meta = await getMetadata(false);
     expect(meta.ideName).toBe("porta");
-    expect(meta.allowFileAccess).toBeUndefined();
+    expect(meta.allowFileAccess).toBe(true);
+    expect(meta.allWorkspaceTrustGranted).toBe(true);
   });
 
   it("includes file access fields when granted (auto-approve default)", async () => {
@@ -36,11 +39,18 @@ describe("getMetadata", () => {
     expect(meta.allWorkspaceTrustGranted).toBe(true);
   });
 
-  it("omits allWorkspaceTrustGranted when PORTA_AUTO_APPROVE=false", async () => {
+  it("omits access when both PORTA_AUTO_APPROVE=false and fileAccessGranted=false", async () => {
+    process.env.PORTA_AUTO_APPROVE = "false";
+    const meta = await getMetadata(false);
+    expect(meta.allowFileAccess).toBeUndefined();
+    expect(meta.allWorkspaceTrustGranted).toBeUndefined();
+  });
+
+  it("grants trust when PORTA_AUTO_APPROVE=false but fileAccessGranted=true", async () => {
     process.env.PORTA_AUTO_APPROVE = "false";
     const meta = await getMetadata(true);
     expect(meta.allowFileAccess).toBe(true);
-    expect(meta.allWorkspaceTrustGranted).toBeUndefined();
+    expect(meta.allWorkspaceTrustGranted).toBe(true);
   });
 
   it("includes allWorkspaceTrustGranted when PORTA_AUTO_APPROVE=true", async () => {
@@ -51,6 +61,7 @@ describe("getMetadata", () => {
   });
 
   it("returns a fresh object on each call", async () => {
+    process.env.PORTA_AUTO_APPROVE = "false";
     const a = await getMetadata();
     const b = await getMetadata();
     expect(a).not.toBe(b);

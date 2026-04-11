@@ -43,12 +43,12 @@ export async function getMetadata(
     extensionVersion: "0.1.0",
   };
   const autoApprove = isAutoApproveEnabled();
-  if (fileAccessGranted) {
+  // When auto-approve is on, always grant file access and workspace trust
+  // so the LS never enters WAITING state for permissions.
+  const grantAccess = autoApprove || fileAccessGranted;
+  if (grantAccess) {
     meta.allowFileAccess = true;
-    // Only auto-grant full workspace trust when env allows it
-    if (autoApprove) {
-      meta.allWorkspaceTrustGranted = true;
-    }
+    meta.allWorkspaceTrustGranted = true;
   }
   return meta;
 }
