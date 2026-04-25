@@ -30,6 +30,10 @@ interface Props {
   defaultModel?: string | null;
   /** Default planner type from client settings. */
   defaultPlannerType?: PlannerType;
+  /** Called when the user picks a model in the inline dropdown — persists the choice. */
+  onModelChange?: (model: string | null) => void;
+  /** Called when the user picks a planner type in the inline dropdown — persists the choice. */
+  onPlannerTypeChange?: (plannerType: PlannerType) => void;
 }
 
 interface AttachmentPreview {
@@ -110,6 +114,8 @@ export function ChatInput({
   onDraftChange,
   defaultModel,
   defaultPlannerType,
+  onModelChange,
+  onPlannerTypeChange,
 }: Props) {
   const effectiveDefault = defaultModel ?? DEFAULT_MODEL;
   const [model, setModel] = useState<string | null>(effectiveDefault);
@@ -119,6 +125,15 @@ export function ChatInput({
     setModel(effectiveDefault);
   }, [effectiveDefault]);
 
+  // Wrap setModel to also persist the choice back to settings
+  const handleModelSelect = useCallback(
+    (m: string) => {
+      setModel(m);
+      onModelChange?.(m);
+    },
+    [onModelChange],
+  );
+
   const effectivePlanner = defaultPlannerType ?? "conversational";
   const [plannerType, setPlannerType] = useState<PlannerType>(effectivePlanner);
 
@@ -126,6 +141,15 @@ export function ChatInput({
   useEffect(() => {
     setPlannerType(effectivePlanner);
   }, [effectivePlanner]);
+
+  // Wrap setPlannerType to also persist the choice back to settings
+  const handlePlannerSelect = useCallback(
+    (p: PlannerType) => {
+      setPlannerType(p);
+      onPlannerTypeChange?.(p);
+    },
+    [onPlannerTypeChange],
+  );
   const [attachments, setAttachments] = useState<AttachmentPreview[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -376,10 +400,10 @@ export function ChatInput({
           </div>
 
           <div className="chat-input-bottom-right">
-            <ModelSelector selectedModel={model} onSelect={setModel} />
+            <ModelSelector selectedModel={model} onSelect={handleModelSelect} />
             <PlannerTypeSelector
               plannerType={plannerType}
-              onSelect={setPlannerType}
+              onSelect={handlePlannerSelect}
             />
             {isRunning && (
               <button

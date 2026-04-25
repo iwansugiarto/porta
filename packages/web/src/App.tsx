@@ -518,6 +518,8 @@ function ChatView({ onLogout }: { onLogout?: () => void }) {
             onDraftChange={handleDraftChange}
             defaultModel={settings.defaultModel}
             defaultPlannerType={settings.defaultPlannerType}
+            onModelChange={(m) => updateSettings({ defaultModel: m })}
+            onPlannerTypeChange={(p) => updateSettings({ defaultPlannerType: p })}
           />
         )}
       </div>
