@@ -7,6 +7,8 @@ import {
   IconFile,
   IconFileText,
   IconLock,
+  IconDownload,
+  IconExternalLink,
 } from "./Icons";
 import type { TrajectoryStep, FilePermissionRequest } from "../types";
 
@@ -270,6 +272,13 @@ function diffLineClass(type: DiffLineType): string {
   if (type === "UNIFIED_DIFF_LINE_TYPE_HUNK_HEADER") return "diff-hunk";
   return "";
 }
+/** Build a URL to the /api/files endpoint for a given file URI */
+function fileApiUrl(fileUri: string, mode?: "download"): string {
+  const base = import.meta.env.VITE_API_BASE ?? "";
+  const params = new URLSearchParams({ uri: fileUri });
+  if (mode) params.set("mode", mode);
+  return `${base}/api/files?${params}`;
+}
 
 export function CodeActionCard({ step }: CodeActionCardProps) {
   const [expanded, setExpanded] = useState(false);
@@ -316,6 +325,28 @@ export function CodeActionCard({ step }: CodeActionCardProps) {
         </span>
         {fileName && <code className="step-card-file">{fileName}</code>}
         <span className="step-card-desc">{description}</span>
+        {fileUri && (
+          <span className="step-card-file-actions">
+            <a
+              className="step-card-file-btn"
+              href={fileApiUrl(fileUri)}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open file"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <IconExternalLink size={11} />
+            </a>
+            <a
+              className="step-card-file-btn"
+              href={fileApiUrl(fileUri, "download")}
+              title="Download file"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <IconDownload size={11} />
+            </a>
+          </span>
+        )}
         {hasDiff && (
           <span className={`step-card-chevron ${expanded ? "open" : ""}`}>
             ▾

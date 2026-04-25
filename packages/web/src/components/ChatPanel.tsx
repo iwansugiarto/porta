@@ -23,6 +23,7 @@ import {
   FilePermissionCard,
   getFilePermissionRequest,
 } from "./StepCards";
+import { ArtifactsPanel, extractArtifactFiles } from "./ArtifactsPanel";
 import {
   IconCopy,
   IconCheck,
@@ -433,6 +434,7 @@ export function ChatPanel({
   }, [cascadeId]);
 
   const serverMessages = useMemo(() => stepsToMessages(rawSteps), [rawSteps]);
+  const artifactFiles = useMemo(() => extractArtifactFiles(rawSteps), [rawSteps]);
   const {
     messages,
     confirmedOptimisticIds,
@@ -619,6 +621,10 @@ export function ChatPanel({
       }}
     >
       <div className="chat-area-inner" ref={innerRef} onClick={handleImgClick}>
+        {artifactFiles.length > 0 && (
+          <ArtifactsPanel files={artifactFiles} />
+        )}
+
         {loadingOlder && (
           <div className="loading-older">
             <div className="loading-spinner" />

@@ -247,3 +247,25 @@ export const IconGear = ({ size = 16, className }: IconProps) =>
 
 export const IconChevronLeft = ({ size = 16, className }: IconProps) =>
   d(size, className, "m15 18-6-6 6-6");
+
+export const IconDownload = ({ size = 16, className }: IconProps) =>
+  m(size, className, [
+    "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4",
+    "m7-5 5 5 5-5",
+    "M12 3v12",
+  ]);
+
+export const IconExternalLink = ({ size = 16, className }: IconProps) =>
+  m(size, className, [
+    "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
+    "M15 3h6v6",
+    "M10 14 21 3",
+  ]);
+
+export const IconPackage = ({ size = 16, className }: IconProps) =>
+  m(size, className, [
+    "m16.5 9.4-9-5.19",
+    "M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z",
+    "M3.27 6.96 12 12.01l8.73-5.05",
+    "M12 22.08V12",
+  ]);

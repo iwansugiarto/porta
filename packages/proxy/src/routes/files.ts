@@ -19,6 +19,30 @@ const IMAGE_EXTS: Record<string, string> = {
   ".ico": "image/x-icon",
 };
 
+const TEXT_EXTS: Record<string, string> = {
+  ".md": "text/markdown; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".yaml": "text/yaml; charset=utf-8",
+  ".yml": "text/yaml; charset=utf-8",
+  ".ts": "text/plain; charset=utf-8",
+  ".tsx": "text/plain; charset=utf-8",
+  ".js": "text/plain; charset=utf-8",
+  ".jsx": "text/plain; charset=utf-8",
+  ".py": "text/plain; charset=utf-8",
+  ".dart": "text/plain; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".xml": "text/xml; charset=utf-8",
+  ".csv": "text/csv; charset=utf-8",
+  ".log": "text/plain; charset=utf-8",
+  ".sh": "text/plain; charset=utf-8",
+  ".toml": "text/plain; charset=utf-8",
+};
+
+/** Combined lookup for all servable file types */
+const ALL_EXTS: Record<string, string> = { ...IMAGE_EXTS, ...TEXT_EXTS };
+
 function fileUriToPath(
   fileUri: string,
   useWindowsPaths: boolean,
@@ -143,9 +167,9 @@ export function registerFileRoutes(app: Hono): void {
       return c.json({ error: "Access denied" }, 403);
     }
 
-    // Only serve images
+    // Serve images and text/code files
     const ext = extname(resolved).toLowerCase();
-    const mimeType = IMAGE_EXTS[ext];
+    const mimeType = ALL_EXTS[ext];
     if (!mimeType) {
       return c.json({ error: `Unsupported file type: ${ext}` }, 400);
     }
@@ -154,12 +178,18 @@ export function registerFileRoutes(app: Hono): void {
       return c.json({ error: "File not found" }, 404);
     }
 
+    const mode = c.req.query("mode"); // "download" → force download
+    const headers: Record<string, string> = {
+      "Content-Type": mimeType,
+      "Cache-Control": "public, max-age=3600",
+    };
+
+    if (mode === "download") {
+      const filename = posix.basename(resolved);
+      headers["Content-Disposition"] = `attachment; filename="${filename}"`;
+    }
+
     const stream = createReadStream(resolved);
-    return new Response(Readable.toWeb(stream) as ReadableStream, {
-      headers: {
-        "Content-Type": mimeType,
-        "Cache-Control": "public, max-age=3600",
-      },
-    });
+    return new Response(Readable.toWeb(stream) as ReadableStream, { headers });
   });
 }
