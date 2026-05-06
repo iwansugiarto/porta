@@ -29,6 +29,17 @@ export interface ChatSession {
   selectedModel: string | undefined;
   /** Last activity timestamp. */
   lastActivity: number;
+  /**
+   * Step offsets that have already been rendered to Telegram.
+   * Persists across ResponseStreamer instances to prevent re-sending
+   * historical steps when the WS replays the full conversation.
+   */
+  renderedStepOffsets: Set<number>;
+  /**
+   * The step count at the time the current user message was sent.
+   * Steps with offset < this value are historical and should be skipped.
+   */
+  historicalStepCount: number;
 }
 
 /** In-memory session store: telegramChatId → ChatSession */
@@ -62,6 +73,8 @@ export function createSession(
     flushTimer: null,
     selectedModel: undefined,
     lastActivity: Date.now(),
+    renderedStepOffsets: new Set(),
+    historicalStepCount: 0,
   };
 
   sessions.set(chatId, session);

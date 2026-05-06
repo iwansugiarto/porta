@@ -7,6 +7,13 @@
  * Telegram's 4096-char limit.
  *
  * Batching interval: 1.5s — balances responsiveness vs Telegram rate limits.
+ *
+ * Deduplication strategy:
+ *  - The WS replays ALL steps from the conversation on connect.
+ *  - The "ready" message tells us how many steps existed before our message.
+ *  - We skip all steps with offset < historicalStepCount.
+ *  - We also track rendered offsets in session.renderedStepOffsets to
+ *    prevent re-rendering across streamer instances.
  */
 
 import type { Api } from "grammy";
@@ -38,10 +45,15 @@ export class ResponseStreamer {
   private finalized = false;
   /** Steps that need approval (tracked to avoid duplicate keyboards). */
   private approvalsSent = new Set<string>();
-  /** Track processed step offset+status to prevent duplicates while allowing updates. */
-  private processedSteps = new Map<number, string>();
   /** Timer for periodic typing indicator. */
   private typingTimer: ReturnType<typeof setInterval> | null = null;
+  /**
+   * Whether we have received the "ready" message from the WS.
+   * Until we know the historical boundary, we buffer step messages.
+   */
+  private ready = false;
+  /** Buffered step messages received before "ready". */
+  private preReadyBuffer: WSMessage[] = [];
 
   constructor(
     api: Api,
@@ -81,30 +93,87 @@ export class ResponseStreamer {
    * Called by the WS connection handler for each received message.
    */
   async onMessage(msg: WSMessage): Promise<void> {
-    if (msg.type === "steps") {
-      const raw = msg as unknown as Record<string, unknown>;
-      const steps = raw.steps as Record<string, unknown>[];
-      const offset = (raw.offset as number) ?? 0;
+    if (msg.type === "ready") {
+      // The "ready" message tells us how many steps existed before our turn.
+      // All steps with offset < stepCount are historical and should be skipped.
+      const readyMsg = msg as { type: "ready"; stepCount: number };
+      this.session.historicalStepCount = readyMsg.stepCount;
+      this.ready = true;
+      console.log(
+        `[streamer:${this.cascadeId.slice(0, 8)}] ready: historicalStepCount=${readyMsg.stepCount}`,
+      );
 
-      // Start typing indicator on first step data
-      this.startTyping();
-
-      for (let i = 0; i < steps.length; i++) {
-        const stepOffset = offset + i;
-        const step = steps[i];
-        const status = (step.status as string) ?? "";
-        // Build a fingerprint: status + whether output exists
-        const hasOutput = !!(step.runCommand as Record<string, unknown> | undefined)?.output;
-        const fingerprint = `${status}:${hasOutput}`;
-        const prev = this.processedSteps.get(stepOffset);
-        if (prev === fingerprint) continue; // Already rendered this exact state
-        this.processedSteps.set(stepOffset, fingerprint);
-        await this.processStep(step);
+      // Process any buffered messages now that we know the boundary
+      for (const buffered of this.preReadyBuffer) {
+        await this.processStepMessage(buffered);
       }
+      this.preReadyBuffer = [];
+      return;
+    }
+
+    if (msg.type === "steps") {
+      if (!this.ready) {
+        // Buffer until we know the historical boundary
+        this.preReadyBuffer.push(msg);
+        return;
+      }
+      await this.processStepMessage(msg);
     } else if (msg.type === "status") {
       const statusMsg = msg as { type: "status"; running: boolean };
       if (!statusMsg.running && !this.finalized) {
         await this.finalize();
+      }
+    }
+  }
+
+  /** Process a steps-type WS message, skipping historical steps. */
+  private async processStepMessage(msg: WSMessage): Promise<void> {
+    const raw = msg as unknown as Record<string, unknown>;
+    const steps = raw.steps as Record<string, unknown>[];
+    const offset = (raw.offset as number) ?? 0;
+
+    // Start typing indicator on first step data
+    this.startTyping();
+
+    for (let i = 0; i < steps.length; i++) {
+      const stepOffset = offset + i;
+
+      // ── Skip historical steps ──
+      // Steps that existed before the current user message are replayed
+      // by the WS but should NOT be rendered again.
+      if (stepOffset < this.session.historicalStepCount) {
+        continue;
+      }
+
+      // ── Skip already-rendered steps ──
+      // Even within the current turn, avoid rendering the same step twice
+      // (e.g. if the WS re-sends steps with updated status).
+      const step = steps[i];
+      const status = (step.status as string) ?? "";
+
+      // Only mark as "fully rendered" when the step is DONE.
+      // In-progress steps may update (e.g. command output arriving).
+      if (this.session.renderedStepOffsets.has(stepOffset)) {
+        // Already rendered this step in its DONE state — skip entirely
+        continue;
+      }
+
+      // Build a fingerprint to detect meaningful changes
+      const hasOutput = !!(step.runCommand as Record<string, unknown> | undefined)?.output;
+      const isDone = status === "CORTEX_STEP_STATUS_DONE";
+
+      // For non-DONE steps, only render if they have meaningful content
+      // (e.g. WAITING for approval). Skip GENERATING steps to avoid
+      // partial duplicates.
+      if (!isDone && status === "CORTEX_STEP_STATUS_GENERATING") {
+        continue;
+      }
+
+      await this.processStep(step);
+
+      // Mark as rendered once it reaches DONE
+      if (isDone) {
+        this.session.renderedStepOffsets.add(stepOffset);
       }
     }
   }
