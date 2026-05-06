@@ -46,10 +46,41 @@ export interface WSConnection {
 export class PortaClient {
   private readonly baseUrl: string;
   private readonly authToken: string | undefined;
+  /** Cached default model resolved from /api/models. */
+  private defaultModel: string | undefined;
 
   constructor(baseUrl: string, authToken?: string) {
     this.baseUrl = baseUrl;
     this.authToken = authToken;
+  }
+
+  /**
+   * Resolve the default model from the LS.
+   * Cached after the first successful call.
+   */
+  async getDefaultModel(): Promise<string | undefined> {
+    if (this.defaultModel) return this.defaultModel;
+    try {
+      const data = await this.get<Record<string, unknown>>("/api/models");
+      // Check for override default first, then fall back to first recommended model
+      const override = data.defaultOverrideModelConfig as
+        | { modelOrAlias?: { model?: string } }
+        | undefined;
+      if (override?.modelOrAlias?.model) {
+        this.defaultModel = override.modelOrAlias.model;
+        return this.defaultModel;
+      }
+      const models = (data.clientModelConfigs ?? []) as Record<string, unknown>[];
+      const recommended = models.find((m) => m.isRecommended);
+      const first = recommended ?? models[0];
+      if (first) {
+        const alias = first.modelOrAlias as { model?: string } | undefined;
+        this.defaultModel = alias?.model ?? undefined;
+      }
+      return this.defaultModel;
+    } catch {
+      return undefined;
+    }
   }
 
   // ── REST API ──
@@ -103,11 +134,13 @@ export class PortaClient {
     model?: string,
     media?: { mimeType: string; data: string }[],
   ): Promise<void> {
+    // Always include a model — LS won't run the agent without one
+    const resolvedModel = model ?? (await this.getDefaultModel());
     const body: Record<string, unknown> = {
-      items: [{ textContent: text }],
+      items: [{ text }],
       fileAccessGranted: true,
     };
-    if (model) body.model = model;
+    if (resolvedModel) body.model = resolvedModel;
     if (media && media.length > 0) body.media = media;
     await this.post(`/api/conversations/${cascadeId}/messages`, body);
   }
@@ -193,6 +226,9 @@ export class PortaClient {
       .replace(/^http/, "ws")
       .concat(`/api/conversations/${cascadeId}/ws`);
 
+    const shortId = cascadeId.slice(0, 8);
+    console.log(`[ws:${shortId}] connecting to ${wsUrl}`);
+
     const protocols: string[] = [];
     const headers: Record<string, string> = {};
     if (this.authToken) {
@@ -203,9 +239,19 @@ export class PortaClient {
       headers,
     });
 
+    let msgCount = 0;
+
+    ws.on("open", () => {
+      console.log(`[ws:${shortId}] connected`);
+    });
+
     ws.on("message", (raw) => {
       try {
         const msg = JSON.parse(raw.toString()) as WSMessage;
+        msgCount++;
+        if (msgCount <= 3 || msgCount % 20 === 0) {
+          console.log(`[ws:${shortId}] msg #${msgCount} type=${msg.type}`);
+        }
         onMessage(msg);
       } catch {
         // Skip non-JSON messages
@@ -213,7 +259,11 @@ export class PortaClient {
     });
 
     ws.on("error", (err) => {
-      console.error(`[ws] Error: ${err.message}`);
+      console.error(`[ws:${shortId}] error: ${err.message}`);
+    });
+
+    ws.on("close", (code, reason) => {
+      console.log(`[ws:${shortId}] closed code=${code} reason=${reason?.toString() ?? ""} msgs=${msgCount}`);
     });
 
     return {

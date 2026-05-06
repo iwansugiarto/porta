@@ -21,6 +21,9 @@ const FLUSH_INTERVAL_MS = 1500;
 /** Max length before sending a new message instead of editing. */
 const MAX_MSG_LEN = 4000;
 
+/** Interval for resending typing indicator (Telegram expires it after ~5s). */
+const TYPING_INTERVAL_MS = 4000;
+
 export class ResponseStreamer {
   private readonly api: Api;
   private readonly chatId: number;
@@ -35,6 +38,10 @@ export class ResponseStreamer {
   private finalized = false;
   /** Steps that need approval (tracked to avoid duplicate keyboards). */
   private approvalsSent = new Set<string>();
+  /** Track processed step offset+status to prevent duplicates while allowing updates. */
+  private processedSteps = new Map<number, string>();
+  /** Timer for periodic typing indicator. */
+  private typingTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     api: Api,
@@ -48,14 +55,50 @@ export class ResponseStreamer {
     this.cascadeId = cascadeId;
   }
 
+  /** Start sending periodic "typing..." chat action. */
+  private startTyping(): void {
+    if (this.typingTimer || this.finalized) return;
+    // Send immediately, then repeat
+    this.sendTypingAction();
+    this.typingTimer = setInterval(() => this.sendTypingAction(), TYPING_INTERVAL_MS);
+  }
+
+  /** Stop the typing indicator. */
+  private stopTyping(): void {
+    if (this.typingTimer) {
+      clearInterval(this.typingTimer);
+      this.typingTimer = null;
+    }
+  }
+
+  /** Send a single typing action (fire-and-forget). */
+  private sendTypingAction(): void {
+    this.api.sendChatAction(this.chatId, "typing").catch(() => {});
+  }
+
   /**
    * Process incoming WebSocket messages.
    * Called by the WS connection handler for each received message.
    */
   async onMessage(msg: WSMessage): Promise<void> {
     if (msg.type === "steps") {
-      const steps = (msg as unknown as Record<string, unknown>).steps as Record<string, unknown>[];
-      for (const step of steps) {
+      const raw = msg as unknown as Record<string, unknown>;
+      const steps = raw.steps as Record<string, unknown>[];
+      const offset = (raw.offset as number) ?? 0;
+
+      // Start typing indicator on first step data
+      this.startTyping();
+
+      for (let i = 0; i < steps.length; i++) {
+        const stepOffset = offset + i;
+        const step = steps[i];
+        const status = (step.status as string) ?? "";
+        // Build a fingerprint: status + whether output exists
+        const hasOutput = !!(step.runCommand as Record<string, unknown> | undefined)?.output;
+        const fingerprint = `${status}:${hasOutput}`;
+        const prev = this.processedSteps.get(stepOffset);
+        if (prev === fingerprint) continue; // Already rendered this exact state
+        this.processedSteps.set(stepOffset, fingerprint);
         await this.processStep(step);
       }
     } else if (msg.type === "status") {
@@ -221,6 +264,9 @@ export class ResponseStreamer {
   async finalize(): Promise<void> {
     if (this.finalized) return;
     this.finalized = true;
+
+    // Stop typing indicator
+    this.stopTyping();
 
     if (this.session.flushTimer) {
       clearTimeout(this.session.flushTimer);

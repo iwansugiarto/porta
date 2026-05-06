@@ -29,9 +29,18 @@ function truncate(text: string, max: number): string {
 function getPlannerText(step: Record<string, unknown>): string | null {
   const resp = step.plannerResponse as Record<string, unknown> | undefined;
   if (!resp) return null;
+
+  // Current LS format: response / modifiedResponse string fields
+  const text = (resp.modifiedResponse as string) ?? (resp.response as string);
+  if (text) return text;
+
+  // Legacy format: items[].textContent
   const items = resp.items as { textContent?: string }[] | undefined;
-  if (!items || items.length === 0) return null;
-  return items.map((i) => i.textContent ?? "").join("\n");
+  if (items && items.length > 0) {
+    return items.map((i) => i.textContent ?? "").join("\n");
+  }
+
+  return null;
 }
 
 /** Format a single step into Telegram HTML text. */
@@ -39,9 +48,13 @@ export function formatStep(step: Record<string, unknown>): string | null {
   const status = step.status as string | undefined;
 
   // Planner response (the main AI text)
-  const plannerText = getPlannerText(step);
-  if (plannerText) {
-    return escapeHtml(plannerText);
+  // Only render when DONE — during GENERATING the text is still being streamed
+  // and will produce duplicates when re-polled with new content.
+  if (status === "CORTEX_STEP_STATUS_DONE") {
+    const plannerText = getPlannerText(step);
+    if (plannerText) {
+      return escapeHtml(plannerText);
+    }
   }
 
   // Code action (file edit)
@@ -58,13 +71,13 @@ export function formatStep(step: Record<string, unknown>): string | null {
   // Run command
   const runCommand = step.runCommand as Record<string, unknown> | undefined;
   if (runCommand) {
+    // Skip commands that are still in-progress (no output yet).
+    // WAITING commands are handled by the approval system (getApprovalInfo).
+    // Only render when DONE so we get the complete output in one message.
+    if (status !== "CORTEX_STEP_STATUS_DONE") return null;
+
     const cmd = (runCommand.commandLine as string) ?? "";
     let text = `⚡ <b>Command:</b> <code>${escapeHtml(truncate(cmd, 300))}</code>`;
-
-    // If waiting for approval
-    if (status === "CORTEX_STEP_STATUS_WAITING") {
-      text += "\n\n⏳ <i>Menunggu persetujuan...</i>";
-    }
 
     // Show output if available
     const output = runCommand.output as string | undefined;
