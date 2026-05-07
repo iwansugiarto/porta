@@ -219,6 +219,40 @@ export class PortaClient {
     });
   }
 
+  /**
+   * Get the latest steps from a conversation (for /latest command).
+   * Returns the raw conversation detail from the proxy.
+   */
+  async getConversationDetail(
+    cascadeId: string,
+  ): Promise<Record<string, unknown>> {
+    return this.get(`/api/conversations/${cascadeId}`);
+  }
+
+  /**
+   * Execute a shell command on the proxy host.
+   * Runs with a timeout and size cap for safety.
+   */
+  async runShellCommand(
+    command: string,
+    timeoutMs = 30_000,
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    const { exec } = await import("node:child_process");
+    return new Promise((resolve) => {
+      exec(
+        command,
+        { timeout: timeoutMs, maxBuffer: 1024 * 1024 * 2 },
+        (error, stdout, stderr) => {
+          resolve({
+            stdout: stdout ?? "",
+            stderr: stderr ?? "",
+            exitCode: error?.code ?? 0,
+          });
+        },
+      );
+    });
+  }
+
   // ── WebSocket ──
 
   connectWebSocket(cascadeId: string, onMessage: StepCallback): WSConnection {

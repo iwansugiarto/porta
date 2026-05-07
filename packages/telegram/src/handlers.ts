@@ -5,7 +5,7 @@
  * Each command validates the session state and delegates to PortaClient.
  */
 
-import { InlineKeyboard } from "grammy";
+import { InlineKeyboard, InputFile } from "grammy";
 import type { Bot, Context } from "grammy";
 import type { TelegramConfig } from "./config.js";
 import { PortaClient } from "./porta-client.js";
@@ -16,7 +16,19 @@ import {
   destroySession,
 } from "./session.js";
 import { ResponseStreamer } from "./streamer.js";
-import { escapeHtml } from "./formatter.js";
+import { escapeHtml, splitMessage } from "./formatter.js";
+import { withRetry } from "./retry.js";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
+
+/** Helper to close a session's WebSocket without TypeScript narrowing issues. */
+function cleanupWs(session: import("./session.js").ChatSession): void {
+  if (session.wsConnection) {
+    session.wsConnection.close();
+    session.wsConnection = null;
+  }
+}
 
 export function registerHandlers(bot: Bot, config: TelegramConfig): void {
   const client = new PortaClient(config.proxyBaseUrl, config.authToken);
@@ -27,17 +39,25 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
     await ctx.reply(
       "🚀 <b>Porta Telegram Bridge</b>\n\n" +
         "Akses Antigravity langsung dari Telegram.\n\n" +
-        "<b>Commands:</b>\n" +
+        "<b>💬 Chat:</b>\n" +
         "/new — Buat conversation baru\n" +
         "/list — Daftar conversations\n" +
         "/use <code>id</code> — Switch ke conversation\n" +
-        "/model <code>name</code> — Pilih model (e.g. gemini-2.5-pro)\n" +
-        "/models — Daftar model tersedia\n" +
+        "/latest — Response terakhir dari agent\n" +
         "/stop — Stop agent yang sedang berjalan\n" +
+        "/end — Akhiri session saat ini\n\n" +
+        "<b>🤖 Model:</b>\n" +
+        "/models — Daftar model tersedia\n" +
+        "/model <code>name</code> — Pilih model\n\n" +
+        "<b>📂 Files:</b>\n" +
+        "/file — Browse file project\n" +
+        "/artifacts — Lihat artifacts conversation\n\n" +
+        "<b>🔧 Tools:</b>\n" +
+        "/cmd <code>command</code> — Jalankan shell command\n" +
         "/status — Status proxy &amp; Language Server\n" +
-        "/end — Akhiri session saat ini\n" +
-        "/help — Tampilkan bantuan ini\n\n" +
-        "<i>Kirim pesan teks atau foto untuk chat dengan Antigravity.</i>",
+        "/restart — Restart bot\n" +
+        "/help — Tampilkan bantuan\n\n" +
+        "<i>Kirim pesan teks, foto, atau dokumen untuk chat dengan Antigravity.</i>",
       { parse_mode: "HTML" },
     );
   });
@@ -51,21 +71,20 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
         "1. Ketik /new untuk buat conversation\n" +
         "2. Kirim pesan — bot akan meneruskan ke Antigravity\n" +
         "3. Response akan di-stream secara real-time\n\n" +
-        "<b>Model:</b>\n" +
-        "• /models — lihat daftar model tersedia\n" +
-        "• /model gemini-2.5-pro — pilih model\n" +
-        "• /model — reset ke model default\n\n" +
-        "<b>Gambar:</b>\n" +
-        "Kirim foto dengan caption untuk mengirim screenshot/gambar\n" +
+        "<b>Media:</b>\n" +
+        "Kirim foto atau dokumen dengan caption untuk diteruskan\n" +
         "ke Antigravity (e.g. \"fix this UI bug\").\n\n" +
+        "<b>File Explorer:</b>\n" +
+        "• /file — browse project files (with inline buttons)\n" +
+        "• /file src/ — langsung ke subdirectory\n" +
+        "• /artifacts — lihat artifacts conversation\n\n" +
+        "<b>Remote Shell:</b>\n" +
+        "• /cmd ls -la — jalankan command di server\n" +
+        "• /cmd git status — cek status git\n" +
+        "• Beberapa command berbahaya diblokir otomatis\n\n" +
         "<b>Approval:</b>\n" +
-        "Saat Antigravity perlu izin (jalankan command, akses file),\n" +
-        "bot akan menampilkan tombol ✅ Approve / ❌ Reject.\n\n" +
-        "<b>Tips:</b>\n" +
-        "• Gunakan /list untuk melihat conversation lama\n" +
-        "• Gunakan /use &lt;id&gt; untuk melanjutkan conversation\n" +
-        "• Gunakan /stop untuk menghentikan agent\n" +
-        "• Gunakan /end untuk menutup session",
+        "Saat agent perlu izin, bot akan tampilkan\n" +
+        "tombol ✅ Approve / ❌ Reject.",
       { parse_mode: "HTML" },
     );
   });
@@ -210,6 +229,387 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
         { parse_mode: "HTML" },
       );
     }
+  });
+
+  // ── /cmd <command> — execute shell command ──
+
+  /** Dangerous command patterns to block. */
+  const BLOCKED_CMD_PATTERNS = [
+    /rm\s+(-[rf]+\s+)*\//i,
+    /mkfs/i,
+    /dd\s+if=/i,
+    /:(){ :\|:& };:/,
+    />\s*\/dev\/sd/i,
+    /shutdown/i,
+    /reboot/i,
+    /init\s+0/i,
+  ];
+
+  bot.command("cmd", async (ctx) => {
+    const cmdStr = ctx.match?.trim();
+    if (!cmdStr) {
+      await ctx.reply(
+        "💡 Gunakan: /cmd <code>command</code>\n\n" +
+          "Contoh: /cmd ls -la\n" +
+          "Contoh: /cmd git status",
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+
+    // Safety check
+    if (BLOCKED_CMD_PATTERNS.some((p) => p.test(cmdStr))) {
+      await ctx.reply("🚫 Command diblokir karena alasan keamanan.");
+      return;
+    }
+
+    const statusMsg = await ctx.reply(
+      `⏳ Running: <code>${escapeHtml(cmdStr.slice(0, 200))}</code>`,
+      { parse_mode: "HTML" },
+    );
+
+    try {
+      const result = await client.runShellCommand(cmdStr);
+      let output = "";
+      if (result.stdout) output += result.stdout;
+      if (result.stderr) output += (output ? "\n" : "") + result.stderr;
+      if (!output) output = "✅ Command selesai (tidak ada output).";
+
+      const header = result.exitCode !== 0
+        ? `❌ Exit code: ${result.exitCode}\n\n`
+        : "";
+      const fullText = header + output;
+
+      const chunks = splitMessage(fullText);
+      for (const chunk of chunks) {
+        await withRetry(() =>
+          ctx.reply(`<pre>${escapeHtml(chunk.slice(0, 3800))}</pre>`, {
+            parse_mode: "HTML",
+          }),
+        );
+      }
+    } catch (err) {
+      await ctx.api.editMessageText(
+        ctx.chat.id,
+        statusMsg.message_id,
+        `❌ Error: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
+  });
+
+  // ── /latest — get last agent response ──
+
+  bot.command("latest", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const session = getSession(chatId);
+
+    if (!session) {
+      await ctx.reply("ℹ️ Tidak ada session aktif. Gunakan /new atau /list.");
+      return;
+    }
+
+    const statusMsg = await ctx.reply("⏳ Mengambil response terakhir...");
+
+    try {
+      const detail = await client.getConversationDetail(session.cascadeId);
+      // Extract the last planner response from steps
+      const trajectories = detail.trajectories as Record<string, unknown>[] | undefined;
+      let lastResponse = "";
+
+      if (trajectories && trajectories.length > 0) {
+        const lastTraj = trajectories[trajectories.length - 1];
+        const steps = (lastTraj.steps ?? lastTraj.cortexSteps) as Record<string, unknown>[] | undefined;
+        if (steps) {
+          // Walk backwards to find the last planner response
+          for (let i = steps.length - 1; i >= 0; i--) {
+            const step = steps[i];
+            const resp = step.plannerResponse as Record<string, unknown> | undefined;
+            if (resp) {
+              lastResponse =
+                (resp.modifiedResponse as string) ??
+                (resp.response as string) ??
+                "";
+              if (lastResponse) break;
+            }
+          }
+        }
+      }
+
+      if (!lastResponse) {
+        await ctx.api.editMessageText(
+          chatId,
+          statusMsg.message_id,
+          "📭 Tidak ada response ditemukan.",
+        );
+        return;
+      }
+
+      // Delete the status message
+      await ctx.api.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+
+      const chunks = splitMessage(lastResponse);
+      for (const chunk of chunks) {
+        await withRetry(() =>
+          ctx.reply(escapeHtml(chunk), { parse_mode: "HTML" }),
+        );
+      }
+    } catch (err) {
+      await ctx.api.editMessageText(
+        chatId,
+        statusMsg.message_id,
+        `❌ Error: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
+  });
+
+  // ── /file — interactive file explorer ──
+
+  const pathCache = new Map<string, string>();
+  let pathIdCounter = 0;
+
+  function getPathId(fullPath: string): string {
+    for (const [id, p] of pathCache.entries()) {
+      if (p === fullPath) return id;
+    }
+    const id = (++pathIdCounter).toString(36);
+    pathCache.set(id, fullPath);
+    if (pathCache.size > 2000) {
+      const firstKey = pathCache.keys().next().value;
+      if (firstKey) pathCache.delete(firstKey);
+    }
+    return id;
+  }
+
+  function listDirectory(ctx: Context, dirPath: string, page = 0): void {
+    const PAGE_SIZE = 8;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    } catch (err) {
+      ctx.reply(`❌ Tidak bisa baca: ${(err as Error).message}`).catch(() => {});
+      return;
+    }
+
+    const filtered = entries
+      .filter((e) => !e.name.startsWith(".") && e.name !== "node_modules")
+      .sort((a, b) => {
+        if (a.isDirectory() && !b.isDirectory()) return -1;
+        if (!a.isDirectory() && b.isDirectory()) return 1;
+        return a.name.localeCompare(b.name);
+      });
+
+    const totalPages = Math.ceil(filtered.length / PAGE_SIZE) || 1;
+    const pageEntries = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+    if (pageEntries.length === 0) {
+      ctx.reply("📂 Folder kosong.").catch(() => {});
+      return;
+    }
+
+    const keyboard = new InlineKeyboard();
+    for (const entry of pageEntries) {
+      const icon = entry.isDirectory() ? "📂" : "📄";
+      const fullPath = path.join(dirPath, entry.name);
+      const pathId = getPathId(fullPath);
+      const action = entry.isDirectory() ? `fd:${pathId}` : `ff:${pathId}`;
+      keyboard.text(`${icon} ${entry.name}`, action).row();
+    }
+
+    // Navigation row
+    const parentDir = path.dirname(dirPath);
+    if (parentDir !== dirPath) {
+      keyboard.text("⬆️ Parent", `fd:${getPathId(parentDir)}`);
+    }
+    const dirPathId = getPathId(dirPath);
+    if (page > 0) keyboard.text("◀️", `fp:${dirPathId}|${page - 1}`);
+    if (page < totalPages - 1) keyboard.text("▶️", `fp:${dirPathId}|${page + 1}`);
+    if (parentDir !== dirPath || page > 0 || page < totalPages - 1) keyboard.row();
+
+    const shortPath = dirPath.replace(os.homedir(), "~");
+    ctx.reply(
+      `📂 <b>${escapeHtml(shortPath)}</b>\n` +
+        `<i>${filtered.length} items — page ${page + 1}/${totalPages}</i>`,
+      { parse_mode: "HTML", reply_markup: keyboard },
+    ).catch(() => {});
+  }
+
+  bot.command("file", (ctx) => {
+    const filePath = ctx.match?.trim();
+    const wsUri = config.workspaceUri;
+    const defaultDir = wsUri
+      ? wsUri.replace(/^file:\/\//, "")
+      : os.homedir();
+
+    if (!filePath) {
+      listDirectory(ctx, defaultDir);
+      return;
+    }
+
+    const fullPath = filePath.startsWith("/")
+      ? filePath
+      : path.join(defaultDir, filePath);
+
+    if (!fs.existsSync(fullPath)) {
+      ctx.reply(`❌ Tidak ditemukan: ${escapeHtml(fullPath)}`, {
+        parse_mode: "HTML",
+      }).catch(() => {});
+      return;
+    }
+
+    const stat = fs.statSync(fullPath);
+    if (stat.isDirectory()) {
+      listDirectory(ctx, fullPath);
+      return;
+    }
+
+    if (stat.size > 50 * 1024 * 1024) {
+      ctx.reply(`❌ File terlalu besar: ${(stat.size / 1024 / 1024).toFixed(1)}MB`).catch(() => {});
+      return;
+    }
+
+    ctx.replyWithDocument(new InputFile(fullPath, path.basename(fullPath)))
+      .catch((e) => ctx.reply(`❌ Gagal kirim: ${(e as Error).message}`).catch(() => {}));
+  });
+
+  // File explorer callback handlers
+  bot.callbackQuery(/^fd:(.+)$/, (ctx) => {
+    const pathId = ctx.match[1];
+    const dirPath = pathCache.get(pathId);
+    if (!dirPath) return ctx.answerCallbackQuery({ text: "Expired — /file lagi" });
+    ctx.answerCallbackQuery().catch(() => {});
+    listDirectory(ctx, dirPath);
+  });
+
+  bot.callbackQuery(/^ff:(.+)$/, async (ctx) => {
+    const pathId = ctx.match[1];
+    const filePath = pathCache.get(pathId);
+    if (!filePath) return ctx.answerCallbackQuery({ text: "Expired — /file lagi" });
+    await ctx.answerCallbackQuery({ text: `Sending ${path.basename(filePath)}...` });
+    try {
+      const stat = fs.statSync(filePath);
+      if (stat.size > 50 * 1024 * 1024) {
+        await ctx.reply(`❌ File terlalu besar: ${(stat.size / 1024 / 1024).toFixed(1)}MB`);
+        return;
+      }
+      await ctx.replyWithDocument(new InputFile(filePath, path.basename(filePath)));
+    } catch (e) {
+      await ctx.reply(`❌ Gagal kirim: ${(e as Error).message}`);
+    }
+  });
+
+  bot.callbackQuery(/^fp:(.+)$/, (ctx) => {
+    const [pathId, pageStr] = ctx.match[1].split("|");
+    const dirPath = pathCache.get(pathId);
+    if (!dirPath) return ctx.answerCallbackQuery({ text: "Expired — /file lagi" });
+    ctx.answerCallbackQuery().catch(() => {});
+    listDirectory(ctx, dirPath, parseInt(pageStr) || 0);
+  });
+
+  // ── /artifacts — list/download conversation artifacts ──
+
+  let cachedArtifacts: { name: string; path: string }[] = [];
+
+  bot.command("artifacts", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const session = getSession(chatId);
+
+    if (!session) {
+      await ctx.reply("ℹ️ Tidak ada session aktif. Gunakan /new atau /list.");
+      return;
+    }
+
+    const artifactsDir = path.join(
+      os.homedir(),
+      ".gemini",
+      "antigravity",
+      "brain",
+      session.cascadeId,
+    );
+
+    if (!fs.existsSync(artifactsDir)) {
+      await ctx.reply("📭 Tidak ada artifacts untuk conversation ini.");
+      return;
+    }
+
+    cachedArtifacts = [];
+    const items = fs.readdirSync(artifactsDir, { withFileTypes: true });
+
+    for (const item of items) {
+      if (item.isDirectory()) {
+        // Scan scratch/ subdirectory
+        if (item.name === "scratch") {
+          const scratchDir = path.join(artifactsDir, "scratch");
+          const scratchItems = fs.readdirSync(scratchDir, { withFileTypes: true });
+          for (const si of scratchItems) {
+            if (!si.isDirectory()) {
+              cachedArtifacts.push({
+                name: `scratch/${si.name}`,
+                path: path.join(scratchDir, si.name),
+              });
+            }
+          }
+        }
+        continue;
+      }
+      const name = item.name;
+      // Skip metadata files
+      if (name.includes(".metadata.json") || name.startsWith(".sys")) continue;
+      cachedArtifacts.push({ name, path: path.join(artifactsDir, name) });
+    }
+
+    if (cachedArtifacts.length === 0) {
+      await ctx.reply("📭 Tidak ada artifacts untuk conversation ini.");
+      return;
+    }
+
+    let msg = "📎 <b>Artifacts</b>\n\n";
+    for (let i = 0; i < cachedArtifacts.length; i++) {
+      const displayName = cachedArtifacts[i].name
+        .replace(/\.[^/.]+$/, "")
+        .replace(/_/g, " ");
+      msg += `/artifact_${i + 1} — ${escapeHtml(displayName)}\n`;
+    }
+
+    await ctx.reply(msg, { parse_mode: "HTML" });
+  });
+
+  bot.hears(/^\/artifact_(\d+)$/, async (ctx) => {
+    const num = parseInt(ctx.match[1], 10);
+    if (num < 1 || num > cachedArtifacts.length) {
+      await ctx.reply("❌ Nomor artifact tidak valid.");
+      return;
+    }
+    const artifact = cachedArtifacts[num - 1];
+    const ext = path.extname(artifact.name).toLowerCase();
+
+    try {
+      if ([".png", ".jpg", ".jpeg", ".webp"].includes(ext)) {
+        await ctx.replyWithPhoto(new InputFile(artifact.path));
+      } else if ([".mp4", ".mov", ".webm"].includes(ext)) {
+        await ctx.replyWithVideo(new InputFile(artifact.path));
+      } else if (ext === ".md") {
+        const content = fs.readFileSync(artifact.path, "utf8");
+        const chunks = splitMessage(content);
+        for (const chunk of chunks) {
+          await ctx.reply(chunk);
+        }
+      } else {
+        await ctx.replyWithDocument(
+          new InputFile(artifact.path, path.basename(artifact.name)),
+        );
+      }
+    } catch (e) {
+      await ctx.reply(`❌ Error: ${(e as Error).message}`);
+    }
+  });
+
+  // ── /restart — restart the bot process ──
+
+  bot.command("restart", async (ctx) => {
+    await ctx.reply("🔄 Bot restarting...");
+    process.exit(0);
   });
 
   // ── /stop ──
@@ -562,10 +962,7 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
     }
 
     // Close existing WebSocket if any (new user message = new streaming session)
-    if (session.wsConnection) {
-      session.wsConnection.close();
-      session.wsConnection = null;
-    }
+    cleanupWs(session);
     session.streamMessageId = null;
     session.streamBuffer = "";
 
@@ -585,10 +982,7 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
           await client.sendMessage(session.cascadeId, text, session.selectedModel);
         } catch (retryErr) {
           // Clean up the WS we opened
-          if (session.wsConnection) {
-            session.wsConnection.close();
-            session.wsConnection = null;
-          }
+          cleanupWs(session);
           destroySession(chatId);
           await ctx.reply(
             "⚠️ Conversation tidak bisa di-load dari disk.\n\n" +
@@ -599,10 +993,7 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
         }
       } else {
         // Clean up the WS on non-recoverable error
-        if (session.wsConnection) {
-          session.wsConnection.close();
-          session.wsConnection = null;
-        }
+          cleanupWs(session);
         await ctx.reply(
           `❌ Gagal mengirim pesan: ${escapeHtml(errMsg)}`,
           { parse_mode: "HTML" },
@@ -644,10 +1035,7 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
     }
 
     // Close existing WebSocket
-    if (session.wsConnection) {
-      session.wsConnection.close();
-      session.wsConnection = null;
-    }
+    cleanupWs(session);
     session.streamMessageId = null;
     session.streamBuffer = "";
 
@@ -689,10 +1077,7 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
       );
     } catch (err) {
       // Clean up the WS on error
-      if (session.wsConnection) {
-        session.wsConnection.close();
-        session.wsConnection = null;
-      }
+      cleanupWs(session);
       await ctx.reply(
         `❌ Gagal mengirim gambar: ${escapeHtml((err as Error).message)}`,
         { parse_mode: "HTML" },
@@ -700,8 +1085,88 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
       return;
     }
   });
-}
 
+  // ── Document messages → save and tell agent about the file ──
+
+  bot.on("message:document", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const caption = ctx.message.caption ?? "Examine this file";
+    const doc = ctx.message.document;
+
+    let session = getSession(chatId);
+
+    // Auto-create a conversation if none exists
+    if (!session) {
+      const statusMsg = await ctx.reply("⏳ Membuat conversation baru...");
+      try {
+        const result = await client.createConversation(config.workspaceUri);
+        session = createSession(chatId, result.cascadeId);
+        await ctx.api.editMessageText(
+          chatId,
+          statusMsg.message_id,
+          `✅ Conversation <code>${result.cascadeId.slice(0, 8)}</code> dibuat`,
+          { parse_mode: "HTML" },
+        );
+      } catch (err) {
+        await ctx.api.editMessageText(
+          chatId,
+          statusMsg.message_id,
+          `❌ Gagal membuat conversation: ${escapeHtml((err as Error).message)}`,
+          { parse_mode: "HTML" },
+        );
+        return;
+      }
+    }
+
+    // Close existing WebSocket
+    cleanupWs(session);
+    session.streamMessageId = null;
+    session.streamBuffer = "";
+
+    try {
+      // Download file from Telegram
+      const file = await ctx.api.getFile(doc.file_id);
+      const fileName = doc.file_name ?? "telegram_upload";
+      const fileUrl = `https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`;
+
+      const tmpDir = path.join(os.tmpdir(), "porta-telegram");
+      fs.mkdirSync(tmpDir, { recursive: true });
+      const dest = path.join(tmpDir, `tg_${Date.now()}_${fileName}`);
+
+      const response = await fetch(fileUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to download file: HTTP ${response.status}`);
+      }
+      const buffer = Buffer.from(await response.arrayBuffer());
+      fs.writeFileSync(dest, buffer);
+
+      await ctx.reply(`📥 File disimpan: <code>${escapeHtml(fileName)}</code>`, {
+        parse_mode: "HTML",
+      });
+
+      // Connect WebSocket FIRST
+      connectStreamer(ctx.api, chatId, session, client, config);
+
+      // Send a system message telling agent about the file
+      const query =
+        `[The user has uploaded a file. Use your view_file tool to examine it at: ${dest}]\n` +
+        `${caption}`;
+
+      await client.sendMessage(
+        session.cascadeId,
+        query,
+        session.selectedModel,
+      );
+    } catch (err) {
+      // Clean up the WS on error
+      cleanupWs(session);
+      await ctx.reply(
+        `❌ Gagal mengirim dokumen: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
+  });
+}
 /**
  * Connect a WebSocket streamer for a conversation session.
  * Sends a completion notification when the agent finishes.
@@ -714,10 +1179,7 @@ function connectStreamer(
   config: TelegramConfig,
 ): void {
   // Close existing WebSocket if any
-  if (session.wsConnection) {
-    session.wsConnection.close();
-    session.wsConnection = null;
-  }
+  cleanupWs(session);
   session.streamMessageId = null;
   session.streamBuffer = "";
 

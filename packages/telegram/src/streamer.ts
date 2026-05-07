@@ -20,6 +20,7 @@ import type { Api } from "grammy";
 import type { ChatSession } from "./session.js";
 import type { WSMessage } from "./porta-client.js";
 import { formatStep, splitMessage, getApprovalInfo, escapeHtml } from "./formatter.js";
+import { withRetry } from "./retry.js";
 import type { InlineKeyboardMarkup } from "grammy/types";
 
 /** Minimum interval between Telegram message edits (ms). */
@@ -85,7 +86,7 @@ export class ResponseStreamer {
 
   /** Send a single typing action (fire-and-forget). */
   private sendTypingAction(): void {
-    this.api.sendChatAction(this.chatId, "typing").catch(() => {});
+    withRetry(() => this.api.sendChatAction(this.chatId, "typing"), 1, 500).catch(() => {});
   }
 
   /**
@@ -232,9 +233,11 @@ export class ResponseStreamer {
       const chunks = splitMessage(combinedText);
       for (let i = 0; i < chunks.length; i++) {
         try {
-          const sent = await this.api.sendMessage(this.chatId, chunks[i], {
-            parse_mode: "HTML",
-          });
+          const sent = await withRetry(() =>
+            this.api.sendMessage(this.chatId, chunks[i], {
+              parse_mode: "HTML",
+            }),
+          );
           // Track only the last message for future edits
           if (i === chunks.length - 1) {
             this.session.streamMessageId = sent.message_id;
@@ -244,7 +247,9 @@ export class ResponseStreamer {
           console.error(`[streamer] Send error: ${(err as Error).message}`);
           // Retry without parse mode (content may have unbalanced HTML tags)
           try {
-            const sent = await this.api.sendMessage(this.chatId, chunks[i]);
+            const sent = await withRetry(() =>
+              this.api.sendMessage(this.chatId, chunks[i]),
+            );
             if (i === chunks.length - 1) {
               this.session.streamMessageId = sent.message_id;
               this.session.streamBuffer = chunks[i];
@@ -261,11 +266,13 @@ export class ResponseStreamer {
         : combinedText;
 
       try {
-        await this.api.editMessageText(
-          this.chatId,
-          this.session.streamMessageId,
-          newText,
-          { parse_mode: "HTML" },
+        await withRetry(() =>
+          this.api.editMessageText(
+            this.chatId,
+            this.session.streamMessageId!,
+            newText,
+            { parse_mode: "HTML" },
+          ),
         );
         this.session.streamBuffer = newText;
       } catch (err) {

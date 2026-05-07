@@ -4,6 +4,9 @@
  * Enforces a whitelist of Telegram user IDs and group IDs.
  * Unauthorized users are blocked with a denial message (private chats)
  * or silently ignored (unknown groups).
+ *
+ * Sends an alert to all authorized users when an unauthorized access
+ * attempt is detected (inspired by antigravity-telegram-suite).
  */
 
 import type { Context, NextFunction } from "grammy";
@@ -36,6 +39,9 @@ export function authGuard(config: TelegramConfig) {
           "⛔ *Access Denied*\n\nAnda tidak terdaftar untuk menggunakan bot ini\\.",
           { parse_mode: "MarkdownV2" },
         );
+
+        // Alert all authorized users
+        await sendUnauthorizedAlert(ctx, config);
         return;
       }
       return next();
@@ -56,6 +62,9 @@ export function authGuard(config: TelegramConfig) {
         await ctx.reply("⛔ Akses ditolak.", {
           reply_parameters: { message_id: ctx.msg?.message_id ?? 0 },
         });
+
+        // Alert all authorized users
+        await sendUnauthorizedAlert(ctx, config);
         return;
       }
       return next();
@@ -63,4 +72,47 @@ export function authGuard(config: TelegramConfig) {
 
     // Other chat types (channel, etc.) — silently ignore
   };
+}
+
+/**
+ * Send an alert to all authorized users about an unauthorized access attempt.
+ */
+async function sendUnauthorizedAlert(
+  ctx: Context,
+  config: TelegramConfig,
+): Promise<void> {
+  const from = ctx.from;
+  if (!from) return;
+
+  const username = from.username ? `@${from.username}` : "unknown";
+  const fullName = `${from.first_name ?? ""} ${from.last_name ?? ""}`.trim() || "Unknown";
+
+  let actionDetail = `Type: ${ctx.chat?.type ?? "unknown"}`;
+  if (ctx.message && "text" in ctx.message && ctx.message.text) {
+    actionDetail = `Message: "${ctx.message.text.slice(0, 100)}"`;
+  } else if (ctx.callbackQuery?.data) {
+    actionDetail = `Button: ${ctx.callbackQuery.data}`;
+  }
+
+  const alertMsg =
+    `⚠️ <b>Unauthorized Access Attempt</b>\n\n` +
+    `👤 <b>Name:</b> ${escapeHtmlSimple(fullName)}\n` +
+    `🔖 <b>Username:</b> ${escapeHtmlSimple(username)}\n` +
+    `🆔 <b>ID:</b> ${from.id}\n` +
+    `💬 ${escapeHtmlSimple(actionDetail)}`;
+
+  for (const authorizedUserId of config.allowedUsers) {
+    try {
+      await ctx.api.sendMessage(authorizedUserId, alertMsg, {
+        parse_mode: "HTML",
+      });
+    } catch {
+      // Ignore errors (e.g. if user hasn't started the bot)
+    }
+  }
+}
+
+/** Minimal HTML escape for alert messages. */
+function escapeHtmlSimple(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

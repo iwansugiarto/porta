@@ -56,7 +56,29 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
 // Start the bot
 console.log("⏳ Connecting to Telegram...");
 bot.start({
-  onStart: (info) => {
+  drop_pending_updates: true,
+  onStart: async (info) => {
     console.log(`✅ Porta Telegram Bot is running as @${info.username}`);
+
+    // Register command menu in Telegram UI
+    try {
+      await bot.api.setMyCommands([
+        { command: "new", description: "Buat conversation baru" },
+        { command: "list", description: "Daftar conversations" },
+        { command: "latest", description: "Response terakhir dari agent" },
+        { command: "models", description: "Daftar model tersedia" },
+        { command: "file", description: "Browse file project" },
+        { command: "artifacts", description: "Lihat artifacts conversation" },
+        { command: "cmd", description: "Jalankan shell command" },
+        { command: "status", description: "Status proxy & LS" },
+        { command: "stop", description: "Stop agent" },
+        { command: "end", description: "Akhiri session" },
+        { command: "restart", description: "Restart bot" },
+        { command: "help", description: "Tampilkan bantuan" },
+      ]);
+      console.log("📋 Command menu registered");
+    } catch (e) {
+      console.warn("[menu] Failed to register commands:", (e as Error).message);
+    }
   },
 });
