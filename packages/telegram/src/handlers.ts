@@ -33,6 +33,12 @@ function cleanupWs(session: import("./session.js").ChatSession): void {
 export function registerHandlers(bot: Bot, config: TelegramConfig): void {
   const client = new PortaClient(config.proxyBaseUrl, config.authToken);
 
+  /** Resolve workspace: session override > config default > auto-detect. */
+  function getEffectiveWorkspace(chatId: number): string | undefined {
+    const session = getSession(chatId);
+    return session?.workspaceUri ?? config.workspaceUri;
+  }
+
   // ── /start ──
 
   bot.command("start", async (ctx) => {
@@ -50,11 +56,12 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
         "/models — Daftar model tersedia\n" +
         "/model <code>name</code> — Pilih model\n\n" +
         "<b>📂 Files:</b>\n" +
+        "/workspace — Switch workspace/project\n" +
         "/file — Browse file project\n" +
         "/artifacts — Lihat artifacts conversation\n\n" +
         "<b>🔧 Tools:</b>\n" +
         "/cmd <code>command</code> — Jalankan shell command\n" +
-        "/status — Status proxy &amp; Language Server\n" +
+        "/status — Status proxy &amp; LS\n" +
         "/restart — Restart bot\n" +
         "/help — Tampilkan bantuan\n\n" +
         "<i>Kirim pesan teks, foto, atau dokumen untuk chat dengan Antigravity.</i>",
@@ -96,7 +103,7 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
     const statusMsg = await ctx.reply("⏳ Membuat conversation baru...");
 
     try {
-      const result = await client.createConversation(config.workspaceUri);
+      const result = await client.createConversation(getEffectiveWorkspace(chatId));
       const session = createSession(chatId, result.cascadeId);
       const shortId = result.cascadeId.slice(0, 8);
 
@@ -221,6 +228,85 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
           "<i>Kirim pesan untuk melanjutkan chat.</i>",
         { parse_mode: "HTML" },
       );
+    } catch (err) {
+      await ctx.api.editMessageText(
+        chatId,
+        statusMsg.message_id,
+        `❌ Error: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
+  });
+
+  // ── /workspace — list and switch workspaces ──
+
+  bot.command("workspace", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const wsArg = ctx.match?.trim();
+
+    // If argument is given, set workspace directly
+    if (wsArg) {
+      let session = getSession(chatId);
+      if (!session) {
+        try {
+          const result = await client.createConversation(wsArg);
+          session = createSession(chatId, result.cascadeId);
+        } catch (err) {
+          await ctx.reply(
+            `❌ Gagal membuat conversation: ${escapeHtml((err as Error).message)}`,
+            { parse_mode: "HTML" },
+          );
+          return;
+        }
+      }
+      session.workspaceUri = wsArg;
+      const shortPath = wsArg
+        .replace(/^file:\/\//, "")
+        .replace(os.homedir(), "~");
+      await ctx.reply(
+        `✅ Workspace diubah ke: <code>${escapeHtml(shortPath)}</code>\n\n` +
+          "<i>Conversation baru akan menggunakan workspace ini.</i>",
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+
+    // No argument — list available workspaces
+    const statusMsg = await ctx.reply("⏳ Memuat daftar workspaces...");
+
+    try {
+      const workspaces = await client.listWorkspaces();
+      if (workspaces.length === 0) {
+        await ctx.api.editMessageText(
+          chatId,
+          statusMsg.message_id,
+          "📭 Tidak ada workspace tersedia. Buka project di Antigravity dulu.",
+        );
+        return;
+      }
+
+      const session = getSession(chatId);
+      const currentWs =
+        session?.workspaceUri ?? config.workspaceUri ?? "";
+
+      let text = "📂 <b>Workspaces</b>\n\n<i>Tap untuk switch:</i>";
+      const keyboard = new InlineKeyboard();
+      for (const ws of workspaces) {
+        const uri = ws.workspaceUri;
+        const shortPath = uri
+          .replace(/^file:\/\//, "")
+          .replace(os.homedir(), "~");
+        const isActive = uri === currentWs;
+        const marker = isActive ? " 👈" : "";
+        keyboard
+          .text(`📂 ${shortPath}${marker}`, `ws:${uri}`)
+          .row();
+      }
+
+      await ctx.api.editMessageText(chatId, statusMsg.message_id, text, {
+        parse_mode: "HTML",
+        reply_markup: keyboard,
+      });
     } catch (err) {
       await ctx.api.editMessageText(
         chatId,
@@ -678,6 +764,11 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
       if (session) {
         text += `\n<b>Active session:</b> <code>${session.cascadeId.slice(0, 8)}</code>`;
         text += session.wsConnection ? " (streaming 🟢)" : "";
+        const wsUri = session.workspaceUri ?? config.workspaceUri;
+        if (wsUri) {
+          const shortWs = wsUri.replace(/^file:\/\//, "").replace(os.homedir(), "~");
+          text += `\n<b>Workspace:</b> <code>${escapeHtml(shortWs)}</code>`;
+        }
       }
 
       await ctx.reply(text, { parse_mode: "HTML" });
@@ -847,6 +938,37 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
       return;
     }
 
+    // ── Handle "ws:<workspaceUri>" (workspace switch) ──
+    if (data.startsWith("ws:")) {
+      const wsUri = data.slice(3);
+      const chatId = ctx.chat!.id;
+      const shortPath = wsUri
+        .replace(/^file:\/\//, "")
+        .replace(os.homedir(), "~");
+
+      await ctx.answerCallbackQuery({ text: `Workspace: ${shortPath}` });
+
+      // Create a NEW conversation in the chosen workspace
+      try {
+        const result = await client.createConversation(wsUri);
+        const session = createSession(chatId, result.cascadeId);
+        session.workspaceUri = wsUri;
+
+        await ctx.editMessageText(
+          `✅ Workspace: <code>${escapeHtml(shortPath)}</code>\n` +
+            `📝 Conversation <code>${result.cascadeId.slice(0, 8)}</code> dibuat\n\n` +
+            "<i>Kirim pesan untuk mulai chat.</i>",
+          { parse_mode: "HTML" },
+        );
+      } catch (err) {
+        await ctx.editMessageText(
+          `❌ Gagal switch workspace: ${escapeHtml((err as Error).message)}`,
+          { parse_mode: "HTML" },
+        );
+      }
+      return;
+    }
+
     // ── Handle approve/reject callbacks ──
     // Format: "approve:type:cascadeId:trajectoryId:stepIndex"
     // or:     "reject:type:cascadeId:trajectoryId:stepIndex"
@@ -940,7 +1062,7 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
       const statusMsg = await ctx.reply("⏳ Membuat conversation baru...");
 
       try {
-        const result = await client.createConversation(config.workspaceUri);
+        const result = await client.createConversation(getEffectiveWorkspace(chatId));
         session = createSession(chatId, result.cascadeId);
         const shortId = result.cascadeId.slice(0, 8);
 
@@ -1015,7 +1137,7 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
     if (!session) {
       const statusMsg = await ctx.reply("⏳ Membuat conversation baru...");
       try {
-        const result = await client.createConversation(config.workspaceUri);
+        const result = await client.createConversation(getEffectiveWorkspace(chatId));
         session = createSession(chatId, result.cascadeId);
         await ctx.api.editMessageText(
           chatId,
@@ -1099,7 +1221,7 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
     if (!session) {
       const statusMsg = await ctx.reply("⏳ Membuat conversation baru...");
       try {
-        const result = await client.createConversation(config.workspaceUri);
+        const result = await client.createConversation(getEffectiveWorkspace(chatId));
         session = createSession(chatId, result.cascadeId);
         await ctx.api.editMessageText(
           chatId,

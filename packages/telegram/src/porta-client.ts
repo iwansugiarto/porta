@@ -207,6 +207,13 @@ export class PortaClient {
     return this.get("/api/health");
   }
 
+  async listWorkspaces(): Promise<{ workspaceUri: string; gitRootUri?: string }[]> {
+    const data = await this.get<{
+      workspaceInfos?: { workspaceUri: string; gitRootUri?: string }[];
+    }>("/api/workspaces");
+    return data.workspaceInfos ?? [];
+  }
+
   async listModels(): Promise<{ name: string; displayName: string }[]> {
     const data = await this.get<Record<string, unknown>>("/api/models");
     // Extract model data from the LS response (field is clientModelConfigs)

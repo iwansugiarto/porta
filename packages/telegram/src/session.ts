@@ -27,6 +27,8 @@ export interface ChatSession {
   flushTimer: ReturnType<typeof setTimeout> | null;
   /** Selected model for this chat (e.g. "gemini-2.5-pro"). */
   selectedModel: string | undefined;
+  /** Per-session workspace override (e.g. "file:///path/to/project"). */
+  workspaceUri: string | undefined;
   /** Last activity timestamp. */
   lastActivity: number;
   /**
@@ -72,6 +74,7 @@ export function createSession(
     streamBuffer: "",
     flushTimer: null,
     selectedModel: undefined,
+    workspaceUri: undefined,
     lastActivity: Date.now(),
     renderedStepOffsets: new Set(),
     historicalStepCount: 0,

@@ -67,6 +67,7 @@ bot.start({
         { command: "list", description: "Daftar conversations" },
         { command: "latest", description: "Response terakhir dari agent" },
         { command: "models", description: "Daftar model tersedia" },
+        { command: "workspace", description: "Switch workspace/project" },
         { command: "file", description: "Browse file project" },
         { command: "artifacts", description: "Lihat artifacts conversation" },
         { command: "cmd", description: "Jalankan shell command" },
