@@ -276,11 +276,23 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
 
     try {
       const workspaces = await client.listWorkspaces();
-      if (workspaces.length === 0) {
+      const activeUris = new Set(workspaces.map((w) => w.workspaceUri));
+
+      // Collect recent workspaces from conversation history
+      const conversations = await client.listConversations();
+      const recentWsUris = new Set<string>();
+      for (const conv of conversations) {
+        const wsUri = conv.workspaces?.[0]?.workspaceFolderAbsoluteUri;
+        if (wsUri && !activeUris.has(wsUri)) {
+          recentWsUris.add(wsUri);
+        }
+      }
+
+      if (workspaces.length === 0 && recentWsUris.size === 0) {
         await ctx.api.editMessageText(
           chatId,
           statusMsg.message_id,
-          "📭 Tidak ada workspace tersedia. Buka project di Antigravity dulu.",
+          "📭 Tidak ada workspace tersedia.",
         );
         return;
       }
@@ -289,19 +301,38 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
       const currentWs =
         session?.workspaceUri ?? config.workspaceUri ?? "";
 
-      let text = "📂 <b>Workspaces</b>\n\n<i>Tap untuk switch:</i>";
+      let text = "📂 <b>Workspaces</b>\n\n";
       const keyboard = new InlineKeyboard();
-      for (const ws of workspaces) {
-        const uri = ws.workspaceUri;
-        const shortPath = uri
-          .replace(/^file:\/\//, "")
-          .replace(os.homedir(), "~");
-        const isActive = uri === currentWs;
-        const marker = isActive ? " 👈" : "";
-        const wsId = getPathId(uri);
-        keyboard
-          .text(`📂 ${shortPath}${marker}`, `ws:${wsId}`)
-          .row();
+
+      // Active workspaces (LS running)
+      if (workspaces.length > 0) {
+        text += "<b>🟢 Active:</b>";
+        for (const ws of workspaces) {
+          const uri = ws.workspaceUri;
+          const shortPath = uri
+            .replace(/^file:\/\//, "")
+            .replace(os.homedir(), "~");
+          const isActive = uri === currentWs;
+          const marker = isActive ? " 👈" : "";
+          const wsId = getPathId(uri);
+          keyboard
+            .text(`🟢 ${shortPath}${marker}`, `ws:${wsId}`)
+            .row();
+        }
+      }
+
+      // Recent (inactive) workspaces — from conversation history
+      if (recentWsUris.size > 0) {
+        text += (workspaces.length > 0 ? "\n" : "") + "<b>⚪ Recent:</b>";
+        for (const uri of [...recentWsUris].slice(0, 5)) {
+          const shortPath = uri
+            .replace(/^file:\/\//, "")
+            .replace(os.homedir(), "~");
+          const wsId = getPathId(uri);
+          keyboard
+            .text(`⚪ ${shortPath} ▶`, `wl:${wsId}`)
+            .row();
+        }
       }
 
       await ctx.api.editMessageText(chatId, statusMsg.message_id, text, {
@@ -1005,6 +1036,112 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
         await ctx.editMessageText(
           `✅ Workspace: <code>${escapeHtml(shortPath)}</code>\n\n` +
             `${convCountText}`,
+          { parse_mode: "HTML", reply_markup: keyboard },
+        );
+      } catch (err) {
+        await ctx.editMessageText(
+          `❌ Error: ${escapeHtml((err as Error).message)}`,
+          { parse_mode: "HTML" },
+        );
+      }
+      return;
+    }
+
+    // ── Handle "wl:<pathId>" (workspace launch — open in Antigravity) ──
+    if (data.startsWith("wl:")) {
+      const wsPathId = data.slice(3);
+      const wsUri = pathCache.get(wsPathId);
+      if (!wsUri) {
+        await ctx.answerCallbackQuery({ text: "Expired — gunakan /workspace lagi" });
+        return;
+      }
+      const chatId = ctx.chat!.id;
+      const folderPath = wsUri.replace(/^file:\/\//, "");
+      const shortPath = folderPath.replace(os.homedir(), "~");
+
+      await ctx.answerCallbackQuery({ text: "Launching Antigravity..." });
+
+      await ctx.editMessageText(
+        `🚀 Membuka <code>${escapeHtml(shortPath)}</code> di Antigravity...\n\n` +
+          "<i>Menunggu Language Server ready...</i>",
+        { parse_mode: "HTML" },
+      );
+
+      // Launch Antigravity with the folder
+      const antigravityCli =
+        "/Applications/Antigravity.app/Contents/Resources/app/bin/antigravity";
+      try {
+        const { exec } = await import("node:child_process");
+        exec(`"${antigravityCli}" -n "${folderPath}"`, (err) => {
+          if (err) console.warn("[workspace] launch error:", err.message);
+        });
+      } catch (e) {
+        await ctx.editMessageText(
+          `❌ Gagal launch Antigravity: ${escapeHtml((e as Error).message)}`,
+          { parse_mode: "HTML" },
+        );
+        return;
+      }
+
+      // Poll for the workspace to become available (max 30s)
+      const maxWaitMs = 30_000;
+      const pollIntervalMs = 3_000;
+      const start = Date.now();
+      let found = false;
+
+      while (Date.now() - start < maxWaitMs) {
+        await new Promise((r) => setTimeout(r, pollIntervalMs));
+        try {
+          const workspaces = await client.listWorkspaces();
+          if (workspaces.some((w) => w.workspaceUri === wsUri)) {
+            found = true;
+            break;
+          }
+        } catch { /* retry */ }
+      }
+
+      if (!found) {
+        await ctx.editMessageText(
+          `⏰ Timeout: Antigravity belum ready untuk <code>${escapeHtml(shortPath)}</code>.\n\n` +
+            "<i>Coba /workspace lagi setelah Antigravity selesai loading.</i>",
+          { parse_mode: "HTML" },
+        );
+        return;
+      }
+
+      // Workspace is now active — show conversations
+      try {
+        const conversations = await client.listConversations();
+        const filtered = conversations.filter((c) => {
+          const cWs = c.workspaces?.[0]?.workspaceFolderAbsoluteUri;
+          return cWs && cWs === wsUri;
+        }).slice(0, 8);
+
+        // Set workspace on session
+        let session = getSession(chatId);
+        if (session) session.workspaceUri = wsUri;
+
+        const keyboard = new InlineKeyboard();
+        for (const conv of filtered) {
+          const shortId = conv.id.slice(0, 8);
+          const statusIcon = conv.status === "CASCADE_RUN_STATUS_RUNNING" ? "🟢" : "⚪";
+          const summary = conv.summary.length > 30
+            ? conv.summary.slice(0, 27) + "..."
+            : conv.summary;
+          keyboard.text(
+            `${statusIcon} ${shortId} ${summary}`,
+            `use:${conv.id}`,
+          ).row();
+        }
+        keyboard.text("➕ New conversation", `wn:${wsPathId}`).row();
+
+        const convCountText = filtered.length > 0
+          ? `${filtered.length} conversation ditemukan:`
+          : "Tidak ada conversation.";
+
+        await ctx.editMessageText(
+          `✅ Workspace ready: <code>${escapeHtml(shortPath)}</code>\n\n` +
+            convCountText,
           { parse_mode: "HTML", reply_markup: keyboard },
         );
       } catch (err) {
