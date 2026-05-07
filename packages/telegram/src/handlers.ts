@@ -1067,9 +1067,7 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
         { parse_mode: "HTML" },
       );
 
-      // Launch Antigravity with the folder
-      const antigravityCli =
-        "/Applications/Antigravity.app/Contents/Resources/app/bin/antigravity";
+      const antigravityCli = config.antigravityCliPath;
       try {
         const { exec } = await import("node:child_process");
         exec(`"${antigravityCli}" -n "${folderPath}"`, (err) => {

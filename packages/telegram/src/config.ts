@@ -18,6 +18,8 @@ export interface TelegramConfig {
   proxyBaseUrl: string;
   /** Porta auth token for API access. */
   authToken: string | undefined;
+  /** Path to the Antigravity CLI binary (for launching workspaces). */
+  antigravityCliPath: string;
 }
 
 /** Parse a comma-separated list of numeric IDs into a Set. */
@@ -69,5 +71,8 @@ export function loadConfig(
     workspaceUri: env.TELEGRAM_WORKSPACE_URI?.trim() || undefined,
     proxyBaseUrl,
     authToken: env.PORTA_AUTH_TOKEN?.trim() || undefined,
+    antigravityCliPath:
+      env.ANTIGRAVITY_CLI_PATH?.trim() ||
+      "/Applications/Antigravity.app/Contents/Resources/app/bin/antigravity",
   };
 }
