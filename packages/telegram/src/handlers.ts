@@ -894,7 +894,19 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
     if (data.startsWith("use:")) {
       const cascadeId = data.slice(4);
       const chatId = ctx.chat!.id;
+
+      // Preserve workspace from previous session
+      const prevSession = getSession(chatId);
+      const prevWorkspace = prevSession?.workspaceUri;
+
       switchSession(chatId, cascadeId);
+
+      // Restore workspace on the new session
+      const newSession = getSession(chatId);
+      if (newSession && prevWorkspace) {
+        newSession.workspaceUri = prevWorkspace;
+      }
+
       const shortId = cascadeId.slice(0, 8);
       await ctx.answerCallbackQuery({ text: `Switched ke ${shortId}` });
       try {
@@ -954,7 +966,71 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
 
       await ctx.answerCallbackQuery({ text: `Workspace: ${shortPath}` });
 
-      // Create a NEW conversation in the chosen workspace
+      // Set workspace on current session (or remember for new ones)
+      let session = getSession(chatId);
+      if (session) {
+        session.workspaceUri = wsUri;
+      }
+
+      // List existing conversations for this workspace
+      try {
+        const conversations = await client.listConversations();
+        const filtered = conversations.filter((c) => {
+          const cWs = c.workspaces?.[0]?.workspaceFolderAbsoluteUri;
+          return cWs && cWs === wsUri;
+        }).slice(0, 8);
+
+        const keyboard = new InlineKeyboard();
+
+        // Show existing conversations
+        for (const conv of filtered) {
+          const shortId = conv.id.slice(0, 8);
+          const statusIcon = conv.status === "CASCADE_RUN_STATUS_RUNNING" ? "🟢" : "⚪";
+          const summary = conv.summary.length > 30
+            ? conv.summary.slice(0, 27) + "..."
+            : conv.summary;
+          keyboard.text(
+            `${statusIcon} ${shortId} ${summary}`,
+            `use:${conv.id}`,
+          ).row();
+        }
+
+        // Always add a "New" button
+        keyboard.text("➕ New conversation", `wn:${wsPathId}`).row();
+
+        const convCountText = filtered.length > 0
+          ? `${filtered.length} conversation ditemukan:`
+          : "Tidak ada conversation.";
+
+        await ctx.editMessageText(
+          `✅ Workspace: <code>${escapeHtml(shortPath)}</code>\n\n` +
+            `${convCountText}`,
+          { parse_mode: "HTML", reply_markup: keyboard },
+        );
+      } catch (err) {
+        await ctx.editMessageText(
+          `❌ Error: ${escapeHtml((err as Error).message)}`,
+          { parse_mode: "HTML" },
+        );
+      }
+      return;
+    }
+
+    // ── Handle "wn:<pathId>" (new conversation in workspace) ──
+    if (data.startsWith("wn:")) {
+      const wsPathId = data.slice(3);
+      const wsUri = pathCache.get(wsPathId);
+      if (!wsUri) {
+        await ctx.answerCallbackQuery({ text: "Expired — gunakan /workspace lagi" });
+        return;
+      }
+      const chatId = ctx.chat!.id;
+      const shortPath = wsUri
+        .replace(/^file:\/\//, "")
+        .replace(os.homedir(), "~");
+
+      await ctx.answerCallbackQuery({ text: "Creating..." });
+
       try {
         const result = await client.createConversation(wsUri);
         const session = createSession(chatId, result.cascadeId);
@@ -968,7 +1044,7 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
         );
       } catch (err) {
         await ctx.editMessageText(
-          `❌ Gagal switch workspace: ${escapeHtml((err as Error).message)}`,
+          `❌ Gagal membuat conversation: ${escapeHtml((err as Error).message)}`,
           { parse_mode: "HTML" },
         );
       }
