@@ -1567,6 +1567,18 @@ function connectStreamer(
           { parse_mode: "HTML" },
         ).catch(() => {});
       }
+
+      // Send hint if agent hit permission errors
+      if (streamer.hasPermissionError) {
+        void api.sendMessage(
+          chatId,
+          "💡 <b>Tip:</b> Agent terkena error permission saat menjalankan command.\n" +
+            "Gunakan <code>/cmd &lt;command&gt;</code> untuk bypass — " +
+            "command dijalankan langsung di host, bukan melalui agent.\n\n" +
+            "Contoh: <code>/cmd git status</code>",
+          { parse_mode: "HTML" },
+        ).catch(() => {});
+      }
     });
   });
 }

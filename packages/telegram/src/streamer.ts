@@ -42,10 +42,15 @@ export class ResponseStreamer {
   private pendingText = "";
   /** Whether the flush timer is scheduled. */
   private flushScheduled = false;
-  /** Whether finalization has occurred. */
+  /** Whether finalize() has been called. */
   private finalized = false;
-  /** Steps that need approval (tracked to avoid duplicate keyboards). */
+  /** Track approval keys already sent. */
   private approvalsSent = new Set<string>();
+  /** Accumulated text for error pattern detection. */
+  private allRenderedText = "";
+
+  /** Whether the streamed content contained a permission/trust error. */
+  public hasPermissionError = false;
   /** Timer for periodic typing indicator. */
   private typingTimer: ReturnType<typeof setInterval> | null = null;
   /**
@@ -197,6 +202,7 @@ export class ResponseStreamer {
     if (!text) return;
 
     this.pendingText += (this.pendingText ? "\n\n" : "") + text;
+    this.allRenderedText += text + "\n";
     this.scheduleFlush();
   }
 
@@ -360,5 +366,16 @@ export class ResponseStreamer {
     // Reset stream state for next message
     this.session.streamMessageId = null;
     this.session.streamBuffer = "";
+
+    // Check for permission-related errors in rendered content
+    const permPatterns = [
+      "not permission",
+      "unexpected user interaction",
+      "workspace trust",
+      "permission denied",
+      "allWorkspaceTrustGranted",
+    ];
+    const lower = this.allRenderedText.toLowerCase();
+    this.hasPermissionError = permPatterns.some((p) => lower.includes(p));
   }
 }
