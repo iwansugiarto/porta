@@ -298,8 +298,9 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
           .replace(os.homedir(), "~");
         const isActive = uri === currentWs;
         const marker = isActive ? " 👈" : "";
+        const wsId = getPathId(uri);
         keyboard
-          .text(`📂 ${shortPath}${marker}`, `ws:${uri}`)
+          .text(`📂 ${shortPath}${marker}`, `ws:${wsId}`)
           .row();
       }
 
@@ -938,9 +939,14 @@ export function registerHandlers(bot: Bot, config: TelegramConfig): void {
       return;
     }
 
-    // ── Handle "ws:<workspaceUri>" (workspace switch) ──
+    // ── Handle "ws:<pathId>" (workspace switch) ──
     if (data.startsWith("ws:")) {
-      const wsUri = data.slice(3);
+      const wsPathId = data.slice(3);
+      const wsUri = pathCache.get(wsPathId);
+      if (!wsUri) {
+        await ctx.answerCallbackQuery({ text: "Expired — gunakan /workspace lagi" });
+        return;
+      }
       const chatId = ctx.chat!.id;
       const shortPath = wsUri
         .replace(/^file:\/\//, "")
