@@ -138,20 +138,24 @@ async function autoApproveStep(
       return;
     }
 
-    // Legacy fallback
+    // Legacy fallback (steps without requestedInteraction)
     const runCommand = step.runCommand as Record<string, unknown> | undefined;
     if (runCommand) {
+      console.log(`[auto-approve] legacy:command step=${stepIndex} in ${cascadeId.slice(0, 8)}`);
       await rpcForConversation("HandleCascadeUserInteraction", cascadeId, {
         cascadeId,
         interaction: { trajectoryId, stepIndex: Number(stepIndex), commandAction: { approved: true } },
       });
     } else {
+      // Use permission grant (newer oneof) as primary, not filePermission
+      const keys = Object.keys(step).filter(k => k !== "metadata" && k !== "status");
+      console.log(`[auto-approve] legacy:permission step=${stepIndex} keys=[${keys.join(",")}] in ${cascadeId.slice(0, 8)}`);
       await rpcForConversation("HandleCascadeUserInteraction", cascadeId, {
         cascadeId,
         interaction: {
           trajectoryId,
           stepIndex: Number(stepIndex),
-          filePermission: { allow: true, scope: 2 },
+          permission: { allow: true, scope: 2 },
         },
       });
     }
