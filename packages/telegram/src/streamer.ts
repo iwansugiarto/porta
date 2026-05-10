@@ -145,6 +145,13 @@ export class ResponseStreamer {
         `[streamer:${this.cascadeId.slice(0, 8)}] ready: historicalStepCount=${readyMsg.stepCount}`,
       );
 
+      // Start typing and initial progress immediately
+      this.startTyping();
+      const thinkingStep = { plannerResponse: {} } as Record<string, unknown>;
+      this.lastProgressStep = thinkingStep;
+      void this.updateProgress(thinkingStep);
+      this.startProgressRefresh();
+
       // Process any buffered messages now that we know the boundary
       for (const buffered of this.preReadyBuffer) {
         await this.processStepMessage(buffered);
