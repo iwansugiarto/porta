@@ -57,9 +57,10 @@ export function formatStep(step: Record<string, unknown>): string | null {
     }
   }
 
-  // Code action (file edit)
+  // Code action (file edit) — only render when DONE
   const codeAction = step.codeAction as Record<string, unknown> | undefined;
   if (codeAction) {
+    if (status !== "CORTEX_STEP_STATUS_DONE") return null;
     const file = codeAction.filePath as string | undefined;
     const desc = codeAction.description as string | undefined;
     const name = file ? file.split("/").pop() : "file";
