@@ -51,6 +51,8 @@ export class ResponseStreamer {
 
   /** Whether the streamed content contained a permission/trust error. */
   public hasPermissionError = false;
+  /** Whether any new (non-historical) content was actually processed. */
+  public hasNewContent = false;
   /** Timer for periodic typing indicator. */
   private typingTimer: ReturnType<typeof setInterval> | null = null;
   /** Current progress status message ID (separate from content messages). */
@@ -177,10 +179,12 @@ export class ResponseStreamer {
 
       // For GENERATING steps, update the progress indicator instead of rendering content
       if (isGenerating) {
+        this.hasNewContent = true;
         await this.updateProgress(step);
         continue;
       }
 
+      this.hasNewContent = true;
       await this.processStep(step);
 
       // Mark as rendered once it reaches DONE

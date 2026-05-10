@@ -26,6 +26,7 @@ export function formatUptime(seconds: number): string {
 /**
  * Connect a WebSocket streamer for a conversation session.
  * Sends a completion notification when the agent finishes.
+ * Includes a stale-conversation timeout to prevent indefinite "typing..." state.
  */
 export function connectStreamer(
   api: Api,
@@ -48,27 +49,41 @@ export function connectStreamer(
     session.cascadeId,
   );
 
-  let receivedContent = false;
-
   const wsConn = client.connectWebSocket(
     session.cascadeId,
     (msg) => {
-      receivedContent = true;
       void streamer.onMessage(msg);
     },
   );
 
   session.wsConnection = wsConn;
 
+  // Stale-conversation timeout: if no new content arrives within 30s,
+  // the conversation is likely stuck in RUNNING from a previous task.
+  const staleTimeout = setTimeout(() => {
+    if (!streamer.hasNewContent && !streamer.hasPermissionError) {
+      console.log(`[streamer] stale timeout: no new content for ${session.cascadeId.slice(0, 8)}`);
+      void api.sendMessage(
+        chatId,
+        "⚠️ Agent tidak merespon — conversation mungkin stuck dari task sebelumnya.\n\n" +
+          "<i>Kirim /stop lalu kirim ulang pesan, atau /new untuk conversation baru.</i>",
+        { parse_mode: "HTML" },
+      ).catch(() => {});
+      // Force-close the WS to stop the typing indicator
+      cleanupWs(session);
+    }
+  }, 30_000);
+
   wsConn.ws.on("close", () => {
+    clearTimeout(staleTimeout);
     if (session.wsConnection === wsConn) {
       session.wsConnection = null;
     }
     void streamer.finalize().then(() => {
       const elapsed = Date.now() - startTime;
 
-      if (!receivedContent && elapsed < 10_000) {
-        // WS closed quickly without any content — agent didn't start
+      if (!streamer.hasNewContent && elapsed < 10_000) {
+        // WS closed quickly without any new content — agent didn't start
         void api.sendMessage(
           chatId,
           "⚠️ Agent tidak merespon. Conversation mungkin sedang aktif di Antigravity desktop.\n\n" +
@@ -76,7 +91,6 @@ export function connectStreamer(
           { parse_mode: "HTML" },
         ).catch(() => {});
       }
-      // Note: completion notification is handled by streamer.finalize() progress message
 
       // Send hint if agent hit permission errors
       if (streamer.hasPermissionError) {
