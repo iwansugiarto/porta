@@ -42,6 +42,10 @@ export interface ChatSession {
    * Steps with offset < this value are historical and should be skipped.
    */
   historicalStepCount: number;
+  /**
+   * Cached artifacts for the current session to power inline keyboards.
+   */
+  cachedArtifacts: { name: string; path: string }[];
 }
 
 /** In-memory session store: telegramChatId → ChatSession */
@@ -78,6 +82,7 @@ export function createSession(
     lastActivity: Date.now(),
     renderedStepOffsets: new Set(),
     historicalStepCount: 0,
+    cachedArtifacts: [],
   };
 
   sessions.set(chatId, session);

@@ -172,6 +172,8 @@ export function registerCommands(
       if (navRow.length > 0) {
         keyboard.row(...navRow);
       }
+      // Always add refresh button
+      keyboard.row(InlineKeyboard.text("🔄 Refresh", `list_page:${currentPage}`));
 
       const targetMsgId = messageIdToEdit ?? statusMsg.message_id;
       await ctx.api.editMessageText(chatId, targetMsgId, text, {
@@ -588,7 +590,7 @@ export function registerCommands(
     }
   });
 
-  let cachedArtifacts: { name: string; path: string }[] = [];
+
 
   bot.command("artifacts", async (ctx) => {
     const chatId = ctx.chat.id;
@@ -612,7 +614,7 @@ export function registerCommands(
       return;
     }
 
-    cachedArtifacts = [];
+    const newArtifacts: { name: string; path: string }[] = [];
     const items = fs.readdirSync(artifactsDir, { withFileTypes: true });
 
     for (const item of items) {
@@ -622,7 +624,7 @@ export function registerCommands(
           const scratchItems = fs.readdirSync(scratchDir, { withFileTypes: true });
           for (const si of scratchItems) {
             if (!si.isDirectory()) {
-              cachedArtifacts.push({
+              newArtifacts.push({
                 name: `scratch/${si.name}`,
                 path: path.join(scratchDir, si.name),
               });
@@ -633,33 +635,47 @@ export function registerCommands(
       }
       const name = item.name;
       if (name.includes(".metadata.json") || name.startsWith(".sys")) continue;
-      cachedArtifacts.push({ name, path: path.join(artifactsDir, name) });
+      newArtifacts.push({ name, path: path.join(artifactsDir, name) });
     }
 
-    if (cachedArtifacts.length === 0) {
+    // Sort alphabetically for easier scanning
+    newArtifacts.sort((a, b) => a.name.localeCompare(b.name));
+
+    if (newArtifacts.length === 0) {
       await ctx.reply("📭 Tidak ada artifacts untuk conversation ini.");
       return;
     }
 
-    let msg = "📎 <b>Artifacts</b>\n\n";
-    for (let i = 0; i < cachedArtifacts.length; i++) {
-      const displayName = cachedArtifacts[i].name
+    session.cachedArtifacts = newArtifacts;
+
+    let text = "📎 <b>Artifacts</b>\n\n<i>Tap untuk melihat artifact:</i>";
+    const keyboard = new InlineKeyboard();
+
+    for (let i = 0; i < session.cachedArtifacts.length; i++) {
+      const displayName = session.cachedArtifacts[i].name
         .replace(/\.[^/.]+$/, "")
         .replace(/_/g, " ");
-      msg += `/artifact_${i + 1} — ${escapeHtml(displayName)}\n`;
+      keyboard.text(`📄 ${escapeHtml(displayName)}`, `art:${i}`).row();
     }
 
-    await ctx.reply(msg, { parse_mode: "HTML" });
+    await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
   });
 
-  bot.hears(/^\/artifact_(\d+)$/, async (ctx) => {
+  bot.callbackQuery(/^art:(\d+)$/, async (ctx) => {
     const num = parseInt(ctx.match[1], 10);
-    if (num < 1 || num > cachedArtifacts.length) {
-      await ctx.reply("❌ Nomor artifact tidak valid.");
+    const chatId = ctx.chat?.id;
+    if (!chatId) return;
+
+    const session = getSession(chatId);
+    if (!session || !session.cachedArtifacts || num < 0 || num >= session.cachedArtifacts.length) {
+      await ctx.answerCallbackQuery({ text: "❌ Artifact tidak ditemukan atau session expired.", show_alert: true });
       return;
     }
-    const artifact = cachedArtifacts[num - 1];
+
+    const artifact = session.cachedArtifacts[num];
     const ext = path.extname(artifact.name).toLowerCase();
+
+    await ctx.answerCallbackQuery({ text: `Membuka ${artifact.name}...` });
 
     try {
       if ([".png", ".jpg", ".jpeg", ".webp"].includes(ext)) {
@@ -681,6 +697,8 @@ export function registerCommands(
       await ctx.reply(`❌ Error: ${(e as Error).message}`);
     }
   });
+
+
 
   bot.command("restart", async (ctx) => {
     await ctx.reply("🔄 Bot restarting...");

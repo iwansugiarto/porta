@@ -384,6 +384,9 @@ export class ResponseStreamer {
           { text: "✅ Approve", callback_data: `approve:${callbackPrefix}` },
           { text: "❌ Reject", callback_data: `reject:${callbackPrefix}` },
         ],
+        [
+          { text: "🛑 Cancel Task", callback_data: `stop:${this.cascadeId}` },
+        ],
       ],
     };
 
