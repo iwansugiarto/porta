@@ -49,8 +49,6 @@ export async function getMetadata(
   if (grantAccess) {
     meta.allowFileAccess = true;
     meta.allWorkspaceTrustGranted = true;
-    meta.safeToAutoRun = true;
-    meta.allowCommandExecution = true;
   }
   return meta;
 }

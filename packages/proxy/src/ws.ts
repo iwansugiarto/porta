@@ -70,33 +70,14 @@ async function autoApproveStep(
   if (autoApprovedSteps.has(key)) return;
   autoApprovedSteps.add(key);
 
-  // ── Check for requestedInteraction (newer LS protocol) ──
   const reqInteraction = step.requestedInteraction as Record<string, unknown> | undefined;
 
-  // ── Check for legacy step-level approval fields ──
-  const runCommand = step.runCommand as Record<string, unknown> | undefined;
-  const fpr = (
-    step.filePermissionRequest ??
-    (step.viewFile as Record<string, unknown> | undefined)?.filePermissionRequest ??
-    (step.listDirectory as Record<string, unknown> | undefined)?.filePermissionRequest ??
-    (step.codeAction as Record<string, unknown> | undefined)?.filePermissionRequest ??
-    (step.grepSearch as Record<string, unknown> | undefined)?.filePermissionRequest ??
-    (step.viewFileOutline as Record<string, unknown> | undefined)?.filePermissionRequest ??
-    (step.viewCodeItem as Record<string, unknown> | undefined)?.filePermissionRequest
-  ) as { absolutePathUri?: string } | undefined;
-
   try {
-    // ── Strategy 1: requestedInteraction-based approval ──
     if (reqInteraction) {
       const interactionKeys = Object.keys(reqInteraction);
-      console.log(
-        `[auto-approve] requestedInteraction step=${stepIndex} ` +
-        `keys=[${interactionKeys.join(",")}] in ${cascadeId.slice(0, 8)}`,
-      );
+      console.log(`[auto-approve] requestedInteraction step=${stepIndex} keys=[${interactionKeys.join(",")}] in ${cascadeId.slice(0, 8)}`);
 
       if (reqInteraction.runCommand || reqInteraction.RunCommand) {
-        // RunCommand interaction — approve command execution
-        console.log(`[auto-approve] RI:runCommand step=${stepIndex}`);
         await rpcForConversation("HandleCascadeUserInteraction", cascadeId, {
           cascadeId,
           interaction: {
@@ -109,20 +90,24 @@ async function autoApproveStep(
       }
 
       if (reqInteraction.permission || reqInteraction.Permission) {
-        // Permission interaction — approve file access
+        // Permission interaction — respond with PermissionGrant (protobuf oneof: "permission")
+        // Echo the resource from the request and grant access
         const permSpec = (reqInteraction.permission ?? reqInteraction.Permission) as
           Record<string, unknown> | undefined;
-        const pathUri = permSpec?.absolutePathUri as string | undefined;
-        console.log(`[auto-approve] RI:permission step=${stepIndex} path=${pathUri ?? "?"}`);
+        const resource = permSpec?.resource as Record<string, unknown> | undefined;
+        console.log(
+          `[auto-approve] RI:permission step=${stepIndex} ` +
+          `resource=${JSON.stringify(resource ?? {}).slice(0, 200)}`,
+        );
         await rpcForConversation("HandleCascadeUserInteraction", cascadeId, {
           cascadeId,
           interaction: {
             trajectoryId,
             stepIndex: Number(stepIndex),
-            filePermission: {
+            permission: {
+              ...(resource ? { resource } : {}),
               allow: true,
               scope: 2, // CONVERSATION scope
-              ...(pathUri ? { absolutePathUri: pathUri } : {}),
             },
           },
         });
@@ -130,8 +115,6 @@ async function autoApproveStep(
       }
 
       if (reqInteraction.mcp || reqInteraction.Mcp) {
-        // MCP tool call — approve
-        console.log(`[auto-approve] RI:mcp step=${stepIndex}`);
         await rpcForConversation("HandleCascadeUserInteraction", cascadeId, {
           cascadeId,
           interaction: {
@@ -143,18 +126,7 @@ async function autoApproveStep(
         return;
       }
 
-      if (reqInteraction.askQuestion || reqInteraction.AskQuestion) {
-        // Cannot auto-approve user questions — skip
-        console.log(`[auto-approve] RI:askQuestion step=${stepIndex} — skipping (needs user input)`);
-        autoApprovedSteps.delete(key);
-        return;
-      }
-
-      // Unknown requestedInteraction variant — try command approval as fallback
-      console.log(
-        `[auto-approve] RI:unknown step=${stepIndex} ` +
-        `data=${JSON.stringify(reqInteraction).slice(0, 500)}`,
-      );
+      // Default fallback for other reqInteractions
       await rpcForConversation("HandleCascadeUserInteraction", cascadeId, {
         cascadeId,
         interaction: {
@@ -166,53 +138,25 @@ async function autoApproveStep(
       return;
     }
 
-    // ── Strategy 2: Legacy step-level field detection ──
+    // Legacy fallback
+    const runCommand = step.runCommand as Record<string, unknown> | undefined;
     if (runCommand) {
-      console.log(`[auto-approve] command step=${stepIndex} in ${cascadeId.slice(0, 8)}`);
       await rpcForConversation("HandleCascadeUserInteraction", cascadeId, {
         cascadeId,
-        interaction: {
-          trajectoryId,
-          stepIndex: Number(stepIndex),
-          commandAction: { approved: true },
-        },
-      });
-    } else if (fpr?.absolutePathUri) {
-      console.log(`[auto-approve] file-access step=${stepIndex} path=${fpr.absolutePathUri} in ${cascadeId.slice(0, 8)}`);
-      await rpcForConversation("HandleCascadeUserInteraction", cascadeId, {
-        cascadeId,
-        interaction: {
-          trajectoryId,
-          stepIndex: Number(stepIndex),
-          filePermission: {
-            allow: true,
-            scope: 2,
-            absolutePathUri: fpr.absolutePathUri,
-          },
-        },
+        interaction: { trajectoryId, stepIndex: Number(stepIndex), commandAction: { approved: true } },
       });
     } else {
-      // Truly unknown WAITING type — log for debugging
-      const keys = Object.keys(step).filter(k => k !== "metadata" && k !== "status");
-      console.log(
-        `[auto-approve] UNHANDLED step=${stepIndex} keys=[${keys.join(",")}] ` +
-        `in ${cascadeId.slice(0, 8)}`,
-      );
-      console.log(`[auto-approve] step data: ${JSON.stringify(step, null, 2).slice(0, 2000)}`);
-      // Last resort: try command approval
       await rpcForConversation("HandleCascadeUserInteraction", cascadeId, {
         cascadeId,
         interaction: {
           trajectoryId,
           stepIndex: Number(stepIndex),
-          commandAction: { approved: true },
+          filePermission: { allow: true, scope: 2 },
         },
       });
     }
   } catch (err) {
-    console.warn(
-      `[auto-approve] failed step=${stepIndex}: ${(err as Error).message}`,
-    );
+    console.warn(`[auto-approve] failed step=${stepIndex}: ${(err as Error).message}`);
     autoApprovedSteps.delete(key);
   }
 }
