@@ -359,7 +359,12 @@ export class ResponseStreamer {
     const secs = elapsed % 60;
     const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
 
-    // Determine activity from step type
+    // Determine activity from step type + metadata
+    const meta = step.metadata as Record<string, unknown> | undefined;
+    const toolAction = (meta?.toolAction as string) ?? "";
+    const toolSummary = (meta?.toolSummary as string) ?? "";
+    const taskName = (meta?.taskName as string) ?? "";
+
     let activity = "🤔 Thinking...";
     if (step.runCommand) {
       const cmd = (step.runCommand as Record<string, unknown>).commandLine as string ?? "";
@@ -368,7 +373,9 @@ export class ResponseStreamer {
     } else if (step.codeAction) {
       const file = (step.codeAction as Record<string, unknown>).filePath as string ?? "";
       const name = file.split("/").pop() ?? "file";
+      const desc = toolAction || (step.codeAction as Record<string, unknown>).description as string || "";
       activity = `📝 Editing: <code>${escapeHtml(name)}</code>`;
+      if (desc) activity += `\n   <i>${escapeHtml(desc.slice(0, 80))}</i>`;
     } else if (step.viewFile) {
       const file = (step.viewFile as Record<string, unknown>).filePath as string ?? "";
       const name = file.split("/").pop() ?? "file";
@@ -379,12 +386,32 @@ export class ResponseStreamer {
     } else if (step.listDirectory) {
       activity = "📂 Browsing files...";
     } else if (step.plannerResponse) {
-      activity = "💭 Generating response...";
+      // Show snippet of what the agent is thinking about
+      const resp = step.plannerResponse as Record<string, unknown>;
+      const text = (resp.modifiedResponse as string) ?? (resp.response as string) ?? "";
+      if (text.length > 20) {
+        // Show first meaningful line (skip empty lines)
+        const lines = text.split("\n").filter(l => l.trim().length > 0);
+        const snippet = lines[0]?.slice(0, 60) ?? "";
+        activity = `💭 ${escapeHtml(snippet)}${snippet.length >= 60 ? "..." : ""}`;
+      } else {
+        activity = "💭 Generating response...";
+      }
     } else if (step.sendCommandInput) {
       activity = "⌨️ Sending input...";
+    } else if (toolAction) {
+      activity = `🔧 ${escapeHtml(toolAction.slice(0, 60))}`;
+    } else if (toolSummary) {
+      activity = `🔧 ${escapeHtml(toolSummary.slice(0, 60))}`;
     }
 
-    const progressText = `⏳ <b>${timeStr}</b> — ${activity}`;
+    // Add task context if available
+    let taskLine = "";
+    if (taskName && !activity.includes(taskName)) {
+      taskLine = `\n📋 <i>${escapeHtml(taskName.slice(0, 50))}</i>`;
+    }
+
+    const progressText = `⏳ <b>${timeStr}</b> — ${activity}${taskLine}`;
 
     // Don't update if text hasn't changed
     if (progressText === this.lastProgressText) return;

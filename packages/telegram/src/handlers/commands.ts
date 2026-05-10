@@ -29,7 +29,9 @@ export function registerCommands(
         "/list — Daftar conversations\n" +
         "/use <code>id</code> — Switch ke conversation\n" +
         "/latest — Response terakhir dari agent\n" +
+        "/info — Info conversation saat ini\n" +
         "/stop — Stop agent yang sedang berjalan\n" +
+        "/stopall — Stop semua agent yang berjalan\n" +
         "/end — Akhiri session saat ini\n\n" +
         "<b>🤖 Model:</b>\n" +
         "/models — Daftar model tersedia\n" +
@@ -442,6 +444,47 @@ export function registerCommands(
     }
   });
 
+  bot.command("stopall", async (ctx) => {
+    const statusMsg = await ctx.reply("⏳ Menghentikan semua agent yang berjalan...");
+
+    try {
+      const convs = await client.listConversations();
+      const runningConvs = convs.filter(c => c.status === "CASCADE_RUN_STATUS_RUNNING");
+
+      if (runningConvs.length === 0) {
+        await ctx.api.editMessageText(
+          ctx.chat.id,
+          statusMsg.message_id,
+          "ℹ️ Tidak ada agent yang sedang berjalan.",
+        );
+        return;
+      }
+
+      let stoppedCount = 0;
+      for (const conv of runningConvs) {
+        try {
+          await client.stopConversation(conv.id);
+          stoppedCount++;
+        } catch (err) {
+          console.warn(`Gagal stop ${conv.id}:`, err);
+        }
+      }
+
+      await ctx.api.editMessageText(
+        ctx.chat.id,
+        statusMsg.message_id,
+        `✅ ${stoppedCount} agent berhasil dihentikan.`,
+      );
+    } catch (err) {
+      await ctx.api.editMessageText(
+        ctx.chat.id,
+        statusMsg.message_id,
+        `❌ Error: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
+  });
+
   bot.command("end", async (ctx) => {
     const chatId = ctx.chat.id;
     const session = getSession(chatId);
@@ -453,6 +496,54 @@ export function registerCommands(
 
     destroySession(chatId);
     await ctx.reply("👋 Session diakhiri. Ketik /new untuk buat baru.");
+  });
+
+  bot.command("info", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const session = getSession(chatId);
+
+    if (!session) {
+      await ctx.reply("ℹ️ Tidak ada session aktif. Gunakan /new atau /list.");
+      return;
+    }
+
+    const statusMsg = await ctx.reply("⏳ Memuat info conversation...");
+
+    try {
+      const convs = await client.listConversations();
+      const current = convs.find(c => c.id === session.cascadeId);
+
+      let text = "ℹ️ <b>Conversation Info</b>\n\n";
+      text += `<b>ID:</b> <code>${session.cascadeId.slice(0, 8)}</code>\n`;
+
+      if (current) {
+        text += `<b>Summary:</b> ${escapeHtml(current.summary)}\n`;
+        text += `<b>Status:</b> ${current.status === "CASCADE_RUN_STATUS_RUNNING" ? "🟢 Running" : "⚪ Stopped"}\n`;
+        text += `<b>Steps:</b> ${current.stepCount}\n`;
+        if (current.lastModifiedTime) {
+          text += `<b>Last updated:</b> ${new Date(current.lastModifiedTime).toLocaleString()}\n`;
+        }
+      }
+
+      text += `<b>Model:</b> ${escapeHtml(session.selectedModel ?? "Default")}\n`;
+
+      const wsUri = session.workspaceUri ?? config.workspaceUri;
+      if (wsUri) {
+        const shortWs = wsUri.replace(/^file:\/\//, "").replace(os.homedir(), "~");
+        text += `<b>Workspace:</b> <code>${escapeHtml(shortWs)}</code>\n`;
+      }
+
+      await ctx.api.editMessageText(chatId, statusMsg.message_id, text, {
+        parse_mode: "HTML",
+      });
+    } catch (err) {
+      await ctx.api.editMessageText(
+        chatId,
+        statusMsg.message_id,
+        `❌ Error: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
   });
 
   bot.command("status", async (ctx) => {

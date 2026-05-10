@@ -190,11 +190,12 @@ const EMPTY_THRESHOLD = 3;
  *
  * HACK: The LS may report CASCADE_RUN_STATUS_IDLE for a brief period
  * between receiving a user action (message, permission) and actually
- * starting execution. Without a "processing started" signal from the LS,
- * we use a time-based guard. 5s is conservative for a local LS; in
- * practice the transition takes <500ms.
+ * starting execution. The model can also take 30-60+ seconds to generate
+ * its first step (thinking phase), during which the LS reports IDLE
+ * with 0 steps. Without a "processing started" signal from the LS,
+ * we use a time-based guard. 60s covers slow model inference.
  */
-const MIN_ACTIVE_MS = 5000;
+const MIN_ACTIVE_MS = 60_000;
 
 /** Terminal cascade run statuses — agent is definitively done. */
 const TERMINAL_STATUSES = new Set([
