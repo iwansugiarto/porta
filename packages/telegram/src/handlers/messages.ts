@@ -99,7 +99,7 @@ export function registerMessageHandlers(
     }
   >();
 
-  async function processPhotos(
+  async function processMedia(
     chatId: number,
     caption: string,
     items: { mimeType: string; data: string }[]
@@ -145,7 +145,7 @@ export function registerMessageHandlers(
       cleanupWs(session);
       await bot.api.sendMessage(
         chatId,
-        `❌ Gagal mengirim gambar: ${escapeHtml((err as Error).message)}`,
+        `❌ Gagal mengirim media: ${escapeHtml((err as Error).message)}`,
         { parse_mode: "HTML" },
       );
     }
@@ -207,12 +207,79 @@ export function registerMessageHandlers(
       clearTimeout(group.timer);
       group.timer = setTimeout(async () => {
         photoGroupCache.delete(groupId);
-        await processPhotos(chatId, group.caption ?? "Describe these images", group.items);
+        await processMedia(chatId, group.caption ?? "Describe these images", group.items);
       }, 1500);
       return;
     }
 
-    await processPhotos(chatId, caption, [mediaItem]);
+    await processMedia(chatId, caption, [mediaItem]);
+  });
+
+  // ── Voice messages → send to Antigravity ──
+  bot.on("message:voice", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const voice = ctx.message.voice;
+    const caption = ctx.message.caption ?? "Please process this voice message";
+
+    try {
+      const file = await ctx.api.getFile(voice.file_id);
+      const fileUrl = `https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`;
+
+      const response = await fetch(fileUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to download voice: HTTP ${response.status}`);
+      }
+      const buffer = await response.arrayBuffer();
+      const base64Data = Buffer.from(buffer).toString("base64");
+
+      const mimeType = voice.mime_type ?? "audio/ogg";
+      const mediaItem = { mimeType, data: base64Data };
+
+      await processMedia(chatId, caption, [mediaItem]);
+    } catch (err) {
+      await ctx.reply(
+        `❌ Gagal mendownload voice message: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
+  });
+
+  // ── Video messages → send to Antigravity ──
+  bot.on("message:video", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const video = ctx.message.video;
+    const caption = ctx.message.caption ?? "Describe this video";
+
+    try {
+      // Telegram bot API limits file downloads to 20MB
+      if (video.file_size && video.file_size > 20 * 1024 * 1024) {
+        await ctx.reply("❌ Video terlalu besar. Maksimal 20MB.", { parse_mode: "HTML" });
+        return;
+      }
+
+      const statusMsg = await ctx.reply("⏳ Mendownload video...");
+      
+      const file = await ctx.api.getFile(video.file_id);
+      const fileUrl = `https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`;
+
+      const response = await fetch(fileUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to download video: HTTP ${response.status}`);
+      }
+      const buffer = await response.arrayBuffer();
+      const base64Data = Buffer.from(buffer).toString("base64");
+
+      const mimeType = video.mime_type ?? "video/mp4";
+      const mediaItem = { mimeType, data: base64Data };
+
+      await ctx.api.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+      await processMedia(chatId, caption, [mediaItem]);
+    } catch (err) {
+      await ctx.reply(
+        `❌ Gagal mendownload video: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
   });
 
   // ── Document messages → save and tell agent about the file ──

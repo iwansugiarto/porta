@@ -213,6 +213,20 @@ app.get("/api/health", async (c) => {
   });
 });
 
+// ── Config ──
+
+app.get("/api/config/auto-approve", (c) => {
+  return c.json({ enabled: isAutoApproveEnabled() });
+});
+
+app.post("/api/config/auto-approve", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  if (typeof body.enabled === "boolean") {
+    process.env.PORTA_AUTO_APPROVE = body.enabled ? "true" : "false";
+  }
+  return c.json({ enabled: isAutoApproveEnabled() });
+});
+
 // ── Routes ──
 
 registerConversationRoutes(app);

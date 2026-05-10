@@ -555,7 +555,14 @@ export function setupWebSocket(
         }
       };
 
-      /** Is the conversation definitively stopped? */
+      /**
+       * Is the conversation definitively stopped?
+       * Requires multiple consecutive IDLE readings to avoid premature
+       * deactivation when the LS briefly flickers to IDLE during thinking.
+       */
+      let consecutiveIdleCount = 0;
+      const IDLE_CONFIRM_THRESHOLD = 3; // Need 3 consecutive IDLE polls (~150ms apart)
+
       const isDefinitelyDone = async (): Promise<boolean> => {
         try {
           const data = (await rpcForConversation(
@@ -565,8 +572,22 @@ export function setupWebSocket(
             undefined,
             true,
           )) as { status?: string };
-          return TERMINAL_STATUSES.has(data.status ?? "");
+          const status = data.status ?? "";
+
+          if (status === "CASCADE_RUN_STATUS_IDLE") {
+            consecutiveIdleCount++;
+            if (consecutiveIdleCount >= IDLE_CONFIRM_THRESHOLD) {
+              return true;
+            }
+            return false; // Wait for more confirmations
+          }
+
+          // Non-IDLE: reset counter and check other terminal statuses
+          consecutiveIdleCount = 0;
+          return status === "CASCADE_RUN_STATUS_ERROR" ||
+                 status === "CASCADE_RUN_STATUS_UNLOADED";
         } catch {
+          consecutiveIdleCount = 0;
           return false; // RPC failure — stay active to be safe
         }
       };

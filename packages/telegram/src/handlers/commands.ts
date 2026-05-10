@@ -43,9 +43,11 @@ export function registerCommands(
         "/artifacts — Lihat artifacts conversation\n\n" +
         "<b>🔧 Tools:</b>\n" +
         "/cmd <code>command</code> — Jalankan shell command\n" +
+        "/cat <code>file</code> — Baca isi file teks\n" +
         "/diff — Lihat perubahan file (git diff)\n" +
         "/logs <code>[svc] [n]</code> — Lihat log (proxy/web/telegram)\n" +
         "/status — Status proxy &amp; LS\n" +
+        "/autoapprove <code>[on|off]</code> — Toggle auto-approve\n" +
         "/restart — Restart bot\n" +
         "/help — Tampilkan bantuan\n\n" +
         "<i>Kirim pesan teks, foto, atau dokumen untuk chat dengan Antigravity.</i>",
@@ -69,12 +71,14 @@ export function registerCommands(
         "• /artifacts — lihat artifacts conversation\n\n" +
         "<b>Remote Shell & Logs:</b>\n" +
         "• /cmd ls -la — jalankan command di server\n" +
+        "• /cat file.txt — baca file teks\n" +
         "• /diff — lihat perubahan file (git diff)\n" +
         "• /logs proxy 50 — tail 50 baris log\n" +
         "• Beberapa command berbahaya diblokir otomatis\n\n" +
-        "<b>Approval:</b>\n" +
+        "<b>Approval & Settings:</b>\n" +
         "Saat agent perlu izin, bot akan tampilkan\n" +
-        "tombol ✅ Approve / ❌ Reject.",
+        "tombol ✅ Approve / ❌ Reject.\n" +
+        "Gunakan /autoapprove on untuk bypass approval.",
       { parse_mode: "HTML" },
     );
   });
@@ -105,30 +109,40 @@ export function registerCommands(
     }
   });
 
-  bot.command("list", async (ctx) => {
+  async function renderConversationPage(
+    ctx: any,
+    page: number,
+    messageIdToEdit?: number,
+  ) {
     const chatId = ctx.chat.id;
-    const statusMsg = await ctx.reply("⏳ Memuat daftar conversations...");
+    let statusMsg: any;
+    if (!messageIdToEdit) {
+      statusMsg = await ctx.reply("⏳ Memuat daftar conversations...");
+    }
 
     try {
       const conversations = await client.listConversations();
 
       if (conversations.length === 0) {
-        await ctx.api.editMessageText(
-          chatId,
-          statusMsg.message_id,
-          "📭 Tidak ada conversation. Ketik /new untuk membuat.",
-        );
+        const txt = "📭 Tidak ada conversation. Ketik /new untuk membuat.";
+        if (messageIdToEdit) {
+          await ctx.api.editMessageText(chatId, messageIdToEdit, txt);
+        } else {
+          await ctx.api.editMessageText(chatId, statusMsg.message_id, txt);
+        }
         return;
       }
 
-      const items = conversations.slice(0, 10);
+      const PAGE_SIZE = 10;
+      const maxPage = Math.ceil(conversations.length / PAGE_SIZE);
+      const currentPage = Math.max(1, Math.min(page, maxPage));
+      
+      const startIndex = (currentPage - 1) * PAGE_SIZE;
+      const items = conversations.slice(startIndex, startIndex + PAGE_SIZE);
       const currentSession = getSession(chatId);
 
-      let text = "📋 <b>Conversations</b>\n\n<i>Tap untuk switch:</i>";
-      if (conversations.length > 10) {
-        text += `\n<i>(${conversations.length - 10} lainnya tidak ditampilkan)</i>`;
-      }
-
+      let text = `📋 <b>Conversations</b> (Halaman ${currentPage}/${maxPage})\n\n<i>Tap untuk switch:</i>`;
+      
       const keyboard = new InlineKeyboard();
       for (const conv of items) {
         const shortId = conv.id.slice(0, 8);
@@ -142,18 +156,45 @@ export function registerCommands(
         keyboard.text(`${statusIcon} ${shortId} ${summary}${marker}`, `use:${conv.id}`).row();
       }
 
-      await ctx.api.editMessageText(chatId, statusMsg.message_id, text, {
+      const navRow = [];
+      if (currentPage > 1) {
+        navRow.push(InlineKeyboard.text("⬅️ Prev", `list_page:${currentPage - 1}`));
+      }
+      if (currentPage < maxPage) {
+        navRow.push(InlineKeyboard.text("Next ➡️", `list_page:${currentPage + 1}`));
+      }
+      if (navRow.length > 0) {
+        keyboard.row(...navRow);
+      }
+
+      const targetMsgId = messageIdToEdit ?? statusMsg.message_id;
+      await ctx.api.editMessageText(chatId, targetMsgId, text, {
         parse_mode: "HTML",
         reply_markup: keyboard,
       });
     } catch (err) {
-      await ctx.api.editMessageText(
-        chatId,
-        statusMsg.message_id,
-        `❌ Error: ${escapeHtml((err as Error).message)}`,
-        { parse_mode: "HTML" },
-      );
+      const errMsg = `❌ Error: ${escapeHtml((err as Error).message)}`;
+      if (messageIdToEdit) {
+        await ctx.api.editMessageText(chatId, messageIdToEdit, errMsg, { parse_mode: "HTML" });
+      } else {
+        await ctx.api.editMessageText(chatId, statusMsg.message_id, errMsg, { parse_mode: "HTML" });
+      }
     }
+  }
+
+  bot.command("list", async (ctx) => {
+    const pageMatch = ctx.match?.trim();
+    let page = 1;
+    if (pageMatch && /^\d+$/.test(pageMatch)) {
+      page = parseInt(pageMatch, 10);
+    }
+    await renderConversationPage(ctx, page);
+  });
+
+  bot.callbackQuery(/^list_page:(\d+)$/, async (ctx) => {
+    const page = parseInt(ctx.match[1], 10);
+    await renderConversationPage(ctx, page, ctx.callbackQuery.message?.message_id);
+    await ctx.answerCallbackQuery();
   });
 
   bot.command("use", async (ctx) => {
@@ -350,6 +391,57 @@ export function registerCommands(
     }
   });
 
+  bot.command("cat", async (ctx) => {
+    const fileArg = ctx.match?.trim();
+    if (!fileArg) {
+      await ctx.reply("💡 Gunakan: /cat <code>path/to/file</code>\n\nContoh: /cat src/main.ts", { parse_mode: "HTML" });
+      return;
+    }
+
+    const wsUri = getEffectiveWorkspace(ctx.chat.id) || process.cwd();
+    const rootDir = wsUri.replace(/^file:\/\//, "");
+    const fullPath = fileArg.startsWith("/") ? fileArg : path.join(rootDir, fileArg);
+
+    const statusMsg = await ctx.reply(`⏳ Membaca file: <code>${escapeHtml(fileArg)}</code>...`, { parse_mode: "HTML" });
+
+    try {
+      if (!fs.existsSync(fullPath)) {
+        await ctx.api.editMessageText(ctx.chat.id, statusMsg.message_id, `❌ File tidak ditemukan:\n<code>${escapeHtml(fullPath)}</code>`, { parse_mode: "HTML" });
+        return;
+      }
+      
+      const stat = fs.statSync(fullPath);
+      if (stat.isDirectory()) {
+        await ctx.api.editMessageText(ctx.chat.id, statusMsg.message_id, `❌ <code>${escapeHtml(fileArg)}</code> adalah direktori. Gunakan /file.`, { parse_mode: "HTML" });
+        return;
+      }
+
+      if (stat.size > 2 * 1024 * 1024) {
+        await ctx.api.editMessageText(ctx.chat.id, statusMsg.message_id, `❌ File terlalu besar untuk ditampilkan di chat (>${(stat.size/1024/1024).toFixed(1)}MB). Gunakan /file untuk mendownload.`);
+        return;
+      }
+
+      const content = fs.readFileSync(fullPath, "utf-8");
+      await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id).catch(() => {});
+      
+      const chunks = splitMessage(content);
+      const ext = path.extname(fullPath).slice(1);
+      
+      for (const chunk of chunks) {
+        await withRetry(() =>
+          ctx.reply(`<pre><code class="language-${ext}">${escapeHtml(chunk.slice(0, 3800))}</code></pre>`, { parse_mode: "HTML" }),
+        );
+      }
+    } catch (err) {
+      await ctx.api.editMessageText(
+        ctx.chat.id,
+        statusMsg.message_id,
+        `❌ Error membaca file: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
+  });
+
   bot.command("latest", async (ctx) => {
     const chatId = ctx.chat.id;
     const session = getSession(chatId);
@@ -435,9 +527,11 @@ export function registerCommands(
         return;
       }
 
-      let historyText = "📜 <b>History Terakhir</b>\n\n";
-      // Get up to the last 5 trajectories
-      const recent = trajectories.slice(-5);
+      const countArg = ctx.match?.trim();
+      const count = countArg && /^\d+$/.test(countArg) ? parseInt(countArg, 10) : 5;
+      
+      let historyText = `📜 <b>History Terakhir (${count} items)</b>\n\n`;
+      const recent = trajectories.slice(-count);
       
       for (let i = 0; i < recent.length; i++) {
         const t = recent[i];
@@ -585,6 +679,41 @@ export function registerCommands(
   bot.command("restart", async (ctx) => {
     await ctx.reply("🔄 Bot restarting...");
     process.exit(0);
+  });
+
+  bot.command("autoapprove", async (ctx) => {
+    const arg = ctx.match?.trim().toLowerCase();
+    
+    if (arg !== "on" && arg !== "off") {
+      try {
+        const health = await client.getHealth();
+        const state = health.autoApprove ? "ON ✅" : "OFF ❌";
+        await ctx.reply(`💡 Gunakan: /autoapprove [on|off]\n\nStatus saat ini: <b>${state}</b>`, { parse_mode: "HTML" });
+      } catch {
+        await ctx.reply("💡 Gunakan: /autoapprove [on|off]");
+      }
+      return;
+    }
+
+    const enable = arg === "on";
+    const statusMsg = await ctx.reply(`⏳ Mengubah auto-approve menjadi ${enable ? "ON" : "OFF"}...`);
+
+    try {
+      const newState = await client.setAutoApprove(enable);
+      await ctx.api.editMessageText(
+        ctx.chat.id,
+        statusMsg.message_id,
+        `✅ Auto-approve berhasil diubah menjadi: <b>${newState ? "ON ✅" : "OFF ❌"}</b>`,
+        { parse_mode: "HTML" }
+      );
+    } catch (err) {
+      await ctx.api.editMessageText(
+        ctx.chat.id,
+        statusMsg.message_id,
+        `❌ Gagal mengubah auto-approve: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
   });
 
   bot.command("stop", async (ctx) => {

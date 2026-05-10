@@ -214,6 +214,11 @@ export class PortaClient {
     return data.workspaceInfos ?? [];
   }
 
+  async setAutoApprove(enabled: boolean): Promise<boolean> {
+    const data = await this.post<{ enabled: boolean }>("/api/config/auto-approve", { enabled });
+    return data.enabled;
+  }
+
   async listModels(): Promise<{ name: string; displayName: string }[]> {
     const data = await this.get<Record<string, unknown>>("/api/models");
     // Extract model data from the LS response (field is clientModelConfigs)
