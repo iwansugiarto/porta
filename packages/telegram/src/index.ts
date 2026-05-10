@@ -73,6 +73,7 @@ bot.start({
         { command: "cmd", description: "Jalankan shell command" },
         { command: "status", description: "Status proxy & LS" },
         { command: "stop", description: "Stop agent" },
+        { command: "clear", description: "Clear context, buat conversation baru" },
         { command: "end", description: "Akhiri session" },
         { command: "restart", description: "Restart bot" },
         { command: "help", description: "Tampilkan bantuan" },

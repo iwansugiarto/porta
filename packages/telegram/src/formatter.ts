@@ -152,6 +152,7 @@ export function formatStep(step: Record<string, unknown>): string | null {
     const output = runCommand.output as string | undefined;
     if (output) {
       const MAX_OUTPUT = 2000;
+      const SPOILER_THRESHOLD = 500;
       let displayOutput: string;
       if (output.length > MAX_OUTPUT) {
         const truncatedLines = output.slice(-MAX_OUTPUT);
@@ -159,7 +160,13 @@ export function formatStep(step: Record<string, unknown>): string | null {
       } else {
         displayOutput = output;
       }
-      text += `\n<pre>${escapeHtml(displayOutput)}</pre>`;
+      // Wrap long output in spoiler to keep chat readable
+      if (displayOutput.length > SPOILER_THRESHOLD) {
+        text += `\n<tg-spoiler><pre>${escapeHtml(displayOutput)}</pre></tg-spoiler>`;
+        text += `\n<i>📎 Tap untuk lihat output (${output.length} chars)</i>`;
+      } else {
+        text += `\n<pre>${escapeHtml(displayOutput)}</pre>`;
+      }
     }
     return text;
   }
@@ -218,7 +225,7 @@ export function splitMessage(text: string): string[] {
   
   // Track open tags across splits
   const openTags: string[] = [];
-  const tagPattern = /<\/?(b|i|code|pre|s|a)\b[^>]*>/g;
+  const tagPattern = /<\/?(b|i|code|pre|s|a|tg-spoiler)\b[^>]*>/g;
 
   while (remaining.length > 0) {
     // If the remaining text is small enough, plus the closing tags, we can just finish
@@ -241,7 +248,7 @@ export function splitMessage(text: string): string[] {
     
     // Parse tags in this chunk to update the stack
     let match;
-    const chunkTagPattern = /<\/?(b|i|code|pre|s|a)\b[^>]*>/g;
+    const chunkTagPattern = /<\/?(b|i|code|pre|s|a|tg-spoiler)\b[^>]*>/g;
     while ((match = chunkTagPattern.exec(chunk)) !== null) {
       const tagStr = match[0];
       const isClosing = tagStr.startsWith("</");

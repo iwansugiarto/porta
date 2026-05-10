@@ -33,6 +33,7 @@ export function registerCommands(
         "/info — Info conversation saat ini\n" +
         "/stop — Stop agent yang sedang berjalan\n" +
         "/stopall — Stop semua agent yang berjalan\n" +
+        "/clear — Bersihkan context, buat conversation baru\n" +
         "/end — Akhiri session saat ini\n\n" +
         "<b>🤖 Model:</b>\n" +
         "/models — Daftar model tersedia\n" +
@@ -812,6 +813,33 @@ export function registerCommands(
 
     destroySession(chatId);
     await ctx.reply("👋 Session diakhiri. Ketik /new untuk buat baru.");
+  });
+
+  // ── /clear — Start fresh conversation (clear context without /end + /new) ──
+  bot.command("clear", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const session = getSession(chatId);
+
+    if (session) {
+      destroySession(chatId);
+    }
+
+    try {
+      const result = await client.createConversation(getEffectiveWorkspace(chatId));
+      createSession(chatId, result.cascadeId);
+      const shortId = result.cascadeId.slice(0, 8);
+      await ctx.reply(
+        `🧹 Context dibersihkan.\n\n` +
+          `Conversation baru: <code>${shortId}</code>\n` +
+          `<i>Kirim pesan untuk mulai chat.</i>`,
+        { parse_mode: "HTML" },
+      );
+    } catch (err) {
+      await ctx.reply(
+        `❌ Gagal membuat conversation baru: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
   });
 
   bot.command("info", async (ctx) => {

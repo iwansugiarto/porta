@@ -26,6 +26,9 @@ export function registerMessageHandlers(
     // Ignore commands (already handled)
     if (text.startsWith("/")) return;
 
+    // Instant visual confirmation that the bot received the message
+    ctx.api.setMessageReaction(chatId, ctx.message.message_id, [{ type: "emoji", emoji: "👀" }]).catch(() => {});
+
     let session = getSession(chatId);
 
     // Auto-create a conversation if none exists
