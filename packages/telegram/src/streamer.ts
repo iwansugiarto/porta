@@ -405,6 +405,9 @@ export class ResponseStreamer {
 
   /** Update a progress status line showing what the agent is doing. */
   private async updateProgress(step: Record<string, unknown>): Promise<void> {
+    // In quiet mode, skip intermediate progress updates
+    if (this.session.quietMode) return;
+
     const elapsed = Math.round((Date.now() - this.startTime) / 1000);
     const mins = Math.floor(elapsed / 60);
     const secs = elapsed % 60;

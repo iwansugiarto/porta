@@ -21,43 +21,110 @@ export function registerCommands(
   }
 
   bot.command("start", async (ctx) => {
+    const keyboard = new InlineKeyboard()
+      .text("💬 New Chat", "quick:new").text("📋 My Chats", "quick:list").row()
+      .text("📂 Browse Files", "quick:file").text("🔍 Status", "quick:status").row()
+      .text("📖 Full Help", "quick:help");
+
     await ctx.reply(
       "🚀 <b>Porta Telegram Bridge</b>\n\n" +
-        "Akses Antigravity langsung dari Telegram.\n\n" +
-        "<b>💬 Chat:</b>\n" +
-        "/new — Buat conversation baru\n" +
-        "/list — Daftar conversations\n" +
-        "/use <code>id</code> — Switch ke conversation\n" +
-        "/history — History conversation saat ini\n" +
-        "/latest — Response terakhir dari agent\n" +
-        "/info — Info conversation saat ini\n" +
-        "/stop — Stop agent yang sedang berjalan\n" +
-        "/stopall — Stop semua agent yang berjalan\n" +
-        "/clear — Bersihkan context, buat conversation baru\n" +
-        "/end — Akhiri session saat ini\n\n" +
-        "<b>🤖 Model:</b>\n" +
-        "/models — Daftar model tersedia\n" +
-        "/model <code>name</code> — Pilih model\n\n" +
-        "<b>📂 Files:</b>\n" +
-        "/workspace — Switch workspace/project\n" +
-        "/file — Browse file project\n" +
-        "/artifacts — Lihat artifacts conversation\n\n" +
-        "<b>🔧 Tools:</b>\n" +
-        "/cmd <code>command</code> — Jalankan shell command\n" +
-        "/cat <code>file</code> — Baca isi file teks\n" +
-        "/diff — Lihat perubahan file (git diff)\n" +
-        "/logs <code>[svc] [n]</code> — Lihat log (proxy/web/telegram)\n" +
-        "/ps — Daftar proses dengan CPU tertinggi\n" +
-        "/kill <code>pid</code> — Hentikan proses\n" +
-        "/search <code>text</code> — Cari teks di dalam file\n" +
-        "/find <code>name</code> — Cari file berdasarkan nama\n" +
-        "/status — Status proxy &amp; LS\n" +
-        "/autoapprove <code>[on|off]</code> — Toggle auto-approve\n" +
-        "/restart — Restart bot\n" +
-        "/help — Tampilkan bantuan\n\n" +
-        "<i>Kirim pesan teks, foto, atau dokumen untuk chat dengan Antigravity.</i>",
-      { parse_mode: "HTML" },
+        "Akses <b>Antigravity AI</b> langsung dari Telegram.\n\n" +
+        "💡 <b>Quick Start:</b>\n" +
+        "• Ketik pesan langsung untuk chat dengan AI\n" +
+        "• Kirim foto/dokumen untuk analisis\n" +
+        "• Reply ke pesan bot untuk konteks\n\n" +
+        "Pilih aksi di bawah, atau ketik /help untuk bantuan lengkap.",
+      { parse_mode: "HTML", reply_markup: keyboard },
     );
+  });
+
+  // Handle quick-action callbacks from /start
+  bot.callbackQuery(/^quick:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const action = ctx.match[1];
+    const chatId = ctx.chat!.id;
+
+    switch (action) {
+      case "new": {
+        try {
+          const result = await client.createConversation(getEffectiveWorkspace(chatId));
+          createSession(chatId, result.cascadeId);
+          const shortId = result.cascadeId.slice(0, 8);
+          await ctx.reply(
+            `✅ Conversation baru: <code>${shortId}</code>\n<i>Kirim pesan untuk mulai chat.</i>`,
+            { parse_mode: "HTML" },
+          );
+        } catch (err) {
+          await ctx.reply(`❌ Gagal: ${escapeHtml((err as Error).message)}`, { parse_mode: "HTML" });
+        }
+        break;
+      }
+      case "list": {
+        await renderConversationPage(ctx, 1);
+        break;
+      }
+      case "file": {
+        // Trigger /file command logic
+        const ws = getEffectiveWorkspace(chatId);
+        if (!ws) {
+          await ctx.reply("⚠️ Workspace belum di-set. Gunakan /workspace dulu.");
+        } else {
+          await ctx.reply(`📂 Gunakan /file untuk browse files di workspace.`);
+        }
+        break;
+      }
+      case "status": {
+        try {
+          await client.getHealth();
+          const session = getSession(chatId);
+          const convId = session ? session.cascadeId.slice(0, 8) : "none";
+          await ctx.reply(
+            `🔍 <b>Status</b>\n\n` +
+              `• Proxy: ✅ connected\n` +
+              `• Session: <code>${convId}</code>\n` +
+              `• Model: <code>${session?.selectedModel ?? "default"}</code>`,
+            { parse_mode: "HTML" },
+          );
+        } catch (err) {
+          await ctx.reply(`❌ Proxy unreachable: ${escapeHtml((err as Error).message)}`, { parse_mode: "HTML" });
+        }
+        break;
+      }
+      case "help": {
+        await ctx.reply(
+          "<b>💬 Chat:</b>\n" +
+            "/new — Buat conversation baru\n" +
+            "/list — Daftar conversations\n" +
+            "/use <code>id</code> — Switch ke conversation\n" +
+            "/history — History conversation\n" +
+            "/latest — Response terakhir\n" +
+            "/clear — Bersihkan context\n" +
+            "/quiet — Toggle silent mode\n" +
+            "/export — Export conversation ke file\n" +
+            "/stop — Stop agent\n" +
+            "/end — Akhiri session\n\n" +
+            "<b>🤖 Model:</b>\n" +
+            "/models — Daftar model\n" +
+            "/model <code>name</code> — Pilih model\n\n" +
+            "<b>📂 Files:</b>\n" +
+            "/workspace — Switch workspace\n" +
+            "/file — Browse file\n" +
+            "/artifacts — Lihat artifacts\n" +
+            "/cat <code>file</code> — Baca file\n\n" +
+            "<b>🔧 Tools:</b>\n" +
+            "/cmd <code>command</code> — Shell command\n" +
+            "/diff — Git diff\n" +
+            "/logs — Service logs\n" +
+            "/search <code>text</code> — Cari teks\n" +
+            "/find <code>name</code> — Cari file\n" +
+            "/status — Status proxy\n" +
+            "/ps — Proses aktif\n" +
+            "/restart — Restart bot",
+          { parse_mode: "HTML" },
+        );
+        break;
+      }
+    }
   });
 
   bot.command("help", async (ctx) => {
@@ -837,6 +904,106 @@ export function registerCommands(
     } catch (err) {
       await ctx.reply(
         `❌ Gagal membuat conversation baru: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
+  });
+
+  // ── /quiet — Toggle silent notifications ──
+  bot.command("quiet", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const session = getSession(chatId);
+
+    if (!session) {
+      await ctx.reply("ℹ️ Tidak ada session aktif. Gunakan /new atau /list.");
+      return;
+    }
+
+    session.quietMode = !session.quietMode;
+    const icon = session.quietMode ? "🔇" : "🔔";
+    const label = session.quietMode ? "ON" : "OFF";
+    await ctx.reply(
+      `${icon} Quiet mode: <b>${label}</b>\n\n` +
+        (session.quietMode
+          ? "<i>Notifikasi intermediate dimatikan. Kamu hanya akan diberitahu saat task selesai.</i>"
+          : "<i>Semua notifikasi diaktifkan kembali.</i>"),
+      { parse_mode: "HTML" },
+    );
+  });
+
+  // ── /export — Export conversation history to markdown file ──
+  bot.command("export", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const session = getSession(chatId);
+
+    if (!session) {
+      await ctx.reply("ℹ️ Tidak ada session aktif. Gunakan /new atau /list.");
+      return;
+    }
+
+    const statusMsg = await ctx.reply("⏳ Mengekspor conversation...");
+
+    try {
+      const steps = await client.getSteps(session.cascadeId, 0, 1000);
+      if (!steps || steps.length === 0) {
+        await ctx.api.editMessageText(chatId, statusMsg.message_id, "📭 Tidak ada steps untuk diexport.");
+        return;
+      }
+
+      // Build markdown content
+      const shortId = session.cascadeId.slice(0, 8);
+      let md = `# Conversation ${shortId}\n\n`;
+      md += `**Exported:** ${new Date().toISOString()}\n`;
+      md += `**Steps:** ${steps.length}\n\n---\n\n`;
+
+      for (const step of steps) {
+        const status = (step.status as string) ?? "";
+        if (status !== "CORTEX_STEP_STATUS_DONE") continue;
+
+        // Planner response
+        const resp = step.plannerResponse as Record<string, unknown> | undefined;
+        if (resp) {
+          const text = (resp.modifiedResponse as string) ?? (resp.response as string) ?? "";
+          if (text) {
+            md += `## 💬 Agent Response\n\n${text}\n\n---\n\n`;
+          }
+        }
+
+        // Command
+        const cmd = step.runCommand as Record<string, unknown> | undefined;
+        if (cmd) {
+          const cmdLine = (cmd.commandLine as string) ?? "";
+          const output = (cmd.output as string) ?? "";
+          md += `## ⚡ Command\n\n\`\`\`\n${cmdLine}\n\`\`\`\n\n`;
+          if (output) md += `**Output:**\n\`\`\`\n${output.slice(0, 2000)}\n\`\`\`\n\n`;
+          md += `---\n\n`;
+        }
+
+        // Code edit
+        const codeAction = step.codeAction as Record<string, unknown> | undefined;
+        if (codeAction) {
+          const file = (codeAction.filePath as string) ?? "unknown";
+          const desc = (codeAction.description as string) ?? "";
+          md += `## 📝 Edit: ${file}\n\n${desc}\n\n---\n\n`;
+        }
+      }
+
+      // Write to temp file and send as document
+      const tmpPath = path.join(os.tmpdir(), `porta-export-${shortId}.md`);
+      fs.writeFileSync(tmpPath, md, "utf-8");
+      
+      await ctx.api.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+      await ctx.replyWithDocument(new InputFile(tmpPath, `conversation-${shortId}.md`), {
+        caption: `📄 Export conversation <code>${shortId}</code> (${steps.length} steps)`,
+        parse_mode: "HTML",
+      });
+
+      // Clean up temp file
+      fs.unlinkSync(tmpPath);
+    } catch (err) {
+      await ctx.api.editMessageText(
+        chatId, statusMsg.message_id,
+        `❌ Export gagal: ${escapeHtml((err as Error).message)}`,
         { parse_mode: "HTML" },
       );
     }

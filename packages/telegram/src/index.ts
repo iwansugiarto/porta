@@ -74,6 +74,8 @@ bot.start({
         { command: "status", description: "Status proxy & LS" },
         { command: "stop", description: "Stop agent" },
         { command: "clear", description: "Clear context, buat conversation baru" },
+        { command: "quiet", description: "Toggle silent notifications" },
+        { command: "export", description: "Export conversation ke file" },
         { command: "end", description: "Akhiri session" },
         { command: "restart", description: "Restart bot" },
         { command: "help", description: "Tampilkan bantuan" },

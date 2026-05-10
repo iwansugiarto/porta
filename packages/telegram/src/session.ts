@@ -46,6 +46,8 @@ export interface ChatSession {
    * Cached artifacts for the current session to power inline keyboards.
    */
   cachedArtifacts: { name: string; path: string }[];
+  /** Quiet mode — suppress intermediate notifications, only notify on completion. */
+  quietMode: boolean;
 }
 
 /** In-memory session store: telegramChatId → ChatSession */
@@ -83,6 +85,7 @@ export function createSession(
     renderedStepOffsets: new Set(),
     historicalStepCount: 0,
     cachedArtifacts: [],
+    quietMode: false,
   };
 
   sessions.set(chatId, session);

@@ -241,6 +241,18 @@ export class PortaClient {
     return this.get(`/api/conversations/${cascadeId}`);
   }
 
+  /** Fetch conversation steps for export. */
+  async getSteps(
+    cascadeId: string,
+    offset = 0,
+    count = 500,
+  ): Promise<Record<string, unknown>[]> {
+    const data = await this.get<{ steps?: Record<string, unknown>[] }>(
+      `/api/conversations/${cascadeId}/steps?offset=${offset}&count=${count}`,
+    );
+    return data.steps ?? [];
+  }
+
   /**
    * Execute a shell command on the proxy host.
    * Runs with a timeout and size cap for safety.
