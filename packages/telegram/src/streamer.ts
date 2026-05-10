@@ -61,6 +61,8 @@ export class ResponseStreamer {
   private lastProgressText = "";
   /** Timestamp when the stream started. */
   private startTime = Date.now();
+  /** Lock to prevent concurrent updateProgress from creating duplicate messages. */
+  private progressSending = false;
   /**
    * Whether we have received the "ready" message from the WS.
    * Until we know the historical boundary, we buffer step messages.
@@ -423,11 +425,15 @@ export class ResponseStreamer {
 
     try {
       if (!this.progressMessageId) {
+        // Guard against concurrent sends creating duplicates
+        if (this.progressSending) return;
+        this.progressSending = true;
         // Send new progress message
         const sent = await withRetry(() =>
           this.api.sendMessage(this.chatId, progressText, { parse_mode: "HTML", reply_markup: keyboard }),
         );
         this.progressMessageId = sent.message_id;
+        this.progressSending = false;
       } else {
         // Edit existing progress message
         await withRetry(() =>
