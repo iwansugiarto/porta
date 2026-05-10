@@ -25,6 +25,68 @@ function truncate(text: string, max: number): string {
   return text.slice(0, max - 3) + "...";
 }
 
+/**
+ * Convert markdown text to Telegram-safe HTML.
+ * Handles: code blocks, inline code, bold, italic, strikethrough, links, headers.
+ * Protects code content from being processed by other formatters.
+ */
+export function markdownToTelegramHtml(md: string): string {
+  // 1. Extract code blocks and inline code first (protect from other formatting)
+  const codeBlocks: string[] = [];
+  const CODE_PLACEHOLDER = "\x00CB";
+
+  // Fenced code blocks: ```lang\n...\n```
+  let text = md.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, lang, code) => {
+    const idx = codeBlocks.length;
+    const langAttr = lang ? ` class="language-${escapeHtml(lang)}"` : "";
+    codeBlocks.push(`<pre><code${langAttr}>${escapeHtml(code.trimEnd())}</code></pre>`);
+    return `${CODE_PLACEHOLDER}${idx}${CODE_PLACEHOLDER}`;
+  });
+
+  // Inline code: `...`
+  text = text.replace(/`([^`\n]+)`/g, (_match, code) => {
+    const idx = codeBlocks.length;
+    codeBlocks.push(`<code>${escapeHtml(code)}</code>`);
+    return `${CODE_PLACEHOLDER}${idx}${CODE_PLACEHOLDER}`;
+  });
+
+  // 2. Escape remaining HTML entities
+  text = escapeHtml(text);
+
+  // 3. Apply markdown formatting (order matters!)
+  // Headers → bold (Telegram doesn't support headers natively)
+  text = text.replace(/^#{1,6}\s+(.+)$/gm, "<b>$1</b>");
+
+  // Bold: **text** or __text__
+  text = text.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+  text = text.replace(/__(.+?)__/g, "<b>$1</b>");
+
+  // Italic: *text* or _text_ (but not inside words like file_name)
+  text = text.replace(/(?<!\w)\*([^*\n]+?)\*(?!\w)/g, "<i>$1</i>");
+  text = text.replace(/(?<!\w)_([^_\n]+?)_(?!\w)/g, "<i>$1</i>");
+
+  // Strikethrough: ~~text~~
+  text = text.replace(/~~(.+?)~~/g, "<s>$1</s>");
+
+  // Links: [text](url)
+  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+
+  // Horizontal rules → newline
+  text = text.replace(/^---+$/gm, "");
+
+  // Bullet points: clean up markdown list markers  
+  text = text.replace(/^(\s*)[*-]\s+/gm, "$1• ");
+
+  // Numbered lists: keep as-is (already readable)
+
+  // 4. Restore code blocks
+  text = text.replace(new RegExp(`${CODE_PLACEHOLDER}(\\d+)${CODE_PLACEHOLDER}`, "g"), (_match, idx) => {
+    return codeBlocks[parseInt(idx, 10)] ?? "";
+  });
+
+  return text;
+}
+
 /** Extract the planner response text from a step. */
 function getPlannerText(step: Record<string, unknown>): string | null {
   const resp = step.plannerResponse as Record<string, unknown> | undefined;
@@ -53,7 +115,7 @@ export function formatStep(step: Record<string, unknown>): string | null {
   if (status === "CORTEX_STEP_STATUS_DONE") {
     const plannerText = getPlannerText(step);
     if (plannerText) {
-      return escapeHtml(plannerText);
+      return markdownToTelegramHtml(plannerText);
     }
   }
 
@@ -156,7 +218,7 @@ export function splitMessage(text: string): string[] {
   
   // Track open tags across splits
   const openTags: string[] = [];
-  const tagPattern = /<\/?(b|i|code|pre)>/g;
+  const tagPattern = /<\/?(b|i|code|pre|s|a)\b[^>]*>/g;
 
   while (remaining.length > 0) {
     // If the remaining text is small enough, plus the closing tags, we can just finish
@@ -179,7 +241,7 @@ export function splitMessage(text: string): string[] {
     
     // Parse tags in this chunk to update the stack
     let match;
-    const chunkTagPattern = /<\/?(b|i|code|pre)>/g;
+    const chunkTagPattern = /<\/?(b|i|code|pre|s|a)\b[^>]*>/g;
     while ((match = chunkTagPattern.exec(chunk)) !== null) {
       const tagStr = match[0];
       const isClosing = tagStr.startsWith("</");

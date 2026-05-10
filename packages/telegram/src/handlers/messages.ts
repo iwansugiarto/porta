@@ -58,16 +58,26 @@ export function registerMessageHandlers(
     session.streamMessageId = null;
     session.streamBuffer = "";
 
+    // Extract context from replied-to message (if user is replying to a bot message)
+    let messageText = text;
+    const reply = ctx.message.reply_to_message;
+    if (reply && "text" in reply && reply.text) {
+      const replySnippet = reply.text.length > 500 
+        ? reply.text.slice(0, 500) + "..." 
+        : reply.text;
+      messageText = `[Replying to previous message: "${replySnippet}"]\n\n${text}`;
+    }
+
     connectStreamer(ctx.api, chatId, session, client, config);
 
     try {
-      await client.sendMessage(session.cascadeId, text, session.selectedModel);
+      await client.sendMessage(session.cascadeId, messageText, session.selectedModel);
     } catch (err) {
       const errMsg = (err as Error).message;
       if (errMsg.includes("not_found") || errMsg.includes("502")) {
         try {
           await client.recallConversation(session.cascadeId);
-          await client.sendMessage(session.cascadeId, text, session.selectedModel);
+          await client.sendMessage(session.cascadeId, messageText, session.selectedModel);
         } catch (retryErr) {
           cleanupWs(session);
           destroySession(chatId);
