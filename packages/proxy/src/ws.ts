@@ -76,7 +76,7 @@ async function autoApproveStep(
 
   try {
     if (runCommand) {
-      // Auto-approve command
+      // Auto-approve command execution
       console.log(`[auto-approve] command step=${stepIndex} in ${cascadeId.slice(0, 8)}`);
       await rpcForConversation("HandleCascadeUserInteraction", cascadeId, {
         cascadeId,
@@ -102,11 +102,11 @@ async function autoApproveStep(
         },
       });
     } else {
-      // Unknown WAITING type — log the step keys for debugging
+      // Unknown WAITING type — log entire step structure for debugging
       const keys = Object.keys(step).filter(k => k !== "metadata" && k !== "status");
       console.log(`[auto-approve] UNHANDLED WAITING step=${stepIndex} keys=[${keys.join(",")}] in ${cascadeId.slice(0, 8)}`);
-      // Try generic approval (approve whatever it is)
-      console.log(`[auto-approve] attempting generic approval step=${stepIndex}`);
+      console.log(`[auto-approve] step data: ${JSON.stringify(step, null, 2).slice(0, 2000)}`);
+      // Try generic command approval — may fail for non-command steps
       await rpcForConversation("HandleCascadeUserInteraction", cascadeId, {
         cascadeId,
         interaction: {
