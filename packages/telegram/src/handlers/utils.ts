@@ -58,10 +58,17 @@ export function connectStreamer(
 
   session.wsConnection = wsConn;
 
-  // Stale-conversation timeout: if no new content arrives within 30s,
-  // the conversation is likely stuck in RUNNING from a previous task.
+  // Stale-conversation timeout: detect when the agent isn't producing new content.
+  // For conversations with history (stuck RUNNING), use 30s.
+  // For fresh conversations (no history), use 2min — the model may need time to think.
   const staleTimeout = setTimeout(() => {
     if (!streamer.hasNewContent && !streamer.hasPermissionError) {
+      const isFresh = session.historicalStepCount === 0;
+      if (isFresh) {
+        // Fresh conversation still thinking — don't kill it, just log
+        console.log(`[streamer] fresh conversation still thinking: ${session.cascadeId.slice(0, 8)}`);
+        return;
+      }
       console.log(`[streamer] stale timeout: no new content for ${session.cascadeId.slice(0, 8)}`);
       void api.sendMessage(
         chatId,

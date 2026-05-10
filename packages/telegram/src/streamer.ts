@@ -390,11 +390,15 @@ export class ResponseStreamer {
     if (progressText === this.lastProgressText) return;
     this.lastProgressText = progressText;
 
+    const keyboard: InlineKeyboardMarkup = {
+      inline_keyboard: [[{ text: "🛑 Cancel Task", callback_data: `stop:${this.cascadeId}` }]],
+    };
+
     try {
       if (!this.progressMessageId) {
         // Send new progress message
         const sent = await withRetry(() =>
-          this.api.sendMessage(this.chatId, progressText, { parse_mode: "HTML" }),
+          this.api.sendMessage(this.chatId, progressText, { parse_mode: "HTML", reply_markup: keyboard }),
         );
         this.progressMessageId = sent.message_id;
       } else {
@@ -404,15 +408,15 @@ export class ResponseStreamer {
             this.chatId,
             this.progressMessageId!,
             progressText,
-            { parse_mode: "HTML" },
+            { parse_mode: "HTML", reply_markup: keyboard },
           ),
         );
       }
     } catch (err) {
       const msg = (err as Error).message;
       if (!msg.includes("message is not modified")) {
-        // Reset on error — next update will create a new message
-        this.progressMessageId = null;
+        // Log but keep the message ID — resetting causes duplicate messages
+        console.log(`[streamer] progress update failed: ${msg.slice(0, 100)}`);
       }
     }
   }

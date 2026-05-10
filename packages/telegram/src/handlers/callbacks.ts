@@ -73,6 +73,24 @@ export function registerCallbackHandlers(
       return;
     }
 
+    if (data.startsWith("stop:")) {
+      const cascadeId = data.slice(5);
+      try {
+        await client.stopConversation(cascadeId);
+        await ctx.answerCallbackQuery({ text: "🛑 Task cancelled" });
+        const currentText = ctx.callbackQuery.message?.text ?? "";
+        await ctx.editMessageText(currentText + "\n\n<i>🛑 Task cancelled.</i>", {
+          parse_mode: "HTML",
+          reply_markup: undefined,
+        });
+      } catch (err) {
+        await ctx.answerCallbackQuery({
+          text: `Error: ${(err as Error).message.slice(0, 100)}`,
+        });
+      }
+      return;
+    }
+
     // Handle approve/reject
     const parts = data.split(":");
     if (parts.length >= 5) {

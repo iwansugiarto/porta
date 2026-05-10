@@ -83,7 +83,8 @@ export function formatStep(step: Record<string, unknown>): string | null {
     // Show output if available
     const output = runCommand.output as string | undefined;
     if (output) {
-      text += `\n<pre>${escapeHtml(truncate(output, 1000))}</pre>`;
+      const displayOutput = output.length > 500 ? "..." + output.slice(-500) : output;
+      text += `\n<pre>${escapeHtml(displayOutput)}</pre>`;
     }
     return text;
   }
