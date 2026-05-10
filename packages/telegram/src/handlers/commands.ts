@@ -28,6 +28,7 @@ export function registerCommands(
         "/new — Buat conversation baru\n" +
         "/list — Daftar conversations\n" +
         "/use <code>id</code> — Switch ke conversation\n" +
+        "/history — History conversation saat ini\n" +
         "/latest — Response terakhir dari agent\n" +
         "/info — Info conversation saat ini\n" +
         "/stop — Stop agent yang sedang berjalan\n" +
@@ -42,6 +43,8 @@ export function registerCommands(
         "/artifacts — Lihat artifacts conversation\n\n" +
         "<b>🔧 Tools:</b>\n" +
         "/cmd <code>command</code> — Jalankan shell command\n" +
+        "/diff — Lihat perubahan file (git diff)\n" +
+        "/logs <code>[svc] [n]</code> — Lihat log (proxy/web/telegram)\n" +
         "/status — Status proxy &amp; LS\n" +
         "/restart — Restart bot\n" +
         "/help — Tampilkan bantuan\n\n" +
@@ -64,9 +67,10 @@ export function registerCommands(
         "• /file — browse project files (with inline buttons)\n" +
         "• /file src/ — langsung ke subdirectory\n" +
         "• /artifacts — lihat artifacts conversation\n\n" +
-        "<b>Remote Shell:</b>\n" +
+        "<b>Remote Shell & Logs:</b>\n" +
         "• /cmd ls -la — jalankan command di server\n" +
-        "• /cmd git status — cek status git\n" +
+        "• /diff — lihat perubahan file (git diff)\n" +
+        "• /logs proxy 50 — tail 50 baris log\n" +
         "• Beberapa command berbahaya diblokir otomatis\n\n" +
         "<b>Approval:</b>\n" +
         "Saat agent perlu izin, bot akan tampilkan\n" +
@@ -264,6 +268,88 @@ export function registerCommands(
     }
   });
 
+  bot.command("diff", async (ctx) => {
+    const statusMsg = await ctx.reply("⏳ Mengambil git diff...");
+    try {
+      const cwd = config.workspaceUri ? config.workspaceUri.replace(/^file:\/\//, "") : process.cwd();
+      const { exec } = await import("node:child_process");
+      const util = await import("node:util");
+      const execPromise = util.promisify(exec);
+
+      const { stdout, stderr } = await execPromise("git diff", { cwd });
+      if (!stdout && !stderr) {
+        await ctx.api.editMessageText(ctx.chat.id, statusMsg.message_id, "✅ Tidak ada perubahan (clean working tree).");
+        return;
+      }
+
+      await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id).catch(() => {});
+
+      const chunks = splitMessage(stdout || stderr);
+      for (const chunk of chunks) {
+        await withRetry(() =>
+          ctx.reply(`<pre>${escapeHtml(chunk.slice(0, 3800))}</pre>`, { parse_mode: "HTML" }),
+        );
+      }
+    } catch (err) {
+      await ctx.api.editMessageText(
+        ctx.chat.id,
+        statusMsg.message_id,
+        `❌ Error: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
+  });
+
+  bot.command("logs", async (ctx) => {
+    const args = ctx.match?.trim().split(/\s+/) || [];
+    const service = args[0] || "proxy";
+    const lines = parseInt(args[1] || "50", 10);
+
+    if (!["proxy", "web", "telegram"].includes(service)) {
+      await ctx.reply("💡 Gunakan: /logs [proxy|web|telegram] [baris]\nContoh: /logs proxy 100", { parse_mode: "HTML" });
+      return;
+    }
+
+    const statusMsg = await ctx.reply(`⏳ Membaca ${lines} baris log ${service}...`);
+
+    try {
+      const rootDir = config.workspaceUri ? config.workspaceUri.replace(/^file:\/\//, "") : path.join(process.cwd(), "../../");
+      const logPath = path.join(rootDir, "logs", `${service}.log`);
+
+      if (!fs.existsSync(logPath)) {
+        await ctx.api.editMessageText(ctx.chat.id, statusMsg.message_id, `❌ File log tidak ditemukan: ${service}.log`);
+        return;
+      }
+
+      const { exec } = await import("node:child_process");
+      const util = await import("node:util");
+      const execPromise = util.promisify(exec);
+
+      const { stdout } = await execPromise(`tail -n ${lines} "${logPath}"`);
+
+      await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id).catch(() => {});
+
+      if (!stdout) {
+        await ctx.reply("📭 Log kosong.");
+        return;
+      }
+
+      const chunks = splitMessage(stdout);
+      for (const chunk of chunks) {
+        await withRetry(() =>
+          ctx.reply(`<pre>${escapeHtml(chunk.slice(0, 3800))}</pre>`, { parse_mode: "HTML" }),
+        );
+      }
+    } catch (err) {
+      await ctx.api.editMessageText(
+        ctx.chat.id,
+        statusMsg.message_id,
+        `❌ Error: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
+  });
+
   bot.command("latest", async (ctx) => {
     const chatId = ctx.chat.id;
     const session = getSession(chatId);
@@ -313,6 +399,83 @@ export function registerCommands(
       for (const chunk of chunks) {
         await withRetry(() =>
           ctx.reply(escapeHtml(chunk), { parse_mode: "HTML" }),
+        );
+      }
+    } catch (err) {
+      await ctx.api.editMessageText(
+        chatId,
+        statusMsg.message_id,
+        `❌ Error: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
+  });
+
+  bot.command("history", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const session = getSession(chatId);
+
+    if (!session) {
+      await ctx.reply("ℹ️ Tidak ada session aktif. Gunakan /new atau /list.");
+      return;
+    }
+
+    const statusMsg = await ctx.reply("⏳ Mengambil history conversation...");
+
+    try {
+      const detail = await client.getConversationDetail(session.cascadeId);
+      const trajectories = detail.trajectories as Record<string, unknown>[] | undefined;
+
+      if (!trajectories || trajectories.length === 0) {
+        await ctx.api.editMessageText(
+          chatId,
+          statusMsg.message_id,
+          "📭 Tidak ada history untuk conversation ini.",
+        );
+        return;
+      }
+
+      let historyText = "📜 <b>History Terakhir</b>\n\n";
+      // Get up to the last 5 trajectories
+      const recent = trajectories.slice(-5);
+      
+      for (let i = 0; i < recent.length; i++) {
+        const t = recent[i];
+        
+        // Find user message
+        const firstStep = ((t.steps ?? t.cortexSteps) as Record<string, unknown>[])?.[0];
+        const userMsg = firstStep?.plannerResponse ? null : (t.summary as string) ?? `Turn ${i + 1}`;
+        if (userMsg) {
+          historyText += `👤 <b>User:</b> ${escapeHtml(userMsg)}\n`;
+        }
+
+        // Find agent response
+        let agentResp = "";
+        const steps = (t.steps ?? t.cortexSteps) as Record<string, unknown>[] | undefined;
+        if (steps) {
+          for (let j = steps.length - 1; j >= 0; j--) {
+            const resp = steps[j].plannerResponse as Record<string, unknown> | undefined;
+            if (resp) {
+              agentResp = (resp.modifiedResponse as string) ?? (resp.response as string) ?? "";
+              if (agentResp) break;
+            }
+          }
+        }
+        
+        if (agentResp) {
+          const shortResp = agentResp.length > 200 ? agentResp.slice(0, 200) + "..." : agentResp;
+          historyText += `🤖 <b>Agent:</b> ${escapeHtml(shortResp)}\n\n`;
+        } else {
+          historyText += `🤖 <b>Agent:</b> <i>(No response)</i>\n\n`;
+        }
+      }
+
+      await ctx.api.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+
+      const chunks = splitMessage(historyText);
+      for (const chunk of chunks) {
+        await withRetry(() =>
+          ctx.reply(chunk, { parse_mode: "HTML" }),
         );
       }
     } catch (err) {
@@ -551,13 +714,27 @@ export function registerCommands(
 
     try {
       const health = await client.getHealth();
-      const proxy = health.proxy as { port?: number; uptime?: number } | undefined;
+      const proxy = health.proxy as { 
+        port?: number; 
+        uptime?: number;
+        memory?: { rss: number; heapTotal: number; heapUsed: number };
+        loadavg?: number[];
+      } | undefined;
       const lsList = health.languageServers as Record<string, unknown>[] | undefined;
       const autoApprove = health.autoApprove as boolean | undefined;
 
       let text = "📊 <b>Porta Status</b>\n\n";
       text += `<b>Proxy:</b> ✅ Online (port ${proxy?.port ?? "?"})\n`;
       text += `<b>Uptime:</b> ${formatUptime(proxy?.uptime ?? 0)}\n`;
+      if (proxy?.memory) {
+        const rssMb = (proxy.memory.rss / 1024 / 1024).toFixed(1);
+        const heapMb = (proxy.memory.heapUsed / 1024 / 1024).toFixed(1);
+        text += `<b>Memory:</b> ${rssMb}MB (Heap: ${heapMb}MB)\n`;
+      }
+      if (proxy?.loadavg) {
+        const load = proxy.loadavg.map(v => v.toFixed(2)).join(", ");
+        text += `<b>Load:</b> ${load}\n`;
+      }
       text += `<b>Auto-approve:</b> ${autoApprove ? "✅ On" : "❌ Off"}\n`;
       text += `<b>Language Servers:</b> ${lsList?.length ?? 0}\n`;
 

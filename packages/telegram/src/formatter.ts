@@ -116,6 +116,13 @@ export function formatStep(step: Record<string, unknown>): string | null {
   if (status === "CORTEX_STEP_STATUS_WAITING") {
     return "⏳ <i>Menunggu persetujuan...</i>";
   }
+  if (status === "CORTEX_STEP_STATUS_ERROR") {
+    const errorMsg = (step.error as Record<string, unknown> | undefined)?.message as string | undefined;
+    if (errorMsg) {
+      return `❌ <i>Error: ${escapeHtml(errorMsg)}</i>`;
+    }
+    return "❌ <i>Step gagal (error)</i>";
+  }
 
   // Unknown or empty step — skip
   return null;
@@ -130,22 +137,56 @@ export function splitMessage(text: string): string[] {
 
   const chunks: string[] = [];
   let remaining = text;
+  
+  // Track open tags across splits
+  const openTags: string[] = [];
+  const tagPattern = /<\/?(b|i|code|pre)>/g;
 
   while (remaining.length > 0) {
-    if (remaining.length <= MAX_MSG_LEN) {
-      chunks.push(remaining);
+    // If the remaining text is small enough, plus the closing tags, we can just finish
+    const closingTagsStr = openTags.map(t => `</${t}>`).reverse().join('');
+    if (remaining.length + closingTagsStr.length <= MAX_MSG_LEN) {
+      chunks.push(remaining + closingTagsStr);
       break;
     }
 
-    // Try to split at a newline near the limit
-    let splitIdx = remaining.lastIndexOf("\n", MAX_MSG_LEN);
-    if (splitIdx < MAX_MSG_LEN * 0.5) {
+    // Try to split at a newline near the limit, reserving space for closing tags
+    const targetLimit = MAX_MSG_LEN - closingTagsStr.length;
+    let splitIdx = remaining.lastIndexOf("\n", targetLimit);
+    
+    if (splitIdx < targetLimit * 0.5) {
       // No good newline — hard split
-      splitIdx = MAX_MSG_LEN;
+      splitIdx = targetLimit;
     }
 
-    chunks.push(remaining.slice(0, splitIdx));
-    remaining = remaining.slice(splitIdx).replace(/^\n/, "");
+    let chunk = remaining.slice(0, splitIdx);
+    
+    // Parse tags in this chunk to update the stack
+    let match;
+    const chunkTagPattern = /<\/?(b|i|code|pre)>/g;
+    while ((match = chunkTagPattern.exec(chunk)) !== null) {
+      const tagStr = match[0];
+      const isClosing = tagStr.startsWith("</");
+      const tagName = match[1];
+      
+      if (isClosing) {
+        // Pop from stack if it matches
+        const lastIdx = openTags.lastIndexOf(tagName);
+        if (lastIdx !== -1) {
+          openTags.splice(lastIdx, 1);
+        }
+      } else {
+        openTags.push(tagName);
+      }
+    }
+
+    // Append closing tags for currently open tags
+    const chunkClosingStr = openTags.map(t => `</${t}>`).reverse().join('');
+    chunks.push(chunk + chunkClosingStr);
+    
+    // Prepare remaining text with opening tags
+    const chunkOpeningStr = openTags.map(t => `<${t}>`).join('');
+    remaining = chunkOpeningStr + remaining.slice(splitIdx).replace(/^\n/, "");
   }
 
   return chunks;

@@ -90,25 +90,35 @@ export function registerMessageHandlers(
   });
 
   // ── Photo/image messages → send with media to Antigravity ──
-  bot.on("message:photo", async (ctx) => {
-    const chatId = ctx.chat.id;
-    const caption = ctx.message.caption ?? "Describe this image";
+  const photoGroupCache = new Map<
+    string,
+    {
+      timer: ReturnType<typeof setTimeout>;
+      items: { mimeType: string; data: string }[];
+      caption?: string;
+    }
+  >();
 
+  async function processPhotos(
+    chatId: number,
+    caption: string,
+    items: { mimeType: string; data: string }[]
+  ) {
     let session = getSession(chatId);
 
     if (!session) {
-      const statusMsg = await ctx.reply("⏳ Membuat conversation baru...");
+      const statusMsg = await bot.api.sendMessage(chatId, "⏳ Membuat conversation baru...");
       try {
         const result = await client.createConversation(getEffectiveWorkspace(chatId));
         session = createSession(chatId, result.cascadeId);
-        await ctx.api.editMessageText(
+        await bot.api.editMessageText(
           chatId,
           statusMsg.message_id,
           `✅ Conversation <code>${result.cascadeId.slice(0, 8)}</code> dibuat`,
           { parse_mode: "HTML" },
         );
       } catch (err) {
-        await ctx.api.editMessageText(
+        await bot.api.editMessageText(
           chatId,
           statusMsg.message_id,
           `❌ Gagal membuat conversation: ${escapeHtml((err as Error).message)}`,
@@ -122,10 +132,34 @@ export function registerMessageHandlers(
     session.streamMessageId = null;
     session.streamBuffer = "";
 
+    connectStreamer(bot.api, chatId, session, client, config);
+
+    try {
+      await client.sendMessage(
+        session.cascadeId,
+        caption,
+        session.selectedModel,
+        items,
+      );
+    } catch (err) {
+      cleanupWs(session);
+      await bot.api.sendMessage(
+        chatId,
+        `❌ Gagal mengirim gambar: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
+  }
+
+  bot.on("message:photo", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const caption = ctx.message.caption ?? "Describe this image";
+    const groupId = ctx.message.media_group_id;
+
     const photos = ctx.message.photo;
     const bestPhoto = photos[photos.length - 1];
 
-    connectStreamer(ctx.api, chatId, session, client, config);
+    let mediaItem: { mimeType: string; data: string } | null = null;
 
     try {
       const file = await ctx.api.getFile(bestPhoto.file_id);
@@ -147,44 +181,67 @@ export function registerMessageHandlers(
         webp: "image/webp",
       };
       const mimeType = mimeMap[ext] ?? "image/jpeg";
-
-      await client.sendMessage(
-        session.cascadeId,
-        caption,
-        session.selectedModel,
-        [{ mimeType, data: base64Data }],
-      );
+      mediaItem = { mimeType, data: base64Data };
     } catch (err) {
-      cleanupWs(session);
       await ctx.reply(
-        `❌ Gagal mengirim gambar: ${escapeHtml((err as Error).message)}`,
+        `❌ Gagal mendownload gambar: ${escapeHtml((err as Error).message)}`,
         { parse_mode: "HTML" },
       );
       return;
     }
+
+    if (groupId) {
+      if (!photoGroupCache.has(groupId)) {
+        photoGroupCache.set(groupId, {
+          items: [],
+          timer: setTimeout(() => {}, 0),
+        });
+      }
+
+      const group = photoGroupCache.get(groupId)!;
+      group.items.push(mediaItem);
+      if (caption !== "Describe this image" && !group.caption) {
+        group.caption = caption;
+      }
+
+      clearTimeout(group.timer);
+      group.timer = setTimeout(async () => {
+        photoGroupCache.delete(groupId);
+        await processPhotos(chatId, group.caption ?? "Describe these images", group.items);
+      }, 1500);
+      return;
+    }
+
+    await processPhotos(chatId, caption, [mediaItem]);
   });
 
   // ── Document messages → save and tell agent about the file ──
-  bot.on("message:document", async (ctx) => {
-    const chatId = ctx.chat.id;
-    const caption = ctx.message.caption ?? "Examine this file";
-    const doc = ctx.message.document;
+  const documentGroupCache = new Map<
+    string,
+    {
+      timer: ReturnType<typeof setTimeout>;
+      files: string[];
+      fileNames: string[];
+      caption?: string;
+    }
+  >();
 
+  async function processDocumentQuery(chatId: number, query: string) {
     let session = getSession(chatId);
 
     if (!session) {
-      const statusMsg = await ctx.reply("⏳ Membuat conversation baru...");
+      const statusMsg = await bot.api.sendMessage(chatId, "⏳ Membuat conversation baru...");
       try {
         const result = await client.createConversation(getEffectiveWorkspace(chatId));
         session = createSession(chatId, result.cascadeId);
-        await ctx.api.editMessageText(
+        await bot.api.editMessageText(
           chatId,
           statusMsg.message_id,
           `✅ Conversation <code>${result.cascadeId.slice(0, 8)}</code> dibuat`,
           { parse_mode: "HTML" },
         );
       } catch (err) {
-        await ctx.api.editMessageText(
+        await bot.api.editMessageText(
           chatId,
           statusMsg.message_id,
           `❌ Gagal membuat conversation: ${escapeHtml((err as Error).message)}`,
@@ -198,14 +255,40 @@ export function registerMessageHandlers(
     session.streamMessageId = null;
     session.streamBuffer = "";
 
+    connectStreamer(bot.api, chatId, session, client, config);
+
+    try {
+      await client.sendMessage(
+        session.cascadeId,
+        query,
+        session.selectedModel,
+      );
+    } catch (err) {
+      cleanupWs(session);
+      await bot.api.sendMessage(
+        chatId,
+        `❌ Gagal mengirim dokumen: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
+  }
+
+  bot.on("message:document", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const caption = ctx.message.caption ?? "Examine this file";
+    const doc = ctx.message.document;
+    const groupId = ctx.message.media_group_id;
+
+    let dest = "";
+    const fileName = doc.file_name ?? "telegram_upload";
+
     try {
       const file = await ctx.api.getFile(doc.file_id);
-      const fileName = doc.file_name ?? "telegram_upload";
       const fileUrl = `https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`;
 
       const tmpDir = path.join(os.tmpdir(), "porta-telegram");
       fs.mkdirSync(tmpDir, { recursive: true });
-      const dest = path.join(tmpDir, `tg_${Date.now()}_${fileName}`);
+      dest = path.join(tmpDir, `tg_${Date.now()}_${fileName}`);
 
       const response = await fetch(fileUrl);
       if (!response.ok) {
@@ -217,24 +300,45 @@ export function registerMessageHandlers(
       await ctx.reply(`📥 File disimpan: <code>${escapeHtml(fileName)}</code>`, {
         parse_mode: "HTML",
       });
-
-      connectStreamer(ctx.api, chatId, session, client, config);
-
-      const query =
-        `[The user has uploaded a file. Use your view_file tool to examine it at: ${dest}]\n` +
-        `${caption}`;
-
-      await client.sendMessage(
-        session.cascadeId,
-        query,
-        session.selectedModel,
-      );
     } catch (err) {
-      cleanupWs(session);
       await ctx.reply(
-        `❌ Gagal mengirim dokumen: ${escapeHtml((err as Error).message)}`,
+        `❌ Gagal mendownload dokumen: ${escapeHtml((err as Error).message)}`,
         { parse_mode: "HTML" },
       );
+      return;
     }
+
+    if (groupId) {
+      if (!documentGroupCache.has(groupId)) {
+        documentGroupCache.set(groupId, {
+          files: [],
+          fileNames: [],
+          timer: setTimeout(() => {}, 0),
+        });
+      }
+
+      const group = documentGroupCache.get(groupId)!;
+      group.files.push(dest);
+      group.fileNames.push(fileName);
+      if (caption !== "Examine this file" && !group.caption) {
+        group.caption = caption;
+      }
+
+      clearTimeout(group.timer);
+      group.timer = setTimeout(async () => {
+        documentGroupCache.delete(groupId);
+        const finalCaption = group.caption ?? "Examine these files";
+        const query =
+          `[The user has uploaded multiple files. Use your view_file tool to examine them at:\n` +
+          group.files.map(f => `- ${f}`).join("\n") + `]\n\n${finalCaption}`;
+        await processDocumentQuery(chatId, query);
+      }, 1500);
+      return;
+    }
+
+    const query =
+      `[The user has uploaded a file. Use your view_file tool to examine it at: ${dest}]\n` +
+      `${caption}`;
+    await processDocumentQuery(chatId, query);
   });
 }

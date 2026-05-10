@@ -194,9 +194,15 @@ app.post("/api/auth/logout", (c) => {
 
 app.get("/api/health", async (c) => {
   const instances = await discovery.getInstances();
+  const os = await import("node:os");
   return c.json({
     status: "ok",
-    proxy: { port: PORT, uptime: process.uptime() },
+    proxy: { 
+      port: PORT, 
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+      loadavg: os.loadavg()
+    },
     autoApprove: isAutoApproveEnabled(),
     languageServers: instances.map((i) => ({
       pid: i.pid,

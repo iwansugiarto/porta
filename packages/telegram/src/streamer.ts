@@ -51,6 +51,8 @@ export class ResponseStreamer {
 
   /** Whether the streamed content contained a permission/trust error. */
   public hasPermissionError = false;
+  /** Whether the streamed content contained any general error. */
+  public hasError = false;
   /** Whether any new (non-historical) content was actually processed. */
   public hasNewContent = false;
   /** Timer for periodic typing indicator. */
@@ -63,6 +65,10 @@ export class ResponseStreamer {
   private startTime = Date.now();
   /** Lock to prevent concurrent updateProgress from creating duplicate messages. */
   private progressSending = false;
+  /** Timer for periodic progress message refresh (updates elapsed time). */
+  private progressRefreshTimer: ReturnType<typeof setInterval> | null = null;
+  /** Last step data used for progress (for periodic refresh). */
+  private lastProgressStep: Record<string, unknown> | null = null;
   /**
    * Whether we have received the "ready" message from the WS.
    * Until we know the historical boundary, we buffer step messages.
@@ -96,6 +102,26 @@ export class ResponseStreamer {
     if (this.typingTimer) {
       clearInterval(this.typingTimer);
       this.typingTimer = null;
+    }
+  }
+
+  /** Start periodic progress message refresh (updates elapsed time). */
+  private startProgressRefresh(): void {
+    if (this.progressRefreshTimer || this.finalized) return;
+    this.progressRefreshTimer = setInterval(() => {
+      if (this.lastProgressStep && this.progressMessageId) {
+        // Reset lastProgressText to force re-render with new elapsed time
+        this.lastProgressText = "";
+        void this.updateProgress(this.lastProgressStep);
+      }
+    }, 10_000);
+  }
+
+  /** Stop the progress refresh timer. */
+  private stopProgressRefresh(): void {
+    if (this.progressRefreshTimer) {
+      clearInterval(this.progressRefreshTimer);
+      this.progressRefreshTimer = null;
     }
   }
 
@@ -178,11 +204,18 @@ export class ResponseStreamer {
       const hasOutput = !!(step.runCommand as Record<string, unknown> | undefined)?.output;
       const isDone = status === "CORTEX_STEP_STATUS_DONE";
       const isGenerating = status === "CORTEX_STEP_STATUS_GENERATING";
+      const isError = status === "CORTEX_STEP_STATUS_ERROR";
+
+      if (isError) {
+        this.hasError = true;
+      }
 
       // For GENERATING steps, update the progress indicator instead of rendering content
       if (isGenerating) {
         this.hasNewContent = true;
         await this.updateProgress(step);
+        this.lastProgressStep = step;
+        this.startProgressRefresh();
         continue;
       }
 
@@ -461,6 +494,7 @@ export class ResponseStreamer {
 
     // Stop typing indicator
     this.stopTyping();
+    this.stopProgressRefresh();
 
     if (this.session.flushTimer) {
       clearTimeout(this.session.flushTimer);
@@ -475,12 +509,17 @@ export class ResponseStreamer {
     const secs = elapsed % 60;
     const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
     if (this.progressMessageId) {
+      let finalMsg = `✅ <b>Task selesai</b> (${timeStr})`;
+      if (this.hasError || this.hasPermissionError) {
+        finalMsg = `❌ <b>Task berhenti dengan error</b> (${timeStr})`;
+      }
+      
       try {
         await withRetry(() =>
           this.api.editMessageText(
             this.chatId,
             this.progressMessageId!,
-            `✅ <b>Task selesai</b> (${timeStr})`,
+            finalMsg,
             { parse_mode: "HTML" },
           ),
         );
