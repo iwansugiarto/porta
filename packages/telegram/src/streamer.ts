@@ -69,6 +69,10 @@ export class ResponseStreamer {
   private progressRefreshTimer: ReturnType<typeof setInterval> | null = null;
   /** Last step data used for progress (for periodic refresh). */
   private lastProgressStep: Record<string, unknown> | null = null;
+  /** Count of non-historical steps seen (for progress counter). */
+  private stepsSeen = 0;
+  /** Last non-thinking activity description (for context during thinking). */
+  private lastActivity = "";
   /**
    * Whether we have received the "ready" message from the WS.
    * Until we know the historical boundary, we buffer step messages.
@@ -220,6 +224,7 @@ export class ResponseStreamer {
       // For GENERATING steps, update the progress indicator instead of rendering content
       if (isGenerating) {
         this.hasNewContent = true;
+        this.stepsSeen++;
         await this.updateProgress(step);
         this.lastProgressStep = step;
         this.startProgressRefresh();
@@ -227,6 +232,7 @@ export class ResponseStreamer {
       }
 
       this.hasNewContent = true;
+      this.stepsSeen++;
       await this.processStep(step);
 
       // Mark as rendered once it reaches DONE
@@ -412,21 +418,26 @@ export class ResponseStreamer {
       const cmd = (step.runCommand as Record<string, unknown>).commandLine as string ?? "";
       const shortCmd = cmd.length > 60 ? cmd.slice(0, 57) + "..." : cmd;
       activity = `⚡ Running: <code>${escapeHtml(shortCmd)}</code>`;
+      this.lastActivity = activity;
     } else if (step.codeAction) {
       const file = (step.codeAction as Record<string, unknown>).filePath as string ?? "";
       const name = file.split("/").pop() ?? "file";
       const desc = toolAction || (step.codeAction as Record<string, unknown>).description as string || "";
       activity = `📝 Editing: <code>${escapeHtml(name)}</code>`;
       if (desc) activity += `\n   <i>${escapeHtml(desc.slice(0, 80))}</i>`;
+      this.lastActivity = activity;
     } else if (step.viewFile) {
       const file = (step.viewFile as Record<string, unknown>).filePath as string ?? "";
       const name = file.split("/").pop() ?? "file";
       activity = `👁 Reading: <code>${escapeHtml(name)}</code>`;
+      this.lastActivity = activity;
     } else if (step.grepSearch) {
       const query = (step.grepSearch as Record<string, unknown>).query as string ?? "";
       activity = `🔍 Searching: <code>${escapeHtml(query.slice(0, 40))}</code>`;
+      this.lastActivity = activity;
     } else if (step.listDirectory) {
       activity = "📂 Browsing files...";
+      this.lastActivity = activity;
     } else if (step.plannerResponse) {
       // Show snippet of what the agent is thinking about
       const resp = step.plannerResponse as Record<string, unknown>;
@@ -436,15 +447,21 @@ export class ResponseStreamer {
         const lines = text.split("\n").filter(l => l.trim().length > 0);
         const snippet = lines[0]?.slice(0, 60) ?? "";
         activity = `💭 ${escapeHtml(snippet)}${snippet.length >= 60 ? "..." : ""}`;
+      } else if (this.lastActivity) {
+        // During thinking with no text, show last known activity for context
+        activity = `🤔 Thinking...\n   <i>Last: ${this.lastActivity.replace(/<[^>]+>/g, '')}</i>`;
       } else {
         activity = "💭 Generating response...";
       }
     } else if (step.sendCommandInput) {
       activity = "⌨️ Sending input...";
+      this.lastActivity = activity;
     } else if (toolAction) {
       activity = `🔧 ${escapeHtml(toolAction.slice(0, 60))}`;
+      this.lastActivity = activity;
     } else if (toolSummary) {
       activity = `🔧 ${escapeHtml(toolSummary.slice(0, 60))}`;
+      this.lastActivity = activity;
     }
 
     // Add task context if available
@@ -453,7 +470,9 @@ export class ResponseStreamer {
       taskLine = `\n📋 <i>${escapeHtml(taskName.slice(0, 50))}</i>`;
     }
 
-    const progressText = `⏳ <b>${timeStr}</b> — ${activity}${taskLine}`;
+    // Add step counter for visibility
+    const stepCounter = this.stepsSeen > 0 ? ` [step ${this.stepsSeen}]` : "";
+    const progressText = `⏳ <b>${timeStr}</b>${stepCounter} — ${activity}${taskLine}`;
 
     // Don't update if text hasn't changed
     if (progressText === this.lastProgressText) return;

@@ -80,10 +80,23 @@ export function formatStep(step: Record<string, unknown>): string | null {
     const cmd = (runCommand.commandLine as string) ?? "";
     let text = `⚡ <b>Command:</b> <code>${escapeHtml(truncate(cmd, 300))}</code>`;
 
+    // Show exit code if non-zero
+    const exitCode = runCommand.exitCode as number | undefined;
+    if (exitCode !== undefined && exitCode !== 0) {
+      text += ` <i>(exit ${exitCode})</i>`;
+    }
+
     // Show output if available
     const output = runCommand.output as string | undefined;
     if (output) {
-      const displayOutput = output.length > 500 ? "..." + output.slice(-500) : output;
+      const MAX_OUTPUT = 2000;
+      let displayOutput: string;
+      if (output.length > MAX_OUTPUT) {
+        const truncatedLines = output.slice(-MAX_OUTPUT);
+        displayOutput = `[...${output.length - MAX_OUTPUT} chars truncated]\n${truncatedLines}`;
+      } else {
+        displayOutput = output;
+      }
       text += `\n<pre>${escapeHtml(displayOutput)}</pre>`;
     }
     return text;
@@ -117,9 +130,12 @@ export function formatStep(step: Record<string, unknown>): string | null {
     return "⏳ <i>Menunggu persetujuan...</i>";
   }
   if (status === "CORTEX_STEP_STATUS_ERROR") {
-    const errorMsg = (step.error as Record<string, unknown> | undefined)?.message as string | undefined;
+    const errorObj = step.error as Record<string, unknown> | undefined;
+    const errorMsg = (errorObj?.message as string) ?? (errorObj?.errorMessage as string) ?? "";
+    const errorCode = errorObj?.code as string | undefined;
     if (errorMsg) {
-      return `❌ <i>Error: ${escapeHtml(errorMsg)}</i>`;
+      const codeStr = errorCode ? ` [${escapeHtml(errorCode)}]` : "";
+      return `❌ <b>Error${codeStr}:</b> ${escapeHtml(truncate(errorMsg, 300))}`;
     }
     return "❌ <i>Step gagal (error)</i>";
   }
