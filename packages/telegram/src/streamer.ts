@@ -461,12 +461,15 @@ export class ResponseStreamer {
         // Guard against concurrent sends creating duplicates
         if (this.progressSending) return;
         this.progressSending = true;
-        // Send new progress message
-        const sent = await withRetry(() =>
-          this.api.sendMessage(this.chatId, progressText, { parse_mode: "HTML", reply_markup: keyboard }),
-        );
-        this.progressMessageId = sent.message_id;
-        this.progressSending = false;
+        try {
+          // Send new progress message
+          const sent = await withRetry(() =>
+            this.api.sendMessage(this.chatId, progressText, { parse_mode: "HTML", reply_markup: keyboard }),
+          );
+          this.progressMessageId = sent.message_id;
+        } finally {
+          this.progressSending = false;
+        }
       } else {
         // Edit existing progress message
         await withRetry(() =>

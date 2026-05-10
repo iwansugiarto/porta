@@ -3,6 +3,7 @@ import type { Bot, Context } from "grammy";
 import type { TelegramConfig } from "../config.js";
 import { escapeHtml } from "../formatter.js";
 import { getPathId, pathCache } from "./shared.js";
+import { splitMessage } from "../formatter.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -39,11 +40,19 @@ export function registerFileHandlers(
 
     const keyboard = new InlineKeyboard();
     for (const entry of pageEntries) {
-      const icon = entry.isDirectory() ? "📂" : "📄";
       const fullPath = path.join(dirPath, entry.name);
       const pathId = getPathId(fullPath);
-      const action = entry.isDirectory() ? `fd:${pathId}` : `ff:${pathId}`;
-      keyboard.text(`${icon} ${entry.name}`, action).row();
+      
+      if (entry.isDirectory()) {
+        keyboard.text(`📂 ${entry.name}`, `fd:${pathId}`).row();
+      } else {
+        keyboard.text(`📄 ${entry.name}`, `ff:${pathId}`);
+        const ext = path.extname(entry.name).toLowerCase();
+        if ([".txt", ".ts", ".js", ".json", ".md", ".yml", ".yaml", ".env", ".sh", ".html", ".css", ".log", ".ini", ".conf", ".go", ".rs", ".py", ".java", ".c", ".cpp", ".h"].includes(ext)) {
+          keyboard.text(`👁️ View`, `fv:${pathId}`);
+        }
+        keyboard.row();
+      }
     }
 
     // Navigation row
@@ -133,5 +142,28 @@ export function registerFileHandlers(
     if (!dirPath) return ctx.answerCallbackQuery({ text: "Expired — /file lagi" });
     ctx.answerCallbackQuery().catch(() => {});
     listDirectory(ctx, dirPath, parseInt(pageStr) || 0);
+  });
+
+  bot.callbackQuery(/^fv:(.+)$/, async (ctx) => {
+    const pathId = ctx.match[1];
+    const filePath = pathCache.get(pathId);
+    if (!filePath) return ctx.answerCallbackQuery({ text: "Expired — /file lagi" });
+    await ctx.answerCallbackQuery({ text: `Membaca ${path.basename(filePath)}...` });
+    
+    try {
+      const stat = fs.statSync(filePath);
+      if (stat.size > 2 * 1024 * 1024) {
+        await ctx.reply(`❌ File terlalu besar untuk dibaca langsung (>${(stat.size/1024/1024).toFixed(1)}MB).`);
+        return;
+      }
+      const content = fs.readFileSync(filePath, "utf-8");
+      const chunks = splitMessage(content);
+      const ext = path.extname(filePath).slice(1);
+      for (const chunk of chunks) {
+        await ctx.reply(`<pre><code class="language-${ext}">${escapeHtml(chunk.slice(0, 3800))}</code></pre>`, { parse_mode: "HTML" });
+      }
+    } catch (e) {
+      await ctx.reply(`❌ Gagal membaca file: ${(e as Error).message}`);
+    }
   });
 }

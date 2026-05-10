@@ -46,6 +46,10 @@ export function registerCommands(
         "/cat <code>file</code> — Baca isi file teks\n" +
         "/diff — Lihat perubahan file (git diff)\n" +
         "/logs <code>[svc] [n]</code> — Lihat log (proxy/web/telegram)\n" +
+        "/ps — Daftar proses dengan CPU tertinggi\n" +
+        "/kill <code>pid</code> — Hentikan proses\n" +
+        "/search <code>text</code> — Cari teks di dalam file\n" +
+        "/find <code>name</code> — Cari file berdasarkan nama\n" +
         "/status — Status proxy &amp; LS\n" +
         "/autoapprove <code>[on|off]</code> — Toggle auto-approve\n" +
         "/restart — Restart bot\n" +
@@ -74,6 +78,8 @@ export function registerCommands(
         "• /cat file.txt — baca file teks\n" +
         "• /diff — lihat perubahan file (git diff)\n" +
         "• /logs proxy 50 — tail 50 baris log\n" +
+        "• /ps — lihat proses aktif\n" +
+        "• /search text — cari string di workspace\n" +
         "• Beberapa command berbahaya diblokir otomatis\n\n" +
         "<b>Approval & Settings:</b>\n" +
         "Saat agent perlu izin, bot akan tampilkan\n" +
@@ -982,5 +988,155 @@ export function registerCommands(
       `✅ Model diubah ke: <b>${escapeHtml(resolvedLabel)}</b>`,
       { parse_mode: "HTML" },
     );
+  });
+
+  bot.command("ps", async (ctx) => {
+    const statusMsg = await ctx.reply("⏳ Mengambil daftar proses...");
+    try {
+      // Use OS-agnostic sort approach via awk, or just rely on ps aux
+      const cmdStr = `ps aux | awk 'NR==1; NR>1{print $0 | "sort -nrk 3"}' | head -n 15`;
+      const result = await client.runShellCommand(cmdStr);
+      let output = "";
+      if (result.stdout) output += result.stdout;
+      if (result.stderr) output += (output ? "\n" : "") + result.stderr;
+      
+      await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id).catch(() => {});
+      
+      if (!output) {
+        await ctx.reply("📭 Tidak ada proses ditemukan.");
+        return;
+      }
+
+      const chunks = splitMessage(output);
+      for (const chunk of chunks) {
+        await withRetry(() =>
+          ctx.reply(`<pre>${escapeHtml(chunk.slice(0, 3800))}</pre>`, { parse_mode: "HTML" }),
+        );
+      }
+    } catch (err) {
+      await ctx.api.editMessageText(
+        ctx.chat.id,
+        statusMsg.message_id,
+        `❌ Error: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
+  });
+
+  bot.command("kill", async (ctx) => {
+    const pid = ctx.match?.trim();
+    if (!pid || !/^\d+$/.test(pid)) {
+      await ctx.reply("💡 Gunakan: /kill <code>pid</code>\n\nContoh: /kill 12345", { parse_mode: "HTML" });
+      return;
+    }
+
+    const statusMsg = await ctx.reply(`⏳ Menghentikan proses ${pid}...`);
+    try {
+      const result = await client.runShellCommand(`kill -9 ${pid}`);
+      let output = "";
+      if (result.stdout) output += result.stdout;
+      if (result.stderr) output += (output ? "\n" : "") + result.stderr;
+
+      if (result.exitCode === 0) {
+        await ctx.api.editMessageText(ctx.chat.id, statusMsg.message_id, `✅ Proses ${pid} berhasil dihentikan.`);
+      } else {
+        await ctx.api.editMessageText(ctx.chat.id, statusMsg.message_id, `❌ Gagal menghentikan proses ${pid}:\n<pre>${escapeHtml(output)}</pre>`, { parse_mode: "HTML" });
+      }
+    } catch (err) {
+      await ctx.api.editMessageText(
+        ctx.chat.id,
+        statusMsg.message_id,
+        `❌ Error: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
+  });
+
+  bot.command("search", async (ctx) => {
+    const query = ctx.match?.trim();
+    if (!query) {
+      await ctx.reply("💡 Gunakan: /search <code>text</code>\n\nContoh: /search config", { parse_mode: "HTML" });
+      return;
+    }
+
+    const statusMsg = await ctx.reply(`⏳ Mencari <code>${escapeHtml(query)}</code> di workspace...`, { parse_mode: "HTML" });
+    try {
+      const wsUri = getEffectiveWorkspace(ctx.chat.id) || process.cwd();
+      const rootDir = wsUri.replace(/^file:\/\//, "");
+      const { exec } = await import("node:child_process");
+      const util = await import("node:util");
+      const execPromise = util.promisify(exec);
+
+      // Using grep with recursive, line number, ignore case, and binary files without match
+      const { stdout, stderr } = await execPromise(`grep -rinI --exclude-dir=node_modules --exclude-dir=.git "${query.replace(/"/g, '\\"')}" . | head -n 50`, { cwd: rootDir });
+      
+      await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id).catch(() => {});
+      
+      const output = stdout || stderr;
+      if (!output) {
+        await ctx.reply(`📭 Tidak ditemukan: <code>${escapeHtml(query)}</code>`, { parse_mode: "HTML" });
+        return;
+      }
+
+      const chunks = splitMessage(output);
+      for (const chunk of chunks) {
+        await withRetry(() =>
+          ctx.reply(`<pre>${escapeHtml(chunk.slice(0, 3800))}</pre>`, { parse_mode: "HTML" }),
+        );
+      }
+    } catch (err) {
+      // exec throws if grep finds nothing (exit code 1)
+      if ((err as any).code === 1) {
+        await ctx.api.editMessageText(ctx.chat.id, statusMsg.message_id, `📭 Tidak ditemukan: <code>${escapeHtml(query)}</code>`, { parse_mode: "HTML" });
+      } else {
+        await ctx.api.editMessageText(
+          ctx.chat.id,
+          statusMsg.message_id,
+          `❌ Error: ${escapeHtml((err as Error).message)}`,
+          { parse_mode: "HTML" },
+        );
+      }
+    }
+  });
+
+  bot.command("find", async (ctx) => {
+    const query = ctx.match?.trim();
+    if (!query) {
+      await ctx.reply("💡 Gunakan: /find <code>filename</code>\n\nContoh: /find *.ts", { parse_mode: "HTML" });
+      return;
+    }
+
+    const statusMsg = await ctx.reply(`⏳ Mencari file <code>${escapeHtml(query)}</code>...`, { parse_mode: "HTML" });
+    try {
+      const wsUri = getEffectiveWorkspace(ctx.chat.id) || process.cwd();
+      const rootDir = wsUri.replace(/^file:\/\//, "");
+      const { exec } = await import("node:child_process");
+      const util = await import("node:util");
+      const execPromise = util.promisify(exec);
+
+      const { stdout, stderr } = await execPromise(`find . -type f -name "${query.replace(/"/g, '\\"')}" -not -path "*/node_modules/*" -not -path "*/.git/*" | head -n 50`, { cwd: rootDir });
+      
+      await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id).catch(() => {});
+      
+      const output = stdout || stderr;
+      if (!output) {
+        await ctx.reply(`📭 File tidak ditemukan: <code>${escapeHtml(query)}</code>`, { parse_mode: "HTML" });
+        return;
+      }
+
+      const chunks = splitMessage(output);
+      for (const chunk of chunks) {
+        await withRetry(() =>
+          ctx.reply(`<pre>${escapeHtml(chunk.slice(0, 3800))}</pre>`, { parse_mode: "HTML" }),
+        );
+      }
+    } catch (err) {
+      await ctx.api.editMessageText(
+        ctx.chat.id,
+        statusMsg.message_id,
+        `❌ Error: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
   });
 }
