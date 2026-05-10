@@ -53,6 +53,12 @@ export class ResponseStreamer {
   public hasPermissionError = false;
   /** Timer for periodic typing indicator. */
   private typingTimer: ReturnType<typeof setInterval> | null = null;
+  /** Current progress status message ID (separate from content messages). */
+  private progressMessageId: number | null = null;
+  /** Last progress text shown (to avoid redundant edits). */
+  private lastProgressText = "";
+  /** Timestamp when the stream started. */
+  private startTime = Date.now();
   /**
    * Whether we have received the "ready" message from the WS.
    * Until we know the historical boundary, we buffer step messages.
@@ -167,11 +173,11 @@ export class ResponseStreamer {
       // Build a fingerprint to detect meaningful changes
       const hasOutput = !!(step.runCommand as Record<string, unknown> | undefined)?.output;
       const isDone = status === "CORTEX_STEP_STATUS_DONE";
+      const isGenerating = status === "CORTEX_STEP_STATUS_GENERATING";
 
-      // For non-DONE steps, only render if they have meaningful content
-      // (e.g. WAITING for approval). Skip GENERATING steps to avoid
-      // partial duplicates.
-      if (!isDone && status === "CORTEX_STEP_STATUS_GENERATING") {
+      // For GENERATING steps, update the progress indicator instead of rendering content
+      if (isGenerating) {
+        await this.updateProgress(step);
         continue;
       }
 
@@ -342,6 +348,71 @@ export class ResponseStreamer {
     }
   }
 
+  /** Update a progress status line showing what the agent is doing. */
+  private async updateProgress(step: Record<string, unknown>): Promise<void> {
+    const elapsed = Math.round((Date.now() - this.startTime) / 1000);
+    const mins = Math.floor(elapsed / 60);
+    const secs = elapsed % 60;
+    const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+
+    // Determine activity from step type
+    let activity = "🤔 Thinking...";
+    if (step.runCommand) {
+      const cmd = (step.runCommand as Record<string, unknown>).commandLine as string ?? "";
+      const shortCmd = cmd.length > 60 ? cmd.slice(0, 57) + "..." : cmd;
+      activity = `⚡ Running: <code>${escapeHtml(shortCmd)}</code>`;
+    } else if (step.codeAction) {
+      const file = (step.codeAction as Record<string, unknown>).filePath as string ?? "";
+      const name = file.split("/").pop() ?? "file";
+      activity = `📝 Editing: <code>${escapeHtml(name)}</code>`;
+    } else if (step.viewFile) {
+      const file = (step.viewFile as Record<string, unknown>).filePath as string ?? "";
+      const name = file.split("/").pop() ?? "file";
+      activity = `👁 Reading: <code>${escapeHtml(name)}</code>`;
+    } else if (step.grepSearch) {
+      const query = (step.grepSearch as Record<string, unknown>).query as string ?? "";
+      activity = `🔍 Searching: <code>${escapeHtml(query.slice(0, 40))}</code>`;
+    } else if (step.listDirectory) {
+      activity = "📂 Browsing files...";
+    } else if (step.plannerResponse) {
+      activity = "💭 Generating response...";
+    } else if (step.sendCommandInput) {
+      activity = "⌨️ Sending input...";
+    }
+
+    const progressText = `⏳ <b>${timeStr}</b> — ${activity}`;
+
+    // Don't update if text hasn't changed
+    if (progressText === this.lastProgressText) return;
+    this.lastProgressText = progressText;
+
+    try {
+      if (!this.progressMessageId) {
+        // Send new progress message
+        const sent = await withRetry(() =>
+          this.api.sendMessage(this.chatId, progressText, { parse_mode: "HTML" }),
+        );
+        this.progressMessageId = sent.message_id;
+      } else {
+        // Edit existing progress message
+        await withRetry(() =>
+          this.api.editMessageText(
+            this.chatId,
+            this.progressMessageId!,
+            progressText,
+            { parse_mode: "HTML" },
+          ),
+        );
+      }
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (!msg.includes("message is not modified")) {
+        // Reset on error — next update will create a new message
+        this.progressMessageId = null;
+      }
+    }
+  }
+
   /** Finalize the stream — flush remaining content and clean up. */
   async finalize(): Promise<void> {
     if (this.finalized) return;
@@ -356,6 +427,26 @@ export class ResponseStreamer {
     }
 
     await this.flush();
+
+    // Update progress message to show completion
+    const elapsed = Math.round((Date.now() - this.startTime) / 1000);
+    const mins = Math.floor(elapsed / 60);
+    const secs = elapsed % 60;
+    const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+    if (this.progressMessageId) {
+      try {
+        await withRetry(() =>
+          this.api.editMessageText(
+            this.chatId,
+            this.progressMessageId!,
+            `✅ <b>Task selesai</b> (${timeStr})`,
+            { parse_mode: "HTML" },
+          ),
+        );
+      } catch {
+        // Best effort
+      }
+    }
 
     // Close WebSocket
     if (this.session.wsConnection) {
