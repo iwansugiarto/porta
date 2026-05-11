@@ -719,14 +719,32 @@ export function registerCommands(
 
     session.cachedArtifacts = newArtifacts;
 
-    let text = "📎 <b>Artifacts</b>\n\n<i>Tap untuk melihat artifact:</i>";
+    let text = `📎 <b>Artifacts</b> (${session.cachedArtifacts.length})\n\n<i>Tap untuk melihat artifact:</i>`;
     const keyboard = new InlineKeyboard();
 
     for (let i = 0; i < session.cachedArtifacts.length; i++) {
-      const displayName = session.cachedArtifacts[i].name
+      const art = session.cachedArtifacts[i];
+      const ext = path.extname(art.name).toLowerCase();
+      const displayName = art.name
         .replace(/\.[^/.]+$/, "")
         .replace(/_/g, " ");
-      keyboard.text(`📄 ${escapeHtml(displayName)}`, `art:${i}`).row();
+      // File type icons
+      let icon = "📄";
+      if (ext === ".md") icon = "📝";
+      else if ([".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(ext)) icon = "🖼";
+      else if ([".mp4", ".mov", ".webm"].includes(ext)) icon = "🎬";
+      else if ([".ts", ".js", ".py", ".dart"].includes(ext)) icon = "💻";
+      else if (ext === ".json") icon = "📋";
+
+      // File size
+      let sizeStr = "";
+      try {
+        const stat = fs.statSync(art.path);
+        const kb = Math.round(stat.size / 1024);
+        sizeStr = kb > 0 ? ` (${kb}KB)` : " (<1KB)";
+      } catch { /* skip */ }
+
+      keyboard.text(`${icon} ${displayName}${sizeStr}`, `art:${i}`).row();
     }
 
     await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
@@ -770,6 +788,48 @@ export function registerCommands(
   });
 
 
+  // ── /summary — One-glance dashboard ──
+  bot.command("summary", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const session = getSession(chatId);
+
+    let text = `📊 <b>Dashboard</b>\n\n`;
+
+    // Connection status
+    try {
+      const health = await client.getHealth();
+      text += `🟢 Proxy: connected\n`;
+      text += `🔑 Auto-approve: ${health.autoApprove ? "ON ✅" : "OFF ❌"}\n`;
+    } catch {
+      text += `🔴 Proxy: disconnected\n`;
+    }
+
+    // Session info
+    if (session) {
+      const shortId = session.cascadeId.slice(0, 8);
+      text += `\n💬 <b>Session:</b> <code>${shortId}</code>\n`;
+      text += `🤖 Model: <code>${session.selectedModel ?? "default"}</code>\n`;
+      text += `🔇 Quiet: ${session.quietMode ? "ON" : "OFF"}\n`;
+      if (session.workspaceUri) {
+        const wsName = session.workspaceUri.split("/").pop() ?? session.workspaceUri;
+        text += `📂 Workspace: <code>${escapeHtml(wsName)}</code>\n`;
+      }
+      const bmarks = getBookmarks(chatId);
+      if (bmarks.length > 0) {
+        text += `📌 Bookmarks: ${bmarks.length}\n`;
+      }
+    } else {
+      text += `\n⚪ Tidak ada session aktif\n`;
+    }
+
+    const keyboard = new InlineKeyboard()
+      .text("💬 New Chat", "quick:new")
+      .text("📋 My Chats", "quick:list")
+      .row()
+      .text("📖 Help", "quick:help");
+
+    await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
+  });
 
   bot.command("restart", async (ctx) => {
     await ctx.reply("🔄 Bot restarting...");

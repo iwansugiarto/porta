@@ -172,6 +172,15 @@ export function registerCallbackHandlers(
       try {
         await client.stopConversation(cascadeId);
         await ctx.answerCallbackQuery({ text: "🛑 Task cancelled" });
+        
+        const chatId = ctx.chat?.id;
+        if (chatId) {
+          const session = getSession(chatId);
+          if (session) {
+            session.isCancelled = true;
+          }
+        }
+
         const currentText = ctx.callbackQuery.message?.text ?? "";
         await ctx.editMessageText(currentText + "\n\n<i>🛑 Task cancelled.</i>", {
           parse_mode: "HTML",

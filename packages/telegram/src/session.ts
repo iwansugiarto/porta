@@ -48,6 +48,8 @@ export interface ChatSession {
   cachedArtifacts: { name: string; path: string }[];
   /** Quiet mode — suppress intermediate notifications, only notify on completion. */
   quietMode: boolean;
+  /** Whether the current task was cancelled by the user. */
+  isCancelled: boolean;
 }
 
 /** In-memory session store: telegramChatId → ChatSession */
@@ -117,6 +119,7 @@ export function createSession(
     historicalStepCount: 0,
     cachedArtifacts: [],
     quietMode: false,
+    isCancelled: false,
   };
 
   sessions.set(chatId, session);

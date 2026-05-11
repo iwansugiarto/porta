@@ -545,7 +545,9 @@ export class ResponseStreamer {
     const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
     if (this.progressMessageId) {
       let finalMsg = `✅ <b>Task selesai</b> (${timeStr})`;
-      if (this.hasError || this.hasPermissionError) {
+      if (this.session.isCancelled) {
+        finalMsg = `🛑 <b>Task dibatalkan</b> (${timeStr})`;
+      } else if (this.hasError || this.hasPermissionError) {
         finalMsg = `❌ <b>Task berhenti dengan error</b> (${timeStr})`;
       }
 

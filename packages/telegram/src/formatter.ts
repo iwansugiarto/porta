@@ -16,7 +16,9 @@ export function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 /** Truncate text to a max length, adding ellipsis if needed. */
@@ -126,8 +128,8 @@ export function formatStep(step: Record<string, unknown>): string | null {
     const file = codeAction.filePath as string | undefined;
     const desc = codeAction.description as string | undefined;
     const name = file ? file.split("/").pop() : "file";
-    let text = `📝 <b>Edit: ${escapeHtml(name ?? "file")}</b>`;
-    if (desc) text += `\n${escapeHtml(truncate(desc, 200))}`;
+    let text = `📝 <b>Edit:</b> <code>${escapeHtml(name ?? "file")}</code>`;
+    if (desc) text += `\n<i>${escapeHtml(truncate(desc, 200))}</i>`;
     return text;
   }
 
