@@ -101,6 +101,7 @@ export function registerCommands(
             "/clear — Bersihkan context\n" +
             "/quiet — Toggle silent mode\n" +
             "/export — Export conversation ke file\n" +
+            "/retry — Retry/lanjutkan task terakhir\n" +
             "/stop — Stop agent\n" +
             "/end — Akhiri session\n\n" +
             "<b>🤖 Model:</b>\n" +
@@ -864,6 +865,37 @@ export function registerCommands(
         ctx.chat.id,
         statusMsg.message_id,
         `❌ Error: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
+  });
+
+  // ── /retry — Retry/continue the last task ──
+  bot.command("retry", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const session = getSession(chatId);
+
+    if (!session) {
+      await ctx.reply("ℹ️ Tidak ada session aktif. Gunakan /new atau /list.");
+      return;
+    }
+
+    const { connectStreamer, cleanupWs } = await import("./utils.js");
+
+    cleanupWs(session);
+    session.streamMessageId = null;
+    session.streamBuffer = "";
+
+    connectStreamer(ctx.api, chatId, session, client, config);
+
+    const retryMsg = ctx.match?.trim() || "please continue or retry the last task";
+
+    try {
+      await client.sendMessage(session.cascadeId, retryMsg, session.selectedModel);
+      await ctx.reply(`🔄 Retry dikirim ke agent.`, { parse_mode: "HTML" });
+    } catch (err) {
+      await ctx.reply(
+        `❌ Gagal mengirim retry: ${escapeHtml((err as Error).message)}`,
         { parse_mode: "HTML" },
       );
     }

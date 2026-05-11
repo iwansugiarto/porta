@@ -244,6 +244,18 @@ export function splitMessage(text: string): string[] {
       splitIdx = targetLimit;
     }
 
+    // Avoid splitting inside <pre> blocks — find safe split before <pre> if we're mid-block
+    const preBeforeSplit = remaining.lastIndexOf("<pre>", splitIdx);
+    const preEndBeforeSplit = remaining.lastIndexOf("</pre>", splitIdx);
+    if (preBeforeSplit > preEndBeforeSplit && preBeforeSplit < splitIdx) {
+      // We're inside a <pre> block — try to split before it
+      const saferIdx = remaining.lastIndexOf("\n", preBeforeSplit);
+      if (saferIdx > targetLimit * 0.3) {
+        splitIdx = saferIdx;
+      }
+      // If no safe point, just proceed with the original split (better than infinite loop)
+    }
+
     let chunk = remaining.slice(0, splitIdx);
     
     // Parse tags in this chunk to update the stack

@@ -98,51 +98,46 @@ export function registerCallbackHandlers(
       const stepIndex = parseInt(stepIndexStr, 10);
 
       if (action === "approve" || action === "reject") {
+        // Check if already handled (prevent double-click)
+        const msgText = ctx.callbackQuery.message?.text ?? "";
+        if (msgText.includes("✅ Approved") || msgText.includes("❌ Rejected")) {
+          await ctx.answerCallbackQuery({ text: "⚠️ Already handled" });
+          return;
+        }
+
         try {
+          const timestamp = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+
           if (action === "approve") {
             if (approvalType === "command") {
               await client.approveCommand(cascadeId, trajectoryId, stepIndex);
             } else if (approvalType === "file") {
-              const msgText = ctx.callbackQuery.message?.text ?? "";
               const pathMatch = msgText.match(/`([^`]+)`/);
               const filePath = pathMatch?.[1] ?? "";
-              await client.approveFileAccess(
-                cascadeId,
-                trajectoryId,
-                stepIndex,
-                filePath,
-              );
+              await client.approveFileAccess(cascadeId, trajectoryId, stepIndex, filePath);
             }
             await ctx.answerCallbackQuery({ text: "✅ Approved" });
-            await ctx.editMessageReplyMarkup({ reply_markup: undefined });
-            const currentText = ctx.callbackQuery.message?.text ?? "";
             try {
-              await ctx.editMessageText(currentText + "\n\n✅ <b>Approved</b>", {
-                parse_mode: "HTML",
-              });
-            } catch { }
+              await ctx.editMessageText(
+                msgText + `\n\n✅ <b>Approved</b> <i>(${timestamp})</i>`,
+                { parse_mode: "HTML", reply_markup: undefined },
+              );
+            } catch { /* message unchanged */ }
           } else {
             if (approvalType === "command") {
               await client.rejectCommand(cascadeId, trajectoryId, stepIndex);
             } else if (approvalType === "file") {
-              const msgText = ctx.callbackQuery.message?.text ?? "";
               const pathMatch = msgText.match(/`([^`]+)`/);
               const filePath = pathMatch?.[1] ?? "";
-              await client.rejectFileAccess(
-                cascadeId,
-                trajectoryId,
-                stepIndex,
-                filePath,
-              );
+              await client.rejectFileAccess(cascadeId, trajectoryId, stepIndex, filePath);
             }
             await ctx.answerCallbackQuery({ text: "❌ Rejected" });
-            await ctx.editMessageReplyMarkup({ reply_markup: undefined });
-            const currentText = ctx.callbackQuery.message?.text ?? "";
             try {
-              await ctx.editMessageText(currentText + "\n\n❌ <b>Rejected</b>", {
-                parse_mode: "HTML",
-              });
-            } catch { }
+              await ctx.editMessageText(
+                msgText + `\n\n❌ <b>Rejected</b> <i>(${timestamp})</i>`,
+                { parse_mode: "HTML", reply_markup: undefined },
+              );
+            } catch { /* message unchanged */ }
           }
         } catch (err) {
           await ctx.answerCallbackQuery({
