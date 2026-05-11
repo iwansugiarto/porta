@@ -19,7 +19,7 @@
 import type { Api } from "grammy";
 import type { ChatSession } from "./session.js";
 import type { WSMessage } from "./porta-client.js";
-import { formatStep, splitMessage, getApprovalInfo, escapeHtml } from "./formatter.js";
+import { formatStep, splitMessage, getApprovalInfo, escapeHtml, isToolStep } from "./formatter.js";
 import { withRetry } from "./retry.js";
 import type { InlineKeyboardMarkup } from "grammy/types";
 
@@ -259,6 +259,29 @@ export class ResponseStreamer {
     const text = formatStep(step);
     if (!text) return;
 
+    // ── Separate tool steps from content ──
+    // Tool steps (viewFile, grep, edit, command, etc.) are sent as compact
+    // standalone messages — mirroring the web UI's step cards.
+    // Planner responses (main AI text) go into the streaming buffer.
+    if (isToolStep(step)) {
+      // Flush any pending response text first so ordering is correct
+      await this.flush();
+      // Send tool step as a standalone compact message
+      try {
+        await withRetry(() =>
+          this.api.sendMessage(this.chatId, text, { parse_mode: "HTML" }),
+        );
+      } catch {
+        // Try without HTML on parse failure
+        try {
+          await this.api.sendMessage(this.chatId, text.replace(/<[^>]+>/g, ""));
+        } catch { /* skip */ }
+      }
+      this.allRenderedText += text + "\n";
+      return;
+    }
+
+    // Content (planner responses) — buffer for streaming
     this.pendingText += (this.pendingText ? "\n\n" : "") + text;
     this.allRenderedText += text + "\n";
     this.scheduleFlush();

@@ -107,50 +107,110 @@ function getPlannerText(step: Record<string, unknown>): string | null {
   return null;
 }
 
-/** Format a single step into Telegram HTML text. */
+/** Extract basename from a URI or path. */
+function basename(uriOrPath: string): string {
+  const cleaned = uriOrPath.replace(/^file:\/\//, "");
+  return cleaned.split("/").pop() ?? cleaned;
+}
+
+/**
+ * Format a single step into Telegram HTML text.
+ *
+ * Mirrors the Porta Web frontend's `stepsToMessages.ts` — every step type
+ * that the web shows as a card gets a formatted Telegram representation.
+ *
+ * Return value meanings:
+ *   string       → renderable text (may be "content" or "tool" type)
+ *   null         → skip this step (not renderable yet or empty)
+ */
 export function formatStep(step: Record<string, unknown>): string | null {
   const status = step.status as string | undefined;
 
-  // Planner response (the main AI text)
-  // Only render when DONE — during GENERATING the text is still being streamed
-  // and will produce duplicates when re-polled with new content.
+  // ── Planner Response (main AI text) ──
+  // Only render when DONE — during GENERATING the text is still being streamed.
   if (status === "CORTEX_STEP_STATUS_DONE") {
-    const plannerText = getPlannerText(step);
-    if (plannerText) {
-      return markdownToTelegramHtml(plannerText);
+    const resp = step.plannerResponse as Record<string, unknown> | undefined;
+    if (resp) {
+      const plannerText = getPlannerText(step);
+      const parts: string[] = [];
+
+      // Thinking block — mirrors web's collapsible <details> ThinkingBlock
+      const thinking = resp.thinking as string | undefined;
+      const thinkingDuration = resp.thinkingDuration as string | undefined;
+      if (thinking && thinking.trim()) {
+        let durationLabel = "";
+        if (thinkingDuration) {
+          const match = thinkingDuration.match(/([\d.]+)s/);
+          if (match) durationLabel = ` (${parseFloat(match[1]).toFixed(1)}s)`;
+        }
+        const snippet = thinking.trim().slice(0, 150).replace(/\n/g, " ");
+        parts.push(
+          `💭 <b>Thinking${durationLabel}</b>\n` +
+          `<tg-spoiler><i>${escapeHtml(snippet)}${thinking.length > 150 ? "..." : ""}</i></tg-spoiler>`
+        );
+      }
+
+      if (plannerText) {
+        parts.push(markdownToTelegramHtml(plannerText));
+      }
+
+      return parts.length > 0 ? parts.join("\n\n") : null;
     }
   }
 
-  // Code action (file edit) — only render when DONE
+  // ── Code Action (file edit) ──
+  // Mirrors web's CodeActionCard: icon, diff stats, file name, description
   const codeAction = step.codeAction as Record<string, unknown> | undefined;
   if (codeAction) {
     if (status !== "CORTEX_STEP_STATUS_DONE") return null;
-    const file = codeAction.filePath as string | undefined;
+
+    // File info
+    const actionResult = codeAction.actionResult as Record<string, unknown> | undefined;
+    const edit = actionResult?.edit as Record<string, unknown> | undefined;
+    const fileUri = (edit?.absoluteUri as string) ?? (codeAction.filePath as string) ?? "";
+    const name = fileUri ? basename(fileUri) : "file";
     const desc = codeAction.description as string | undefined;
-    const name = file ? file.split("/").pop() : "file";
-    let text = `📝 <b>Edit:</b> <code>${escapeHtml(name ?? "file")}</code>`;
+    const isCreate = edit?.createFile as boolean | undefined;
+
+    // Diff stats — mirrors web's +N/-N
+    const diff = edit?.diff as Record<string, unknown> | undefined;
+    const unifiedDiff = diff?.unifiedDiff as Record<string, unknown> | undefined;
+    const lines = (unifiedDiff?.lines as { type?: string }[]) ?? [];
+    const additions = lines.filter(l => l.type === "UNIFIED_DIFF_LINE_TYPE_INSERT").length;
+    const deletions = lines.filter(l => l.type === "UNIFIED_DIFF_LINE_TYPE_DELETE").length;
+
+    const icon = isCreate ? "📄" : "📝";
+    let text = `${icon} <b>${isCreate ? "Create" : "Edit"}:</b> <code>${escapeHtml(name)}</code>`;
+    if (additions > 0 || deletions > 0) {
+      text += `  <code>+${additions} -${deletions}</code>`;
+    }
     if (desc) text += `\n<i>${escapeHtml(truncate(desc, 200))}</i>`;
     return text;
   }
 
-  // Run command
+  // ── Run Command ──
+  // Mirrors web's CommandCard: command, CWD, exit code, collapsible output
   const runCommand = step.runCommand as Record<string, unknown> | undefined;
   if (runCommand) {
-    // Skip commands that are still in-progress (no output yet).
-    // WAITING commands are handled by the approval system (getApprovalInfo).
-    // Only render when DONE so we get the complete output in one message.
     if (status !== "CORTEX_STEP_STATUS_DONE") return null;
 
     const cmd = (runCommand.commandLine as string) ?? "";
     let text = `⚡ <b>Command:</b> <code>${escapeHtml(truncate(cmd, 300))}</code>`;
 
-    // Show exit code if non-zero
-    const exitCode = runCommand.exitCode as number | undefined;
-    if (exitCode !== undefined && exitCode !== 0) {
-      text += ` <i>(exit ${exitCode})</i>`;
+    // CWD — mirrors web's step-card-cwd
+    const cwd = runCommand.cwd as string | undefined;
+    if (cwd) {
+      const cwdShort = basename(cwd);
+      text += `\n📁 <code>${escapeHtml(cwdShort)}</code>`;
     }
 
-    // Show output if available
+    // Exit code
+    const exitCode = runCommand.exitCode as number | undefined;
+    if (exitCode !== undefined && exitCode !== 0) {
+      text += `  ❌ <i>exit ${exitCode}</i>`;
+    }
+
+    // Output
     const output = runCommand.output as string | undefined;
     if (output) {
       const MAX_OUTPUT = 2000;
@@ -162,7 +222,6 @@ export function formatStep(step: Record<string, unknown>): string | null {
       } else {
         displayOutput = output;
       }
-      // Wrap long output in spoiler to keep chat readable
       if (displayOutput.length > SPOILER_THRESHOLD) {
         text += `\n<tg-spoiler><pre>${escapeHtml(displayOutput)}</pre></tg-spoiler>`;
         text += `\n<i>📎 Tap untuk lihat output (${output.length} chars)</i>`;
@@ -173,20 +232,100 @@ export function formatStep(step: Record<string, unknown>): string | null {
     return text;
   }
 
-  // View file — skip (noise for Telegram)
-  if (step.viewFile) return null;
+  // ── View File ──
+  // Mirrors web: "Viewed filename #L5-L20" with eye icon
+  const viewFile = step.viewFile as Record<string, unknown> | undefined;
+  if (viewFile) {
+    if (status !== "CORTEX_STEP_STATUS_DONE") return null;
+    const uri = (viewFile.absolutePathUri as string) ?? "";
+    const name = uri ? basename(uri) : "file";
+    const startLine = viewFile.startLine as number | undefined;
+    const endLine = viewFile.endLine as number | undefined;
+    const range = startLine && endLine ? ` #L${startLine}-${endLine}` : "";
+    return `👁 <b>Read:</b> <code>${escapeHtml(name)}${range}</code>`;
+  }
 
-  // Grep search — skip (noise for Telegram)
-  if (step.grepSearch) return null;
+  // ── Grep Search ──
+  // Mirrors web: "Searched `query` in dir — N results"
+  const grepSearch = step.grepSearch as Record<string, unknown> | undefined;
+  if (grepSearch) {
+    if (status !== "CORTEX_STEP_STATUS_DONE") return null;
+    const query = (grepSearch.query as string) ?? "";
+    const results = (grepSearch.results as unknown[]) ?? [];
+    const searchPath = ((grepSearch.searchPathUri as string) ?? "").replace("file://", "");
+    const pathLabel = searchPath ? basename(searchPath) : "";
+    let text = `🔍 <b>Search:</b> <code>${escapeHtml(truncate(query, 40))}</code>`;
+    if (pathLabel) text += ` in <code>${escapeHtml(pathLabel)}</code>`;
+    text += ` — ${results.length} result${results.length !== 1 ? "s" : ""}`;
+    return text;
+  }
 
-  // List directory — skip (noise for Telegram)
-  if (step.listDirectory) return null;
+  // ── List Directory ──
+  // Mirrors web: "Listed dir/ — N items"
+  const listDirectory = step.listDirectory as Record<string, unknown> | undefined;
+  if (listDirectory) {
+    if (status !== "CORTEX_STEP_STATUS_DONE") return null;
+    const uri = ((listDirectory.directoryPathUri as string) ?? "").replace("file://", "");
+    const name = uri ? basename(uri) : "dir";
+    const results = (listDirectory.results as unknown[]) ?? [];
+    return `📂 <b>Listed:</b> <code>${escapeHtml(name)}/</code> — ${results.length} items`;
+  }
 
-  // File permission request (waiting)
+  // ── View File Outline ──
+  // Mirrors web: "Outlined filename"
+  const viewFileOutline = step.viewFileOutline as Record<string, unknown> | undefined;
+  if (viewFileOutline) {
+    if (status !== "CORTEX_STEP_STATUS_DONE") return null;
+    const uri = ((viewFileOutline.absolutePathUri as string) ?? "").replace("file://", "");
+    const name = uri ? basename(uri) : "file";
+    return `📋 <b>Outline:</b> <code>${escapeHtml(name)}</code>`;
+  }
+
+  // ── View Code Item ──
+  // Mirrors web: "Analyzed filename → nodes"
+  const viewCodeItem = step.viewCodeItem as Record<string, unknown> | undefined;
+  if (viewCodeItem) {
+    if (status !== "CORTEX_STEP_STATUS_DONE") return null;
+    const uri = ((viewCodeItem.absoluteUri as string) ?? "").replace("file://", "");
+    const name = uri ? basename(uri) : "file";
+    const nodes = (viewCodeItem.nodePaths as string[]) ?? [];
+    let text = `🔎 <b>Analyzed:</b> <code>${escapeHtml(name)}</code>`;
+    if (nodes.length > 0) text += ` → ${escapeHtml(nodes.slice(0, 3).join(", "))}${nodes.length > 3 ? "..." : ""}`;
+    return text;
+  }
+
+  // ── Find ──
+  // Mirrors web: "Find `pattern` — N results"
+  const find = step.find as Record<string, unknown> | undefined;
+  if (find) {
+    if (status !== "CORTEX_STEP_STATUS_DONE") return null;
+    const pattern = (find.pattern as string) ?? "*";
+    const results = (find.results as unknown[]) ?? [];
+    return `🔍 <b>Find:</b> <code>${escapeHtml(pattern)}</code> — ${results.length} result${results.length !== 1 ? "s" : ""}`;
+  }
+
+  // ── Send Command Input ──
+  // Mirrors web: termination or input indicator
+  const sendCommandInput = step.sendCommandInput as Record<string, unknown> | undefined;
+  if (sendCommandInput) {
+    if (sendCommandInput.terminate) {
+      return `⏹ <i>Command terminated</i>`;
+    }
+    return `⌨️ <i>Input sent</i>`;
+  }
+
+  // ── File Permission Request (waiting) ──
   const fpr = step.filePermissionRequest as Record<string, unknown> | undefined;
   if (fpr && status === "CORTEX_STEP_STATUS_WAITING") {
     const path = (fpr.absolutePathUri as string) ?? "unknown";
-    return `🔐 <b>File access:</b> ${escapeHtml(path)}\n\n⏳ <i>Menunggu persetujuan...</i>`;
+    const blockReason = fpr.blockReason as string | undefined;
+    let text = `🔐 <b>File access:</b> <code>${escapeHtml(basename(path))}</code>`;
+    if (blockReason) {
+      const reason = blockReason.replace("BLOCK_REASON_", "").replace(/_/g, " ").toLowerCase();
+      text += `\n<i>${escapeHtml(reason)}</i>`;
+    }
+    text += `\n\n⏳ <i>Menunggu persetujuan...</i>`;
+    return text;
   }
 
   // Placeholder / error steps (from step recovery)
@@ -213,6 +352,25 @@ export function formatStep(step: Record<string, unknown>): string | null {
 
   // Unknown or empty step — skip
   return null;
+}
+
+/**
+ * Check if a formatted step is a "tool action" (compact one-liner)
+ * vs "content" (main response text that should be in the stream buffer).
+ * Tool actions are: viewFile, grepSearch, listDir, codeAction, command, etc.
+ */
+export function isToolStep(step: Record<string, unknown>): boolean {
+  return !!(
+    step.viewFile ||
+    step.grepSearch ||
+    step.listDirectory ||
+    step.viewFileOutline ||
+    step.viewCodeItem ||
+    step.find ||
+    step.sendCommandInput ||
+    step.codeAction ||
+    step.runCommand
+  );
 }
 
 /**
