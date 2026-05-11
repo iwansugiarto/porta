@@ -548,6 +548,24 @@ export class ResponseStreamer {
       if (this.hasError || this.hasPermissionError) {
         finalMsg = `❌ <b>Task berhenti dengan error</b> (${timeStr})`;
       }
+
+      // Build quick-action keyboard for common follow-ups
+      const quickActions: InlineKeyboardMarkup = {
+        inline_keyboard: this.hasError
+          ? [
+              [
+                { text: "🔄 Retry", callback_data: `qa:retry:${this.session.cascadeId}` },
+                { text: "💬 New Chat", callback_data: "quick:new" },
+              ],
+            ]
+          : [
+              [
+                { text: "➡️ Continue", callback_data: `qa:continue:${this.session.cascadeId}` },
+                { text: "📄 Export", callback_data: `qa:export:${this.session.cascadeId}` },
+                { text: "💬 New Chat", callback_data: "quick:new" },
+              ],
+            ],
+      };
       
       try {
         await withRetry(() =>
@@ -555,7 +573,7 @@ export class ResponseStreamer {
             this.chatId,
             this.progressMessageId!,
             finalMsg,
-            { parse_mode: "HTML" },
+            { parse_mode: "HTML", reply_markup: quickActions },
           ),
         );
       } catch {

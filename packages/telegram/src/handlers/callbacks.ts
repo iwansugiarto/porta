@@ -1,8 +1,8 @@
 import type { Bot } from "grammy";
 import type { TelegramConfig } from "../config.js";
 import type { PortaClient } from "../porta-client.js";
-import { getSession, createSession, switchSession } from "../session.js";
-import { escapeHtml } from "../formatter.js";
+import { getSession, createSession, switchSession, getBookmarks } from "../session.js";
+import { escapeHtml, splitMessage } from "../formatter.js";
 
 export function registerCallbackHandlers(
   bot: Bot,
@@ -15,6 +15,100 @@ export function registerCallbackHandlers(
     if (data.startsWith("ws:") || data.startsWith("wl:") || data.startsWith("wn:") || 
         data.startsWith("fd:") || data.startsWith("ff:") || data.startsWith("fp:")) {
       return next(); // handled by workspace and file handlers
+    }
+
+    // Bookmark view callback
+    if (data.startsWith("bm:view:")) {
+      const idx = parseInt(data.slice(8), 10);
+      const chatId = ctx.chat!.id;
+      const list = getBookmarks(chatId);
+      if (idx < 0 || idx >= list.length) {
+        await ctx.answerCallbackQuery({ text: "Bookmark tidak ditemukan" });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const bm = list[idx];
+      const chunks = splitMessage(`📌 <b>Bookmark #${idx + 1}</b>\n\n${escapeHtml(bm.text)}`);
+      for (const chunk of chunks) {
+        await ctx.reply(chunk, { parse_mode: "HTML" });
+      }
+      return;
+    }
+
+    // Quick-action callbacks from task completion buttons
+    if (data.startsWith("qa:")) {
+      const [, action, cascadeId] = data.split(":");
+      const chatId = ctx.chat!.id;
+      const session = getSession(chatId);
+
+      if (!session || session.cascadeId !== cascadeId) {
+        await ctx.answerCallbackQuery({ text: "⚠️ Session berbeda. Gunakan /use." });
+        return;
+      }
+
+      await ctx.answerCallbackQuery();
+      // Remove buttons from the completion message
+      try { await ctx.editMessageReplyMarkup({ reply_markup: undefined }); } catch {}
+
+      if (action === "continue") {
+        const { connectStreamer, cleanupWs } = await import("./utils.js");
+        cleanupWs(session);
+        session.streamMessageId = null;
+        session.streamBuffer = "";
+        connectStreamer(ctx.api, chatId, session, client, config);
+        try {
+          await client.sendMessage(session.cascadeId, "please continue", session.selectedModel);
+        } catch (err) {
+          await ctx.reply(`❌ Gagal: ${escapeHtml((err as Error).message)}`, { parse_mode: "HTML" });
+        }
+      } else if (action === "retry") {
+        const { connectStreamer, cleanupWs } = await import("./utils.js");
+        cleanupWs(session);
+        session.streamMessageId = null;
+        session.streamBuffer = "";
+        connectStreamer(ctx.api, chatId, session, client, config);
+        try {
+          await client.sendMessage(session.cascadeId, "please retry the last task", session.selectedModel);
+        } catch (err) {
+          await ctx.reply(`❌ Gagal: ${escapeHtml((err as Error).message)}`, { parse_mode: "HTML" });
+        }
+      } else if (action === "export") {
+        // Trigger export logic
+        try {
+          const steps = await client.getSteps(session.cascadeId, 0, 1000);
+          if (!steps || steps.length === 0) {
+            await ctx.reply("📭 Tidak ada steps untuk diexport.");
+            return;
+          }
+          const shortId = session.cascadeId.slice(0, 8);
+          let md = `# Conversation ${shortId}\n\n**Exported:** ${new Date().toISOString()}\n**Steps:** ${steps.length}\n\n---\n\n`;
+          for (const step of steps) {
+            if ((step.status as string) !== "CORTEX_STEP_STATUS_DONE") continue;
+            const resp = step.plannerResponse as Record<string, unknown> | undefined;
+            if (resp) {
+              const text = (resp.modifiedResponse as string) ?? (resp.response as string) ?? "";
+              if (text) md += `## 💬 Agent Response\n\n${text}\n\n---\n\n`;
+            }
+            const cmd = step.runCommand as Record<string, unknown> | undefined;
+            if (cmd) {
+              const cmdLine = (cmd.commandLine as string) ?? "";
+              md += `## ⚡ Command\n\n\`\`\`\n${cmdLine}\n\`\`\`\n\n---\n\n`;
+            }
+          }
+          const { InputFile } = await import("grammy");
+          const tmpPath = (await import("node:path")).join((await import("node:os")).tmpdir(), `porta-export-${shortId}.md`);
+          (await import("node:fs")).writeFileSync(tmpPath, md, "utf-8");
+          await ctx.reply("📄 Exporting...");
+          await ctx.api.sendDocument(chatId, new InputFile(tmpPath, `conversation-${shortId}.md`), {
+            caption: `📄 Export <code>${shortId}</code> (${steps.length} steps)`,
+            parse_mode: "HTML",
+          });
+          (await import("node:fs")).unlinkSync(tmpPath);
+        } catch (err) {
+          await ctx.reply(`❌ Export gagal: ${escapeHtml((err as Error).message)}`, { parse_mode: "HTML" });
+        }
+      }
+      return;
     }
 
     if (data.startsWith("use:")) {

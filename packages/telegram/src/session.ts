@@ -53,6 +53,37 @@ export interface ChatSession {
 /** In-memory session store: telegramChatId → ChatSession */
 const sessions = new Map<number, ChatSession>();
 
+/** Bookmark entry saved by the user. */
+export interface Bookmark {
+  /** Short label / first line of text. */
+  label: string;
+  /** Full text content. */
+  text: string;
+  /** Timestamp when bookmarked. */
+  createdAt: number;
+}
+
+/** Per-chat bookmark store (persists across session switches). */
+const bookmarks = new Map<number, Bookmark[]>();
+
+export function getBookmarks(chatId: number): Bookmark[] {
+  return bookmarks.get(chatId) ?? [];
+}
+
+export function addBookmark(chatId: number, bookmark: Bookmark): number {
+  let list = bookmarks.get(chatId);
+  if (!list) {
+    list = [];
+    bookmarks.set(chatId, list);
+  }
+  list.push(bookmark);
+  return list.length;
+}
+
+export function clearBookmarks(chatId: number): void {
+  bookmarks.delete(chatId);
+}
+
 /** Cleanup timer reference. */
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
 

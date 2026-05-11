@@ -2,7 +2,7 @@ import { InlineKeyboard, InputFile } from "grammy";
 import type { Bot } from "grammy";
 import type { TelegramConfig } from "../config.js";
 import type { PortaClient } from "../porta-client.js";
-import { getSession, createSession, switchSession, destroySession } from "../session.js";
+import { getSession, createSession, switchSession, destroySession, addBookmark, getBookmarks, clearBookmarks } from "../session.js";
 import { escapeHtml, splitMessage } from "../formatter.js";
 import { withRetry } from "../retry.js";
 import { formatUptime } from "./utils.js";
@@ -111,7 +111,9 @@ export function registerCommands(
             "/workspace — Switch workspace\n" +
             "/file — Browse file\n" +
             "/artifacts — Lihat artifacts\n" +
-            "/cat <code>file</code> — Baca file\n\n" +
+            "/cat <code>file</code> — Baca file\n" +
+            "/bookmark — Simpan pesan bot\n" +
+            "/bookmarks — Lihat bookmarks\n\n" +
             "<b>🔧 Tools:</b>\n" +
             "/cmd <code>command</code> — Shell command\n" +
             "/diff — Git diff\n" +
@@ -899,6 +901,64 @@ export function registerCommands(
         { parse_mode: "HTML" },
       );
     }
+  });
+
+  // ── /bookmark — Save a bot message by replying to it ──
+  bot.command("bookmark", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const replyTo = ctx.message?.reply_to_message;
+
+    if (!replyTo || !replyTo.text) {
+      await ctx.reply(
+        "📌 Reply ke pesan bot dengan /bookmark untuk menyimpannya.\n\n" +
+          "<i>Contoh: tekan reply pada pesan agent, lalu ketik /bookmark</i>",
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+
+    const text = replyTo.text;
+    const label = (ctx.match?.trim()) || text.slice(0, 60).replace(/\n/g, " ");
+    const count = addBookmark(chatId, { label, text, createdAt: Date.now() });
+
+    await ctx.reply(
+      `📌 Bookmark #${count} tersimpan: <i>${escapeHtml(label.slice(0, 50))}${label.length > 50 ? "..." : ""}</i>`,
+      { parse_mode: "HTML" },
+    );
+  });
+
+  // ── /bookmarks — List all bookmarks ──
+  bot.command("bookmarks", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const arg = ctx.match?.trim();
+
+    if (arg === "clear") {
+      clearBookmarks(chatId);
+      await ctx.reply("🗑 Semua bookmarks dihapus.");
+      return;
+    }
+
+    const list = getBookmarks(chatId);
+    if (list.length === 0) {
+      await ctx.reply("📌 Belum ada bookmarks. Reply ke pesan bot dengan /bookmark untuk menyimpan.");
+      return;
+    }
+
+    let text = `📌 <b>Bookmarks</b> (${list.length}):\n\n`;
+    for (let i = 0; i < list.length; i++) {
+      const bm = list[i];
+      const time = new Date(bm.createdAt).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+      text += `${i + 1}. <i>${escapeHtml(bm.label.slice(0, 50))}</i> <code>(${time})</code>\n`;
+    }
+    text += `\n<i>Ketik /bookmarks clear untuk menghapus semua.</i>`;
+
+    const keyboard = new InlineKeyboard();
+    // Show buttons to view each bookmark
+    for (let i = 0; i < Math.min(list.length, 10); i++) {
+      keyboard.text(`📖 #${i + 1}`, `bm:view:${i}`).row();
+    }
+
+    await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
   });
 
   bot.command("end", async (ctx) => {
