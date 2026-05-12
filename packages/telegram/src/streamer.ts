@@ -80,6 +80,8 @@ export class ResponseStreamer {
   private ready = false;
   /** Buffered step messages received before "ready". */
   private preReadyBuffer: WSMessage[] = [];
+  /** Track already-sent tool step messages to prevent duplicates. */
+  private toolStepsSent = new Set<string>();
 
   constructor(
     api: Api,
@@ -268,6 +270,10 @@ export class ResponseStreamer {
     // standalone messages — mirroring the web UI's step cards.
     // Planner responses (main AI text) go into the streaming buffer.
     if (isToolStep(step)) {
+      // Dedup: skip if we already sent this exact tool message
+      if (this.toolStepsSent.has(text)) return;
+      this.toolStepsSent.add(text);
+
       // Flush any pending response text first so ordering is correct
       await this.flush();
       // Send tool step as a standalone compact message
