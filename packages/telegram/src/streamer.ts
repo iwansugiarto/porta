@@ -204,15 +204,12 @@ export class ResponseStreamer {
       const step = steps[i];
       const status = (step.status as string) ?? "";
 
-      // Only mark as "fully rendered" when the step is DONE.
-      // In-progress steps may update (e.g. command output arriving).
       if (this.session.renderedStepOffsets.has(stepOffset)) {
-        // Already rendered this step in its DONE state — skip entirely
+        // Already rendered this step — skip entirely
         continue;
       }
 
       // Build a fingerprint to detect meaningful changes
-      const hasOutput = !!(step.runCommand as Record<string, unknown> | undefined)?.output;
       const isDone = status === "CORTEX_STEP_STATUS_DONE";
       const isGenerating = status === "CORTEX_STEP_STATUS_GENERATING";
       const isError = status === "CORTEX_STEP_STATUS_ERROR";
@@ -228,6 +225,13 @@ export class ResponseStreamer {
         await this.updateProgress(step);
         this.lastProgressStep = step;
         this.startProgressRefresh();
+        // Mark tool steps as rendered even during GENERATING to prevent
+        // them from being re-sent when the step reaches DONE.
+        // This fixes the "spam" issue where viewFile/grep/etc. were sent
+        // as standalone messages 10+ times.
+        if (isToolStep(step)) {
+          this.session.renderedStepOffsets.add(stepOffset);
+        }
         continue;
       }
 
@@ -235,8 +239,8 @@ export class ResponseStreamer {
       this.stepsSeen++;
       await this.processStep(step);
 
-      // Mark as rendered once it reaches DONE
-      if (isDone) {
+      // Mark as rendered — always for DONE, and for tool steps immediately
+      if (isDone || isToolStep(step)) {
         this.session.renderedStepOffsets.add(stepOffset);
       }
     }
