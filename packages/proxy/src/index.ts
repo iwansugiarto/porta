@@ -38,7 +38,20 @@ import {
   removeSession,
   isValidSession,
   startSessionCleanup,
+  getShareSession,
 } from "./auth.js";
+import {
+  resolveShareConfig,
+  createShareLink,
+  authenticateShare,
+  getShareByToken,
+  getSharesForWorkspace,
+  getAllShares,
+  revokeShare,
+  enableShare,
+  deleteShare,
+  startShareSessionCleanup,
+} from "./share.js";
 import {
   RateLimiter,
   resolveRateLimitConfig,
@@ -59,6 +72,7 @@ const app = new Hono();
 // ── Auth & Rate Limit Config ──
 
 const authConfig = resolveAuthConfig();
+const shareConfig = resolveShareConfig();
 const rateLimitConfig = resolveRateLimitConfig();
 const rateLimiter = new RateLimiter(rateLimitConfig);
 
@@ -190,6 +204,169 @@ app.post("/api/auth/logout", (c) => {
   return c.json({ ok: true });
 });
 
+// ── Share Endpoints ──
+
+// Get share link info (public — no auth required, for PIN entry page)
+app.get("/api/share/info/:shareToken", (c) => {
+  const shareToken = c.req.param("shareToken");
+  const share = getShareByToken(shareToken);
+  if (!share) {
+    return c.json({ error: "Share link not found or disabled" }, 404);
+  }
+  // Return minimal info (no PIN hash, no internal details)
+  return c.json({
+    shareToken: share.shareToken,
+    workspaceUri: share.workspaceUri,
+    label: share.label,
+    // Extract workspace name from URI for display
+    workspaceName:
+      share.workspaceUri.replace("file://", "").split("/").pop() ??
+      share.workspaceUri,
+  });
+});
+
+// Authenticate with share token + PIN (public — no auth required)
+app.post("/api/share/auth", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const { shareToken, pin } = body as {
+    shareToken?: string;
+    pin?: string;
+  };
+
+  if (!shareToken || !pin) {
+    return c.json(
+      { error: "Share token and PIN are required" },
+      400,
+    );
+  }
+
+  const result = authenticateShare(shareToken, pin, shareConfig);
+  if (!result) {
+    return c.json(
+      { error: "Invalid share token or PIN" },
+      401,
+    );
+  }
+
+  return c.json({
+    token: result.sessionToken,
+    workspaceUri: result.workspaceUri,
+    workspaceName:
+      result.workspaceUri.replace("file://", "").split("/").pop() ??
+      result.workspaceUri,
+  });
+});
+
+// Create a share link (requires full auth)
+app.post("/api/share/create", async (c) => {
+  // Block share sessions from creating shares
+  if (getShareSession(c)) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const { workspaceUri, pin, label } = body as {
+    workspaceUri?: string;
+    pin?: string;
+    label?: string;
+  };
+
+  if (!workspaceUri || !pin) {
+    return c.json(
+      { error: "workspaceUri and pin are required" },
+      400,
+    );
+  }
+
+  if (pin.length < 4) {
+    return c.json(
+      { error: "PIN must be at least 4 characters" },
+      400,
+    );
+  }
+
+  const share = createShareLink(workspaceUri, pin, shareConfig, label);
+  if (!share) {
+    return c.json(
+      { error: "Maximum share links reached for this workspace" },
+      400,
+    );
+  }
+
+  return c.json({
+    shareToken: share.shareToken,
+    workspaceUri: share.workspaceUri,
+    label: share.label,
+    createdAt: share.createdAt,
+    enabled: share.enabled,
+  }, 201);
+});
+
+// List all share links (requires full auth)
+app.get("/api/share/list", (c) => {
+  if (getShareSession(c)) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+
+  const wsUri = c.req.query("workspaceUri");
+  const shares = wsUri ? getSharesForWorkspace(wsUri) : getAllShares();
+
+  return c.json({
+    shares: shares.map((s) => ({
+      shareToken: s.shareToken,
+      workspaceUri: s.workspaceUri,
+      label: s.label,
+      createdAt: s.createdAt,
+      enabled: s.enabled,
+    })),
+  });
+});
+
+// Revoke a share link (requires full auth)
+app.post("/api/share/revoke", async (c) => {
+  if (getShareSession(c)) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const { shareToken } = body as { shareToken?: string };
+
+  if (!shareToken) {
+    return c.json({ error: "shareToken is required" }, 400);
+  }
+
+  const ok = revokeShare(shareToken);
+  return c.json({ ok });
+});
+
+// Re-enable a share link (requires full auth)
+app.post("/api/share/enable", async (c) => {
+  if (getShareSession(c)) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const { shareToken } = body as { shareToken?: string };
+
+  if (!shareToken) {
+    return c.json({ error: "shareToken is required" }, 400);
+  }
+
+  const ok = enableShare(shareToken);
+  return c.json({ ok });
+});
+
+// Delete a share link permanently (requires full auth)
+app.delete("/api/share/:shareToken", (c) => {
+  if (getShareSession(c)) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+
+  const shareToken = c.req.param("shareToken");
+  const ok = deleteShare(shareToken);
+  return c.json({ ok });
+});
+
 // ── Health ──
 
 app.get("/api/health", async (c) => {
@@ -242,6 +419,7 @@ const listenAddress = formatListenAddress(HOST, PORT);
 
 logAuthStatus(authConfig);
 startSessionCleanup(authConfig.sessionTtlMs);
+startShareSessionCleanup(shareConfig);
 console.log(`🚀 Porta proxy starting on ${listenAddress}`);
 
 const server = createAdaptorServer({ fetch: app.fetch, port: PORT });

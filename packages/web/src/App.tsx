@@ -15,6 +15,8 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { WorkspaceSelector } from "./components/WorkspaceSelector";
 import { LoginPage } from "./components/LoginPage";
 import { ConnectionBanner } from "./components/ConnectionBanner";
+import { ShareGate } from "./components/ShareGate";
+import { SharedChatView } from "./components/SharedChatView";
 import { IconFolder } from "./components/Icons";
 import { useConversations } from "./hooks/useConversations";
 import { usePolling } from "./hooks/usePolling";
@@ -138,12 +140,43 @@ export default function App() {
       <ConnectionBanner />
       <Routes>
         <Route path="/" element={<RootRedirect />} />
+        <Route path="/s/:shareToken" element={<ShareRoute />} />
+        <Route path="/s/:shareToken/:chatId" element={<ShareRoute />} />
         <Route path="/:projectSlug/settings" element={<ChatView onLogout={onLogout} />} />
         <Route path="/:projectSlug" element={<ChatView onLogout={onLogout} />} />
         <Route path="/:projectSlug/:chatId" element={<ChatView onLogout={onLogout} />} />
       </Routes>
     </>
   );
+}
+
+// ── Share route: PIN gate → read-only viewer ──
+
+function ShareRoute() {
+  const { shareToken } = useParams<{ shareToken: string }>();
+  const [authenticated, setAuthenticated] = useState(false);
+  const [workspaceName, setWorkspaceName] = useState("");
+
+  const handleAuthenticated = useCallback(
+    (_workspaceUri: string, name: string) => {
+      setWorkspaceName(name);
+      setAuthenticated(true);
+    },
+    [],
+  );
+
+  if (!shareToken) return <Navigate to="/" replace />;
+
+  if (!authenticated) {
+    return (
+      <ShareGate
+        shareToken={shareToken}
+        onAuthenticated={handleAuthenticated}
+      />
+    );
+  }
+
+  return <SharedChatView workspaceName={workspaceName} />;
 }
 
 // ── Root redirect: go to the first workspace's new-chat page ──

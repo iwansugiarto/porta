@@ -28,6 +28,45 @@ export function clearAuthToken(): void {
   }
 }
 
+// ── Share session token management (tab-scoped via sessionStorage) ──
+
+const SHARE_TOKEN_KEY = "porta_share_token";
+const SHARE_WORKSPACE_KEY = "porta_share_workspace";
+
+export function getShareSessionToken(): string | null {
+  try {
+    return sessionStorage.getItem(SHARE_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setShareSession(token: string, workspaceUri: string): void {
+  try {
+    sessionStorage.setItem(SHARE_TOKEN_KEY, token);
+    sessionStorage.setItem(SHARE_WORKSPACE_KEY, workspaceUri);
+  } catch {
+    // sessionStorage not available
+  }
+}
+
+export function getShareWorkspace(): string | null {
+  try {
+    return sessionStorage.getItem(SHARE_WORKSPACE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function clearShareSession(): void {
+  try {
+    sessionStorage.removeItem(SHARE_TOKEN_KEY);
+    sessionStorage.removeItem(SHARE_WORKSPACE_KEY);
+  } catch {
+    // sessionStorage not available
+  }
+}
+
 // ── API client ──
 
 function previewBody(text: string): string {
@@ -43,8 +82,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     ...((options.headers as Record<string, string>) ?? {}),
   };
 
-  // Attach auth token if available
-  const token = getAuthToken();
+  // Attach auth token if available (main auth takes priority over share session)
+  const token = getAuthToken() || getShareSessionToken();
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
@@ -231,4 +270,82 @@ export const api = {
       totalConversations: number;
       elapsedMs: number;
     }>(`/api/search?q=${encodeURIComponent(query)}`),
+
+  // ── Share API ──
+
+  /** Get share link info (public, no auth needed). */
+  shareInfo: (shareToken: string) =>
+    request<{
+      shareToken: string;
+      workspaceUri: string;
+      workspaceName: string;
+      label?: string;
+    }>(`/api/share/info/${shareToken}`),
+
+  /** Authenticate with share token + PIN. */
+  shareAuth: (shareToken: string, pin: string) =>
+    fetch(`${API_BASE}/api/share/auth`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shareToken, pin }),
+    }).then(async (res) => {
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? "Authentication failed");
+      }
+      return res.json() as Promise<{
+        token: string;
+        workspaceUri: string;
+        workspaceName: string;
+      }>;
+    }),
+
+  /** Create a share link (requires full auth). */
+  createShare: (workspaceUri: string, pin: string, label?: string) =>
+    request<{
+      shareToken: string;
+      workspaceUri: string;
+      label?: string;
+      createdAt: string;
+      enabled: boolean;
+    }>("/api/share/create", {
+      method: "POST",
+      body: JSON.stringify({ workspaceUri, pin, label }),
+    }),
+
+  /** List all share links (requires full auth). */
+  listShares: (workspaceUri?: string) => {
+    const params = workspaceUri
+      ? `?workspaceUri=${encodeURIComponent(workspaceUri)}`
+      : "";
+    return request<{
+      shares: {
+        shareToken: string;
+        workspaceUri: string;
+        label?: string;
+        createdAt: string;
+        enabled: boolean;
+      }[];
+    }>(`/api/share/list${params}`);
+  },
+
+  /** Revoke a share link (requires full auth). */
+  revokeShare: (shareToken: string) =>
+    request<{ ok: boolean }>("/api/share/revoke", {
+      method: "POST",
+      body: JSON.stringify({ shareToken }),
+    }),
+
+  /** Re-enable a share link (requires full auth). */
+  enableShare: (shareToken: string) =>
+    request<{ ok: boolean }>("/api/share/enable", {
+      method: "POST",
+      body: JSON.stringify({ shareToken }),
+    }),
+
+  /** Delete a share link permanently (requires full auth). */
+  deleteShareLink: (shareToken: string) =>
+    request<{ ok: boolean }>(`/api/share/${shareToken}`, {
+      method: "DELETE",
+    }),
 };

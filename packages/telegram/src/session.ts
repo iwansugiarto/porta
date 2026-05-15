@@ -6,7 +6,78 @@
  * Sessions auto-expire after a period of inactivity.
  */
 
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
 import type { WSConnection } from "./porta-client.js";
+
+const STATE_FILE = path.join(os.homedir(), ".gemini", "antigravity", "telegram_state.json");
+
+interface PersistedState {
+  sessions: Record<string, Partial<ChatSession>>;
+  bookmarks: Record<string, Bookmark[]>;
+}
+
+export function loadState(): void {
+  try {
+    if (fs.existsSync(STATE_FILE)) {
+      const data: PersistedState = JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
+      if (data.sessions) {
+        for (const [chatIdStr, sess] of Object.entries(data.sessions)) {
+          const chatId = parseInt(chatIdStr, 10);
+          sessions.set(chatId, {
+            cascadeId: sess.cascadeId ?? "",
+            wsConnection: null,
+            streamMessageId: null,
+            streamBuffer: "",
+            flushTimer: null,
+            selectedModel: sess.selectedModel,
+            workspaceUri: sess.workspaceUri,
+            lastActivity: Date.now(),
+            renderedStepOffsets: new Set(),
+            historicalStepCount: 0,
+            cachedArtifacts: [],
+            quietMode: sess.quietMode ?? false,
+            isCancelled: false,
+            plannerType: sess.plannerType ?? "conversational",
+            compactMode: sess.compactMode ?? false,
+          });
+        }
+      }
+      if (data.bookmarks) {
+        for (const [chatIdStr, bms] of Object.entries(data.bookmarks)) {
+          bookmarks.set(parseInt(chatIdStr, 10), bms);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Failed to load telegram state:", err);
+  }
+}
+
+export function saveState(): void {
+  try {
+    const state: PersistedState = { sessions: {}, bookmarks: {} };
+    for (const [chatId, sess] of sessions.entries()) {
+      state.sessions[chatId.toString()] = {
+        cascadeId: sess.cascadeId,
+        selectedModel: sess.selectedModel,
+        workspaceUri: sess.workspaceUri,
+        quietMode: sess.quietMode,
+        plannerType: sess.plannerType,
+        compactMode: sess.compactMode,
+      };
+    }
+    for (const [chatId, bms] of bookmarks.entries()) {
+      state.bookmarks[chatId.toString()] = bms;
+    }
+    const dir = path.dirname(STATE_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Failed to save telegram state:", err);
+  }
+}
 
 /** How long a session stays alive without activity (ms). */
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
@@ -83,11 +154,13 @@ export function addBookmark(chatId: number, bookmark: Bookmark): number {
     bookmarks.set(chatId, list);
   }
   list.push(bookmark);
+  saveState();
   return list.length;
 }
 
 export function clearBookmarks(chatId: number): void {
   bookmarks.delete(chatId);
+  saveState();
 }
 
 /** Cleanup timer reference. */
@@ -129,6 +202,7 @@ export function createSession(
   };
 
   sessions.set(chatId, session);
+  saveState();
   return session;
 }
 
@@ -153,7 +227,9 @@ export function destroySession(chatId: number): void {
     session.wsConnection.close();
     session.wsConnection = null;
   }
+
   sessions.delete(chatId);
+  saveState();
 }
 
 /** Get all active sessions (for diagnostics). */

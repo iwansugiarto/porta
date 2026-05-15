@@ -11,9 +11,10 @@ import { Bot } from "grammy";
 import { loadConfig } from "./config.js";
 import { authGuard } from "./guard.js";
 import { registerHandlers } from "./handlers.js";
-import { startSessionCleanup, stopSessionCleanup } from "./session.js";
+import { startSessionCleanup, stopSessionCleanup, loadState, saveState } from "./session.js";
 
 const config = loadConfig();
+loadState();
 
 console.log("🤖 Porta Telegram Bot");
 console.log(`   Proxy: ${config.proxyBaseUrl}`);
@@ -46,6 +47,7 @@ startSessionCleanup();
 function shutdown(signal: string): void {
   console.log(`\n${signal} received — shutting down...`);
   stopSessionCleanup();
+  saveState();
   bot.stop();
   process.exit(0);
 }

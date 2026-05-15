@@ -17,6 +17,12 @@ import {
 } from "node:crypto";
 import { compareSync } from "bcryptjs";
 import { isLoopbackHost, resolveProxyHost } from "./exposure.js";
+import {
+  validateShareSession,
+  isShareSessionToken,
+  resolveShareConfig,
+  type ShareSession,
+} from "./share.js";
 
 // ── Config ──
 
@@ -47,7 +53,7 @@ export function resolveAuthConfig(
     username: env.PORTA_AUTH_USER?.trim() || undefined,
     password: env.PORTA_AUTH_PASSWORD?.trim() || undefined,
     sessionTtlMs: ttlHours * 60 * 60 * 1000,
-    publicPaths: ["/api/health", "/api/auth/check", "/api/auth/login"],
+    publicPaths: ["/api/health", "/api/auth/check", "/api/auth/login", "/api/share/auth", "/api/share/info"],
   };
 }
 
@@ -235,6 +241,7 @@ export function csrfProtection() {
 export function authMiddleware(config: AuthConfig) {
   const authEnabled =
     !!config.token || (!!config.username && !!config.password);
+  const shareConfig = resolveShareConfig();
 
   return async (c: Context, next: Next) => {
     if (!authEnabled) {
@@ -260,6 +267,32 @@ export function authMiddleware(config: AuthConfig) {
       return next();
     }
 
+    // Check share session token (read-only, workspace-scoped)
+    if (token) {
+      const shareSession = validateShareSession(token, shareConfig);
+      if (shareSession) {
+        // Store share scope on the context for downstream route handlers
+        c.set("shareSession", shareSession);
+
+        // Block mutations for share sessions
+        const method = c.req.method.toUpperCase();
+        if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+          // Allow only share-specific POST endpoints
+          if (!path.startsWith("/api/share/")) {
+            return c.json(
+              {
+                error: "Forbidden",
+                message: "Share sessions have read-only access",
+              },
+              403,
+            );
+          }
+        }
+
+        return next();
+      }
+    }
+
     return c.json(
       {
         error: "Unauthorized",
@@ -268,6 +301,14 @@ export function authMiddleware(config: AuthConfig) {
       401,
     );
   };
+}
+
+/**
+ * Extract share session from the Hono context.
+ * Returns undefined if the request is not from a share session.
+ */
+export function getShareSession(c: Context): ShareSession | undefined {
+  return c.get("shareSession") as ShareSession | undefined;
 }
 
 // ── WebSocket auth ──
@@ -283,10 +324,14 @@ export function validateWebSocketToken(
   const hasSessionAuth = checkSessions && activeSessions.size > 0;
   if (!hasStaticAuth && !hasSessionAuth) return true;
 
+  const shareConfig = resolveShareConfig();
+
   if (queryToken) {
     if (secret && validateToken(queryToken, secret)) return true;
     if (checkSessions && isValidSession(queryToken, sessionTtlMs))
       return true;
+    // Check share sessions for WebSocket (read-only streaming)
+    if (validateShareSession(queryToken, shareConfig)) return true;
   }
 
   const headerToken = extractBearerToken(authHeader);
@@ -294,6 +339,7 @@ export function validateWebSocketToken(
     if (secret && validateToken(headerToken, secret)) return true;
     if (checkSessions && isValidSession(headerToken, sessionTtlMs))
       return true;
+    if (validateShareSession(headerToken, shareConfig)) return true;
   }
 
   return false;

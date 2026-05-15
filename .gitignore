@@ -36,3 +36,4 @@ npm-debug.log*
 .oauth-token
 .agent
 .gemini
+.porta-shares.json

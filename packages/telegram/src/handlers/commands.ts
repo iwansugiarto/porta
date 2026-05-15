@@ -20,6 +20,20 @@ export function registerCommands(
     return session?.workspaceUri ?? config.workspaceUri;
   }
 
+  async function sendTextAsChunksOrFile(ctx: any, text: string, filename: string, useCodeExt?: string) {
+    const chunks = splitMessage(text);
+    if (chunks.length > 3) {
+      const buffer = Buffer.from(text, "utf-8");
+      await ctx.replyWithDocument(new InputFile(buffer, filename));
+    } else {
+      for (const chunk of chunks) {
+        const escaped = escapeHtml(chunk.slice(0, 3800));
+        const content = useCodeExt ? `<pre><code class="language-${useCodeExt}">${escaped}</code></pre>` : `<pre>${escaped}</pre>`;
+        await withRetry(() => ctx.reply(content, { parse_mode: "HTML" }));
+      }
+    }
+  }
+
   bot.command("start", async (ctx) => {
     const keyboard = new InlineKeyboard()
       .text("💬 New Chat", "quick:new").text("📋 My Chats", "quick:list").row()
@@ -449,14 +463,7 @@ export function registerCommands(
         : "";
       const fullText = header + output;
 
-      const chunks = splitMessage(fullText);
-      for (const chunk of chunks) {
-        await withRetry(() =>
-          ctx.reply(`<pre>${escapeHtml(chunk.slice(0, 3800))}</pre>`, {
-            parse_mode: "HTML",
-          }),
-        );
-      }
+      await sendTextAsChunksOrFile(ctx, fullText, "cmd_output.txt");
     } catch (err) {
       await ctx.api.editMessageText(
         ctx.chat.id,
@@ -483,12 +490,7 @@ export function registerCommands(
 
       await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id).catch(() => {});
 
-      const chunks = splitMessage(stdout || stderr);
-      for (const chunk of chunks) {
-        await withRetry(() =>
-          ctx.reply(`<pre>${escapeHtml(chunk.slice(0, 3800))}</pre>`, { parse_mode: "HTML" }),
-        );
-      }
+      await sendTextAsChunksOrFile(ctx, stdout || stderr, "diff_output.diff", "diff");
     } catch (err) {
       await ctx.api.editMessageText(
         ctx.chat.id,
@@ -533,12 +535,7 @@ export function registerCommands(
         return;
       }
 
-      const chunks = splitMessage(stdout);
-      for (const chunk of chunks) {
-        await withRetry(() =>
-          ctx.reply(`<pre>${escapeHtml(chunk.slice(0, 3800))}</pre>`, { parse_mode: "HTML" }),
-        );
-      }
+      await sendTextAsChunksOrFile(ctx, stdout, `${service}_logs.txt`);
     } catch (err) {
       await ctx.api.editMessageText(
         ctx.chat.id,
@@ -582,14 +579,8 @@ export function registerCommands(
       const content = fs.readFileSync(fullPath, "utf-8");
       await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id).catch(() => {});
       
-      const chunks = splitMessage(content);
-      const ext = path.extname(fullPath).slice(1);
-      
-      for (const chunk of chunks) {
-        await withRetry(() =>
-          ctx.reply(`<pre><code class="language-${ext}">${escapeHtml(chunk.slice(0, 3800))}</code></pre>`, { parse_mode: "HTML" }),
-        );
-      }
+      const ext = path.extname(fullPath).slice(1) || "txt";
+      await sendTextAsChunksOrFile(ctx, content, path.basename(fullPath), ext);
     } catch (err) {
       await ctx.api.editMessageText(
         ctx.chat.id,
@@ -725,10 +716,15 @@ export function registerCommands(
       await ctx.api.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
 
       const chunks = splitMessage(historyText);
-      for (const chunk of chunks) {
-        await withRetry(() =>
-          ctx.reply(chunk, { parse_mode: "HTML" }),
-        );
+      if (chunks.length > 3) {
+        const buffer = Buffer.from(historyText, "utf-8");
+        await ctx.replyWithDocument(new InputFile(buffer, `history_${session.cascadeId.slice(0, 8)}.txt`));
+      } else {
+        for (const chunk of chunks) {
+          await withRetry(() =>
+            ctx.reply(chunk, { parse_mode: "HTML" }),
+          );
+        }
       }
     } catch (err) {
       await ctx.api.editMessageText(
@@ -1655,12 +1651,7 @@ export function registerCommands(
         return;
       }
 
-      const chunks = splitMessage(output);
-      for (const chunk of chunks) {
-        await withRetry(() =>
-          ctx.reply(`<pre>${escapeHtml(chunk.slice(0, 3800))}</pre>`, { parse_mode: "HTML" }),
-        );
-      }
+      await sendTextAsChunksOrFile(ctx, output, "ps_output.txt");
     } catch (err) {
       await ctx.api.editMessageText(
         ctx.chat.id,
@@ -1726,12 +1717,7 @@ export function registerCommands(
         return;
       }
 
-      const chunks = splitMessage(output);
-      for (const chunk of chunks) {
-        await withRetry(() =>
-          ctx.reply(`<pre>${escapeHtml(chunk.slice(0, 3800))}</pre>`, { parse_mode: "HTML" }),
-        );
-      }
+      await sendTextAsChunksOrFile(ctx, output, "search_results.txt");
     } catch (err) {
       // exec throws if grep finds nothing (exit code 1)
       if ((err as any).code === 1) {
@@ -1772,12 +1758,7 @@ export function registerCommands(
         return;
       }
 
-      const chunks = splitMessage(output);
-      for (const chunk of chunks) {
-        await withRetry(() =>
-          ctx.reply(`<pre>${escapeHtml(chunk.slice(0, 3800))}</pre>`, { parse_mode: "HTML" }),
-        );
-      }
+      await sendTextAsChunksOrFile(ctx, output, "find_results.txt");
     } catch (err) {
       await ctx.api.editMessageText(
         ctx.chat.id,

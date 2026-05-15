@@ -16,6 +16,7 @@ import {
 import { getMetadata, scanDiskConversations } from "../metadata.js";
 import { handleRPCError } from "../errors.js";
 import { runConversationMutation } from "../conversation-mutations.js";
+import { getShareSession } from "../auth.js";
 import {
   oversizedStepOffset,
   isRecoverableStepError,
@@ -216,6 +217,23 @@ export function registerConversationRoutes(app: Hono): void {
       // them with proper workspace metadata on the next poll cycle.
       if (diskOnlyIds.length > 0 && instances.length > 0) {
         warmUpDiskConversations(diskOnlyIds, instances);
+      }
+
+      // Filter for share sessions: only return conversations for the share's workspace
+      const shareSession = getShareSession(c);
+      if (shareSession) {
+        const shareWsUri = shareSession.workspaceUri;
+        const filtered: Record<string, Record<string, unknown>> = {};
+        for (const [id, summary] of Object.entries(merged)) {
+          const workspaces = summary.workspaces as
+            | { workspaceFolderAbsoluteUri?: string }[]
+            | undefined;
+          const wsUri = workspaces?.[0]?.workspaceFolderAbsoluteUri;
+          if (wsUri === shareWsUri) {
+            filtered[id] = summary;
+          }
+        }
+        return c.json({ trajectorySummaries: filtered });
       }
 
       return c.json({ trajectorySummaries: merged });
