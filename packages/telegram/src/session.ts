@@ -50,6 +50,10 @@ export interface ChatSession {
   quietMode: boolean;
   /** Whether the current task was cancelled by the user. */
   isCancelled: boolean;
+  /** Planner type: "conversational" (fast) or "planning" (multi-step). Mirrors web's PlannerTypeSelector. */
+  plannerType: "conversational" | "planning";
+  /** Compact mode — suppress individual tool step messages, show only collapsed summary. */
+  compactMode: boolean;
 }
 
 /** In-memory session store: telegramChatId → ChatSession */
@@ -120,6 +124,8 @@ export function createSession(
     cachedArtifacts: [],
     quietMode: false,
     isCancelled: false,
+    plannerType: "conversational",
+    compactMode: false,
   };
 
   sessions.set(chatId, session);

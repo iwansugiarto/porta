@@ -9,6 +9,162 @@ export function registerCallbackHandlers(
   client: PortaClient,
   config: TelegramConfig,
 ): void {
+  // ── noop handler — for workspace group headers in /list ──
+  bot.callbackQuery(/^noop:/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+  });
+
+  // ── Delete confirmation handlers ──
+  bot.callbackQuery(/^del_confirm:(.+)$/, async (ctx) => {
+    const cascadeId = ctx.match[1];
+    const chatId = ctx.chat!.id;
+    const shortId = cascadeId.slice(0, 8);
+
+    try {
+      await client.deleteConversation(cascadeId);
+
+      // If deleted conversation was active, clear session
+      const session = getSession(chatId);
+      if (session?.cascadeId === cascadeId) {
+        // Try to switch to another conversation
+        const conversations = await client.listConversations();
+        const next = conversations.find(c => c.id !== cascadeId);
+        if (next) {
+          switchSession(chatId, next.id);
+        }
+      }
+
+      await ctx.answerCallbackQuery({ text: "✅ Deleted" });
+      await ctx.editMessageText(
+        `🗑 Conversation <code>${shortId}</code> telah dihapus.`,
+        { parse_mode: "HTML" },
+      );
+    } catch (err) {
+      await ctx.answerCallbackQuery({
+        text: `Error: ${(err as Error).message.slice(0, 100)}`,
+      });
+    }
+  });
+
+  bot.callbackQuery(/^del_cancel:/, async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "Dibatalkan" });
+    try {
+      await ctx.editMessageText("🗑 Delete dibatalkan.", { parse_mode: "HTML" });
+    } catch { /* message unchanged */ }
+  });
+
+  // ── Settings panel toggle callbacks ──
+  bot.callbackQuery(/^set:(.+)$/, async (ctx) => {
+    const action = ctx.match[1];
+    const chatId = ctx.chat!.id;
+    const session = getSession(chatId);
+
+    if (action === "planner") {
+      if (!session) {
+        await ctx.answerCallbackQuery({ text: "Tidak ada session aktif" });
+        return;
+      }
+      session.plannerType = session.plannerType === "planning" ? "conversational" : "planning";
+      const label = session.plannerType === "planning" ? "📋 Plan" : "⚡ Fast";
+      await ctx.answerCallbackQuery({ text: `Mode: ${label}` });
+
+      // Rebuild settings message
+      await rebuildSettingsMessage(ctx, session, client, config);
+    } else if (action === "quiet") {
+      if (!session) {
+        await ctx.answerCallbackQuery({ text: "Tidak ada session aktif" });
+        return;
+      }
+      session.quietMode = !session.quietMode;
+      const label = session.quietMode ? "🔇 ON" : "🔔 OFF";
+      await ctx.answerCallbackQuery({ text: `Quiet: ${label}` });
+      await rebuildSettingsMessage(ctx, session, client, config);
+    } else if (action === "autoapprove") {
+      try {
+        const health = await client.getHealth();
+        const newState = !health.autoApprove;
+        await client.setAutoApprove(newState);
+        await ctx.answerCallbackQuery({ text: `Auto-approve: ${newState ? "ON" : "OFF"}` });
+        if (session) await rebuildSettingsMessage(ctx, session, client, config);
+      } catch (err) {
+        await ctx.answerCallbackQuery({ text: `Error: ${(err as Error).message.slice(0, 80)}` });
+      }
+    } else if (action === "compact") {
+      if (!session) {
+        await ctx.answerCallbackQuery({ text: "Tidak ada session aktif" });
+        return;
+      }
+      session.compactMode = !session.compactMode;
+      const label = session.compactMode ? "📦 ON" : "📋 OFF";
+      await ctx.answerCallbackQuery({ text: `Compact: ${label}` });
+      await rebuildSettingsMessage(ctx, session, client, config);
+    } else if (action === "models") {
+      await ctx.answerCallbackQuery({ text: "Gunakan /models untuk memilih model" });
+    } else if (action === "workspace") {
+      await ctx.answerCallbackQuery({ text: "Gunakan /workspace untuk switch" });
+    } else if (action === "refresh") {
+      if (session) {
+        await ctx.answerCallbackQuery({ text: "Refreshed ✅" });
+        await rebuildSettingsMessage(ctx, session, client, config);
+      } else {
+        await ctx.answerCallbackQuery({ text: "Tidak ada session aktif" });
+      }
+    }
+  });
+
+  /** Rebuild the settings message in-place after a toggle. */
+  async function rebuildSettingsMessage(
+    ctx: any,
+    session: ReturnType<typeof getSession>,
+    portaClient: PortaClient,
+    portaConfig: TelegramConfig,
+  ) {
+    if (!session) return;
+    const model = session.selectedModel ?? "(default)";
+    const planner = session.plannerType ?? "conversational";
+    const plannerLabel = planner === "planning" ? "📋 Plan" : "⚡ Fast";
+    const quietLabel = session.quietMode ? "🔇 ON" : "🔔 OFF";
+    const wsUri = session.workspaceUri ?? portaConfig.workspaceUri ?? "(none)";
+    const shortWs = wsUri.replace(/^file:\/\//, "").split("/").pop() ?? wsUri;
+    const convId = session.cascadeId?.slice(0, 8) ?? "(none)";
+
+    let autoApproveLabel = "❓ Unknown";
+    try {
+      const health = await portaClient.getHealth();
+      autoApproveLabel = health.autoApprove ? "✅ ON" : "❌ OFF";
+    } catch { /* ignore */ }
+
+    const compactLabel = session.compactMode ? "📦 ON" : "📋 OFF";
+
+    const text =
+      `⚙️ <b>Settings</b>\n\n` +
+      `🤖 <b>Model:</b> <code>${escapeHtml(model)}</code>\n` +
+      `${plannerLabel} <b>Mode:</b> ${planner === "planning" ? "Plan (multi-step)" : "Fast (single-step)"}\n` +
+      `📂 <b>Workspace:</b> <code>${escapeHtml(shortWs)}</code>\n` +
+      `${quietLabel.split(" ")[0]} <b>Quiet:</b> ${quietLabel}\n` +
+      `${compactLabel.split(" ")[0]} <b>Compact:</b> ${compactLabel}\n` +
+      `🔓 <b>Auto-approve:</b> ${autoApproveLabel}\n` +
+      `💬 <b>Conversation:</b> <code>${convId}</code>\n\n` +
+      `<i>Tap tombol di bawah untuk mengubah:</i>`;
+
+    const { InlineKeyboard } = await import("grammy");
+    const keyboard = new InlineKeyboard()
+      .text(`🤖 Model`, `set:models`)
+      .text(`${plannerLabel}`, `set:planner`)
+      .row()
+      .text(`${quietLabel.split(" ")[0]} Quiet: ${session.quietMode ? "ON" : "OFF"}`, `set:quiet`)
+      .text(`${compactLabel.split(" ")[0]} Compact: ${session.compactMode ? "ON" : "OFF"}`, `set:compact`)
+      .row()
+      .text(`🔓 Auto: ${autoApproveLabel.includes("ON") ? "ON" : "OFF"}`, `set:autoapprove`)
+      .text(`🔄 Refresh`, `set:refresh`)
+      .row()
+      .text(`📂 Workspace`, `set:workspace`);
+
+    try {
+      await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: keyboard });
+    } catch { /* message unchanged */ }
+  }
+
   bot.on("callback_query:data", async (ctx, next) => {
     const data = ctx.callbackQuery.data;
 
@@ -57,7 +213,7 @@ export function registerCallbackHandlers(
         session.streamBuffer = "";
         connectStreamer(ctx.api, chatId, session, client, config);
         try {
-          await client.sendMessage(session.cascadeId, "please continue", session.selectedModel);
+          await client.sendMessage(session.cascadeId, "please continue", session.selectedModel, undefined, session.plannerType);
         } catch (err) {
           await ctx.reply(`❌ Gagal: ${escapeHtml((err as Error).message)}`, { parse_mode: "HTML" });
         }
@@ -68,7 +224,7 @@ export function registerCallbackHandlers(
         session.streamBuffer = "";
         connectStreamer(ctx.api, chatId, session, client, config);
         try {
-          await client.sendMessage(session.cascadeId, "please retry the last task", session.selectedModel);
+          await client.sendMessage(session.cascadeId, "please retry the last task", session.selectedModel, undefined, session.plannerType);
         } catch (err) {
           await ctx.reply(`❌ Gagal: ${escapeHtml((err as Error).message)}`, { parse_mode: "HTML" });
         }

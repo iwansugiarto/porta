@@ -159,7 +159,7 @@ export function formatStep(step: Record<string, unknown>): string | null {
   }
 
   // ── Code Action (file edit) ──
-  // Mirrors web's CodeActionCard: icon, diff stats, file name, description
+  // Mirrors web's CodeActionCard: icon, diff stats, file name, description, inline diff
   const codeAction = step.codeAction as Record<string, unknown> | undefined;
   if (codeAction) {
     if (status !== "CORTEX_STEP_STATUS_DONE") return null;
@@ -172,19 +172,45 @@ export function formatStep(step: Record<string, unknown>): string | null {
     const desc = codeAction.description as string | undefined;
     const isCreate = edit?.createFile as boolean | undefined;
 
+    // Full path for context (mirrors web showing full path in diff header)
+    const fullPath = fileUri ? fileUri.replace("file://", "") : "";
+    const shortPath = fullPath.length > 60 ? "…" + fullPath.slice(-55) : fullPath;
+
     // Diff stats — mirrors web's +N/-N
     const diff = edit?.diff as Record<string, unknown> | undefined;
     const unifiedDiff = diff?.unifiedDiff as Record<string, unknown> | undefined;
-    const lines = (unifiedDiff?.lines as { type?: string }[]) ?? [];
-    const additions = lines.filter(l => l.type === "UNIFIED_DIFF_LINE_TYPE_INSERT").length;
-    const deletions = lines.filter(l => l.type === "UNIFIED_DIFF_LINE_TYPE_DELETE").length;
+    const diffLines = (unifiedDiff?.lines as { type?: string; text?: string }[]) ?? [];
+    const additions = diffLines.filter(l => l.type === "UNIFIED_DIFF_LINE_TYPE_INSERT").length;
+    const deletions = diffLines.filter(l => l.type === "UNIFIED_DIFF_LINE_TYPE_DELETE").length;
 
     const icon = isCreate ? "📄" : "📝";
     let text = `${icon} <b>${isCreate ? "Create" : "Edit"}:</b> <code>${escapeHtml(name)}</code>`;
     if (additions > 0 || deletions > 0) {
       text += `  <code>+${additions} -${deletions}</code>`;
     }
+    if (shortPath && shortPath !== name) {
+      text += `\n📁 <code>${escapeHtml(shortPath)}</code>`;
+    }
     if (desc) text += `\n<i>${escapeHtml(truncate(desc, 200))}</i>`;
+
+    // Inline diff preview — mirrors web's expandable diff view
+    // Show changed lines only (inserts + deletes), max 15 lines
+    const changedLines = diffLines.filter(
+      l => l.type === "UNIFIED_DIFF_LINE_TYPE_INSERT" || l.type === "UNIFIED_DIFF_LINE_TYPE_DELETE"
+    );
+    if (changedLines.length > 0) {
+      const MAX_DIFF_LINES = 15;
+      const previewLines = changedLines.slice(0, MAX_DIFF_LINES);
+      const diffText = previewLines.map(l => {
+        const prefix = l.type === "UNIFIED_DIFF_LINE_TYPE_INSERT" ? "+" : "-";
+        return `${prefix} ${l.text ?? ""}`;
+      }).join("\n");
+      const truncatedNote = changedLines.length > MAX_DIFF_LINES
+        ? `\n... +${changedLines.length - MAX_DIFF_LINES} more lines`
+        : "";
+      text += `\n<tg-spoiler><pre>${escapeHtml(diffText + truncatedNote)}</pre></tg-spoiler>`;
+    }
+
     return text;
   }
 

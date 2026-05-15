@@ -74,13 +74,13 @@ export function registerMessageHandlers(
     connectStreamer(ctx.api, chatId, session, client, config);
 
     try {
-      await client.sendMessage(session.cascadeId, messageText, session.selectedModel);
+      await client.sendMessage(session.cascadeId, messageText, session.selectedModel, undefined, session.plannerType);
     } catch (err) {
       const errMsg = (err as Error).message;
       if (errMsg.includes("not_found") || errMsg.includes("502")) {
         try {
           await client.recallConversation(session.cascadeId);
-          await client.sendMessage(session.cascadeId, messageText, session.selectedModel);
+          await client.sendMessage(session.cascadeId, messageText, session.selectedModel, undefined, session.plannerType);
         } catch (retryErr) {
           cleanupWs(session);
           destroySession(chatId);
@@ -153,6 +153,7 @@ export function registerMessageHandlers(
         caption,
         session.selectedModel,
         items,
+        session.plannerType,
       );
     } catch (err) {
       cleanupWs(session);

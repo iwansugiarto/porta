@@ -137,6 +137,11 @@ export function registerCommands(
         "1. Ketik /new untuk buat conversation\n" +
         "2. Kirim pesan — bot akan meneruskan ke Antigravity\n" +
         "3. Response akan di-stream secara real-time\n\n" +
+        "<b>Conversations:</b>\n" +
+        "• /list — daftar conversations (grouped by workspace)\n" +
+        "• /chatsearch <i>keyword</i> — cari conversation\n" +
+        "• /delete — hapus conversation aktif\n" +
+        "• /history — lihat riwayat chat\n\n" +
         "<b>Media:</b>\n" +
         "Kirim foto atau dokumen dengan caption untuk diteruskan\n" +
         "ke Antigravity (e.g. \"fix this UI bug\").\n\n" +
@@ -153,6 +158,9 @@ export function registerCommands(
         "• /search text — cari string di workspace\n" +
         "• Beberapa command berbahaya diblokir otomatis\n\n" +
         "<b>Approval & Settings:</b>\n" +
+        "• /settings — panel pengaturan terpadu\n" +
+        "• /compact — toggle compact mode (sembunyikan tool steps)\n" +
+        "• /pin — pin pesan (reply ke pesan lalu /pin)\n" +
         "Saat agent perlu izin, bot akan tampilkan\n" +
         "tombol ✅ Approve / ❌ Reject.\n" +
         "Gunakan /autoapprove on untuk bypass approval.",
@@ -186,6 +194,27 @@ export function registerCommands(
     }
   });
 
+  /** Format elapsed time as human-readable relative string. */
+  function relativeTime(isoOrMs: string | number | undefined): string {
+    if (!isoOrMs) return "";
+    const ms = typeof isoOrMs === "number" ? isoOrMs : new Date(isoOrMs).getTime();
+    const diff = Date.now() - ms;
+    const mins = Math.floor(diff / 60_000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+  }
+
+  /** Extract workspace name from a conversation's workspace URI. */
+  function extractWorkspaceName(conv: { workspaces?: { workspaceFolderAbsoluteUri?: string }[] }): string {
+    const ws = conv.workspaces?.[0];
+    if (!ws?.workspaceFolderAbsoluteUri) return "Others";
+    return ws.workspaceFolderAbsoluteUri.split("/").pop() ?? "Others";
+  }
+
   async function renderConversationPage(
     ctx: any,
     page: number,
@@ -210,27 +239,77 @@ export function registerCommands(
         return;
       }
 
-      const PAGE_SIZE = 10;
-      const maxPage = Math.ceil(conversations.length / PAGE_SIZE);
+      // Group by workspace — mirrors web's Sidebar workspace groups
+      const groups = new Map<string, typeof conversations>();
+      for (const conv of conversations) {
+        const wsName = extractWorkspaceName(conv);
+        const list = groups.get(wsName) ?? [];
+        list.push(conv);
+        groups.set(wsName, list);
+      }
+
+      // Sort groups: those with running conversations first, then by recency
+      const sortedGroups = [...groups.entries()].sort(([, a], [, b]) => {
+        const aRunning = a.some(c => c.status === "CASCADE_RUN_STATUS_RUNNING");
+        const bRunning = b.some(c => c.status === "CASCADE_RUN_STATUS_RUNNING");
+        if (aRunning !== bRunning) return aRunning ? -1 : 1;
+        const aTime = Math.max(...a.map(c => new Date(c.lastModifiedTime ?? 0).getTime()));
+        const bTime = Math.max(...b.map(c => new Date(c.lastModifiedTime ?? 0).getTime()));
+        return bTime - aTime;
+      });
+
+      // Flatten for pagination
+      const PAGE_SIZE = 8;
+      const allItems: { wsName: string; conv: typeof conversations[0] }[] = [];
+      for (const [wsName, convs] of sortedGroups) {
+        // Sort within group: running first, then by recency
+        convs.sort((a, b) => {
+          const aR = a.status === "CASCADE_RUN_STATUS_RUNNING" ? 0 : 1;
+          const bR = b.status === "CASCADE_RUN_STATUS_RUNNING" ? 0 : 1;
+          if (aR !== bR) return aR - bR;
+          return new Date(b.lastModifiedTime ?? 0).getTime() - new Date(a.lastModifiedTime ?? 0).getTime();
+        });
+        for (const conv of convs) {
+          allItems.push({ wsName, conv });
+        }
+      }
+
+      const maxPage = Math.ceil(allItems.length / PAGE_SIZE);
       const currentPage = Math.max(1, Math.min(page, maxPage));
-      
       const startIndex = (currentPage - 1) * PAGE_SIZE;
-      const items = conversations.slice(startIndex, startIndex + PAGE_SIZE);
+      const pageItems = allItems.slice(startIndex, startIndex + PAGE_SIZE);
       const currentSession = getSession(chatId);
 
-      let text = `📋 <b>Conversations</b> (Halaman ${currentPage}/${maxPage})\n\n<i>Tap untuk switch:</i>`;
-      
+      // Build text header with workspace group labels
+      let text = `📋 <b>Conversations</b> (${currentPage}/${maxPage})\n`;
+      const runningCount = conversations.filter(c => c.status === "CASCADE_RUN_STATUS_RUNNING").length;
+      if (runningCount > 0) {
+        text += `🟢 ${runningCount} running\n`;
+      }
+      text += `\n<i>Tap untuk switch:</i>`;
+
       const keyboard = new InlineKeyboard();
-      for (const conv of items) {
+      let lastWsName = "";
+      for (const { wsName, conv } of pageItems) {
+        // Show workspace header when group changes
+        if (wsName !== lastWsName) {
+          lastWsName = wsName;
+          keyboard.text(`📂 ${wsName}`, `noop:${wsName}`).row();
+        }
+
         const shortId = conv.id.slice(0, 8);
         const isActive = currentSession?.cascadeId === conv.id;
-        const statusIcon = conv.status === "CASCADE_RUN_STATUS_RUNNING" ? "🟢" : "⚪";
+        const isRunning = conv.status === "CASCADE_RUN_STATUS_RUNNING";
+        const statusIcon = isRunning ? "🟢" : "⚪";
         const marker = isActive ? " 👈" : "";
-        const summary = conv.summary.length > 35
-          ? conv.summary.slice(0, 32) + "..."
+        const time = relativeTime(conv.lastModifiedTime);
+        const steps = conv.stepCount > 0 ? `${conv.stepCount}s` : "";
+        const meta = [time, steps].filter(Boolean).join(" · ");
+        const summary = conv.summary.length > 25
+          ? conv.summary.slice(0, 22) + "..."
           : conv.summary;
 
-        keyboard.text(`${statusIcon} ${shortId} ${summary}${marker}`, `use:${conv.id}`).row();
+        keyboard.text(`${statusIcon} ${summary} (${meta})${marker}`, `use:${conv.id}`).row();
       }
 
       const navRow = [];
@@ -661,7 +740,118 @@ export function registerCommands(
     }
   });
 
+  // ── /delete — Delete a conversation (mirrors web's context menu delete) ──
+  bot.command("delete", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const idArg = ctx.match?.trim();
+    const session = getSession(chatId);
 
+    let targetId = idArg;
+    if (!targetId && session) {
+      targetId = session.cascadeId;
+    }
+
+    if (!targetId) {
+      await ctx.reply(
+        "💡 Gunakan: /delete [id]\n\n" +
+          "Tanpa ID, conversation aktif akan dihapus.\n" +
+          "<i>Gunakan /list untuk melihat daftar.</i>",
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+
+    // Resolve short IDs
+    let fullId = targetId;
+    if (targetId.length < 20) {
+      try {
+        const conversations = await client.listConversations();
+        const match = conversations.find(c => c.id.startsWith(targetId!));
+        if (match) fullId = match.id;
+      } catch { /* use as-is */ }
+    }
+
+    const shortId = fullId.slice(0, 8);
+    const keyboard = new InlineKeyboard()
+      .text("⚠️ Ya, hapus", `del_confirm:${fullId}`)
+      .text("❌ Batal", `del_cancel:${fullId}`);
+
+    await ctx.reply(
+      `🗑 <b>Hapus conversation</b> <code>${shortId}</code>?\n\n` +
+        "<i>Aksi ini tidak bisa dibatalkan.</i>",
+      { parse_mode: "HTML", reply_markup: keyboard },
+    );
+  });
+
+  // ── /chatsearch — Search across conversation summaries ──
+  bot.command("chatsearch", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const query = ctx.match?.trim();
+
+    if (!query) {
+      await ctx.reply(
+        "🔍 Gunakan: /chatsearch <code>keyword</code>\n\n" +
+          "Contoh: /chatsearch telegram bot\n" +
+          "<i>Mencari di judul/summary semua conversation.</i>",
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+
+    const statusMsg = await ctx.reply(`🔍 Mencari "<code>${escapeHtml(query)}</code>"...`, { parse_mode: "HTML" });
+
+    try {
+      const conversations = await client.listConversations();
+      const lowerQuery = query.toLowerCase();
+      const matches = conversations.filter(c =>
+        c.summary.toLowerCase().includes(lowerQuery) ||
+        c.id.toLowerCase().startsWith(lowerQuery)
+      );
+
+      if (matches.length === 0) {
+        await ctx.api.editMessageText(
+          chatId,
+          statusMsg.message_id,
+          `📭 Tidak ditemukan: "<code>${escapeHtml(query)}</code>"`,
+          { parse_mode: "HTML" },
+        );
+        return;
+      }
+
+      const currentSession = getSession(chatId);
+      let text = `🔍 <b>Hasil pencarian</b> "${escapeHtml(query)}" — ${matches.length} ditemukan\n\n<i>Tap untuk switch:</i>`;
+      const keyboard = new InlineKeyboard();
+
+      for (const conv of matches.slice(0, 10)) {
+        const shortId = conv.id.slice(0, 8);
+        const isActive = currentSession?.cascadeId === conv.id;
+        const statusIcon = conv.status === "CASCADE_RUN_STATUS_RUNNING" ? "🟢" : "⚪";
+        const marker = isActive ? " 👈" : "";
+        const time = relativeTime(conv.lastModifiedTime);
+        const summary = conv.summary.length > 30
+          ? conv.summary.slice(0, 27) + "..."
+          : conv.summary;
+
+        keyboard.text(`${statusIcon} ${summary} (${time})${marker}`, `use:${conv.id}`).row();
+      }
+
+      if (matches.length > 10) {
+        keyboard.row(InlineKeyboard.text(`📋 +${matches.length - 10} more`, `noop:more`));
+      }
+
+      await ctx.api.editMessageText(chatId, statusMsg.message_id, text, {
+        parse_mode: "HTML",
+        reply_markup: keyboard,
+      });
+    } catch (err) {
+      await ctx.api.editMessageText(
+        chatId,
+        statusMsg.message_id,
+        `❌ Error: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
+  });
 
   bot.command("artifacts", async (ctx) => {
     const chatId = ctx.chat.id;
@@ -834,6 +1024,54 @@ export function registerCommands(
   bot.command("restart", async (ctx) => {
     await ctx.reply("🔄 Bot restarting...");
     process.exit(0);
+  });
+
+  // ── /settings — Unified settings panel (mirrors web's SettingsPanel) ──
+  bot.command("settings", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const session = getSession(chatId);
+
+    // Gather all current settings
+    const model = session?.selectedModel ?? "(default)";
+    const planner = session?.plannerType ?? "conversational";
+    const plannerLabel = planner === "planning" ? "📋 Plan" : "⚡ Fast";
+    const quietLabel = session?.quietMode ? "🔇 ON" : "🔔 OFF";
+    const wsUri = session?.workspaceUri ?? config.workspaceUri ?? "(none)";
+    const shortWs = wsUri.replace(/^file:\/\//, "").split("/").pop() ?? wsUri;
+    const convId = session?.cascadeId?.slice(0, 8) ?? "(none)";
+
+    let autoApproveLabel = "❓ Unknown";
+    try {
+      const health = await client.getHealth();
+      autoApproveLabel = health.autoApprove ? "✅ ON" : "❌ OFF";
+    } catch { /* ignore */ }
+
+    const compactLabel = session?.compactMode ? "📦 ON" : "📋 OFF";
+
+    const text =
+      `⚙️ <b>Settings</b>\n\n` +
+      `🤖 <b>Model:</b> <code>${escapeHtml(model)}</code>\n` +
+      `${plannerLabel} <b>Mode:</b> ${planner === "planning" ? "Plan (multi-step)" : "Fast (single-step)"}\n` +
+      `📂 <b>Workspace:</b> <code>${escapeHtml(shortWs)}</code>\n` +
+      `${quietLabel.split(" ")[0]} <b>Quiet:</b> ${quietLabel}\n` +
+      `${compactLabel.split(" ")[0]} <b>Compact:</b> ${compactLabel}\n` +
+      `🔓 <b>Auto-approve:</b> ${autoApproveLabel}\n` +
+      `💬 <b>Conversation:</b> <code>${convId}</code>\n\n` +
+      `<i>Tap tombol di bawah untuk mengubah:</i>`;
+
+    const keyboard = new InlineKeyboard()
+      .text(`🤖 Model`, `set:models`)
+      .text(`${plannerLabel}`, `set:planner`)
+      .row()
+      .text(`${quietLabel.split(" ")[0]} Quiet: ${session?.quietMode ? "ON" : "OFF"}`, `set:quiet`)
+      .text(`${compactLabel.split(" ")[0]} Compact: ${session?.compactMode ? "ON" : "OFF"}`, `set:compact`)
+      .row()
+      .text(`🔓 Auto: ${autoApproveLabel.includes("ON") ? "ON" : "OFF"}`, `set:autoapprove`)
+      .text(`🔄 Refresh`, `set:refresh`)
+      .row()
+      .text(`📂 Workspace`, `set:workspace`);
+
+    await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
   });
 
   bot.command("autoapprove", async (ctx) => {
@@ -1081,6 +1319,51 @@ export function registerCommands(
           : "<i>Semua notifikasi diaktifkan kembali.</i>"),
       { parse_mode: "HTML" },
     );
+  });
+
+  // ── /compact — Toggle compact mode (suppress individual tool step messages) ──
+  bot.command("compact", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const session = getSession(chatId);
+
+    if (!session) {
+      await ctx.reply("ℹ️ Tidak ada session aktif. Gunakan /new atau /list.");
+      return;
+    }
+
+    session.compactMode = !session.compactMode;
+    const icon = session.compactMode ? "📦" : "📋";
+    const label = session.compactMode ? "ON" : "OFF";
+    await ctx.reply(
+      `${icon} Compact mode: <b>${label}</b>\n\n` +
+        (session.compactMode
+          ? "<i>Tool steps individual dimatikan. Hanya collapsed summary yang akan ditampilkan saat task selesai.</i>"
+          : "<i>Semua tool steps ditampilkan secara individual (default).</i>"),
+      { parse_mode: "HTML" },
+    );
+  });
+
+  // ── /pin — Pin a bot message in the chat ──
+  bot.command("pin", async (ctx) => {
+    const reply = ctx.message?.reply_to_message;
+    if (!reply) {
+      await ctx.reply(
+        "📌 <b>Cara pakai:</b>\nReply ke pesan yang ingin di-pin, lalu ketik /pin\n\n" +
+          "<i>Ini akan pin pesan tersebut di chat ini.</i>",
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+
+    try {
+      await ctx.api.pinChatMessage(ctx.chat.id, reply.message_id);
+      await ctx.reply("📌 Pesan berhasil di-pin.");
+    } catch (err) {
+      await ctx.reply(
+        `❌ Gagal pin: ${escapeHtml((err as Error).message)}`,
+        { parse_mode: "HTML" },
+      );
+    }
   });
 
   // ── /export — Export conversation history to markdown file ──

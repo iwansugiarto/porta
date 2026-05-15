@@ -82,6 +82,15 @@ export class ResponseStreamer {
   private preReadyBuffer: WSMessage[] = [];
   /** Track already-sent tool step messages to prevent duplicates. */
   private toolStepsSent = new Set<string>();
+  /** Track tool step counts by category for smart collapsing. */
+  private toolStepCounts = {
+    reads: 0,
+    searches: 0,
+    edits: 0,
+    commands: 0,
+    lists: 0,
+    other: 0,
+  };
 
   constructor(
     api: Api,
@@ -270,6 +279,19 @@ export class ResponseStreamer {
     // standalone messages — mirroring the web UI's step cards.
     // Planner responses (main AI text) go into the streaming buffer.
     if (isToolStep(step)) {
+      // Classify tool step for smart collapsing summary
+      if (step.viewFile || step.readFile) this.toolStepCounts.reads++;
+      else if (step.grepSearch || step.semanticSearch) this.toolStepCounts.searches++;
+      else if (step.codeAction) this.toolStepCounts.edits++;
+      else if (step.runCommand) this.toolStepCounts.commands++;
+      else if (step.listDirectory) this.toolStepCounts.lists++;
+      else this.toolStepCounts.other++;
+
+      // In compact mode, skip individual tool step messages
+      if (this.session.compactMode) {
+        return;
+      }
+
       // Dedup: skip if we already sent this exact tool message
       if (this.toolStepsSent.has(text)) return;
       this.toolStepsSent.add(text);
@@ -582,6 +604,19 @@ export class ResponseStreamer {
         finalMsg = `🛑 <b>Task dibatalkan</b> (${timeStr})`;
       } else if (this.hasError || this.hasPermissionError) {
         finalMsg = `❌ <b>Task berhenti dengan error</b> (${timeStr})`;
+      }
+
+      // Smart collapsed summary — show cumulative tool stats
+      const summaryParts: string[] = [];
+      const c = this.toolStepCounts;
+      if (c.reads > 0) summaryParts.push(`👁 ${c.reads} read`);
+      if (c.searches > 0) summaryParts.push(`🔍 ${c.searches} search`);
+      if (c.edits > 0) summaryParts.push(`📝 ${c.edits} edit`);
+      if (c.commands > 0) summaryParts.push(`⚙️ ${c.commands} cmd`);
+      if (c.lists > 0) summaryParts.push(`📂 ${c.lists} browse`);
+      if (c.other > 0) summaryParts.push(`🔧 ${c.other} other`);
+      if (summaryParts.length > 0) {
+        finalMsg += `\n<i>${summaryParts.join(" · ")}</i>`;
       }
 
       // Build quick-action keyboard for common follow-ups

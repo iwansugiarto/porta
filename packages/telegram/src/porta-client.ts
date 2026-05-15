@@ -133,6 +133,7 @@ export class PortaClient {
     text: string,
     model?: string,
     media?: { mimeType: string; data: string }[],
+    plannerType?: string,
   ): Promise<void> {
     // Always include a model — LS won't run the agent without one
     const resolvedModel = model ?? (await this.getDefaultModel());
@@ -142,6 +143,7 @@ export class PortaClient {
     };
     if (resolvedModel) body.model = resolvedModel;
     if (media && media.length > 0) body.media = media;
+    if (plannerType) body.plannerType = plannerType;
     await this.post(`/api/conversations/${cascadeId}/messages`, body);
   }
 
@@ -251,6 +253,11 @@ export class PortaClient {
       `/api/conversations/${cascadeId}/steps?offset=${offset}&count=${count}`,
     );
     return data.steps ?? [];
+  }
+
+  /** Delete a conversation. Mirrors web's DELETE endpoint. */
+  async deleteConversation(cascadeId: string): Promise<void> {
+    await this.httpDelete(`/api/conversations/${cascadeId}`);
   }
 
   /**
@@ -392,6 +399,28 @@ export class PortaClient {
       );
       req.on("error", reject);
       req.write(payload);
+      req.end();
+    });
+  }
+
+  private httpDelete<T>(path: string): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const url = new URL(path, this.baseUrl);
+      const headers = this.buildHeaders(true);
+
+      const req = request(
+        {
+          hostname: url.hostname,
+          port: url.port,
+          path: url.pathname + url.search,
+          method: "DELETE",
+          headers,
+        },
+        (res: IncomingMessage) => {
+          this.consumeResponse<T>(res, resolve, reject);
+        },
+      );
+      req.on("error", reject);
       req.end();
     });
   }
