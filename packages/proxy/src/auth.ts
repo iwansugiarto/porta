@@ -209,7 +209,12 @@ export function csrfProtection() {
 
     // Public auth endpoints are exempt (login needs to work from the form)
     const path = new URL(c.req.url).pathname;
-    if (path === "/api/auth/login" || path === "/api/auth/logout") {
+    if (
+      path === "/api/auth/login" ||
+      path === "/api/auth/logout" ||
+      path === "/api/share/auth" ||
+      path.startsWith("/api/share/info/")
+    ) {
       return next();
     }
 
