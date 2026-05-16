@@ -140,7 +140,7 @@ fun AboutScreen(viewModel: BridgeViewModel, onBack: () -> Unit) {
 
             // ── Developer Card ──
             InfoCard(title = "Developer") {
-                InfoRow("Company", "PT Infinia Teknologi Utama")
+                InfoRow("Company", "PT. Infinia Solusi Sistem")
                 InfoRow("Domain", "infinia.id")
                 InfoRow("Contact", "dev@infinia.id")
                 InfoRow("License", "Proprietary")
@@ -159,7 +159,7 @@ fun AboutScreen(viewModel: BridgeViewModel, onBack: () -> Unit) {
             // Footer
             Spacer(Modifier.height(8.dp))
             Text(
-                "© 2026 PT Infinia Teknologi Utama\nAll rights reserved.",
+                "© 2026 PT. Infinia Solusi Sistem\nAll rights reserved.",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
                 textAlign = TextAlign.Center
