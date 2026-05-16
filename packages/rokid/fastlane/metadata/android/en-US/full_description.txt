@@ -1,0 +1,12 @@
+Porta is a mobile bridge app that connects your phone to AI coding assistants. Monitor and interact with your AI pair programming sessions in real-time from anywhere.
+
+Key Features:
+• Real-time streaming of AI coding conversations
+• Approve or reject AI-proposed commands directly from your phone
+• View code diffs, file changes, and terminal output on the go
+• Voice input for hands-free interaction
+• Secure WebSocket connection with TLS/SSL support
+• Persistent settings — configure once, connect automatically
+• Dark mode optimized interface
+
+Porta bridges the gap between your development workstation and your mobile device, giving you full visibility and control over your AI coding workflows.

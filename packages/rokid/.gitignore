@@ -15,5 +15,10 @@ fastlane/Preview.html
 fastlane/screenshots
 fastlane/test_output
 fastlane/play-store-key.json
+fastlane/play-store-credentials.json
+fastlane/*-key.json
+fastlane/*-credentials.json
+fastlane/*service*account*.json
+fastlane/*.keystore
 fastlane/README.md
 vendor/bundle

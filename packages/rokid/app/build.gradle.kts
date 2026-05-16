@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -5,21 +7,36 @@ plugins {
 }
 
 android {
-    namespace = "com.porta.rokid"
+    namespace = "id.infinia.porta"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.porta.rokid"
+        applicationId = "id.infinia.porta"
         minSdk = 28
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 5
+        versionName = "0.2.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        create("release") {
+            val localProps = rootProject.file("local.properties")
+            val props = Properties().apply {
+                if (localProps.exists()) load(localProps.reader())
+            }
+
+            storeFile = file(System.getenv("KEYSTORE_PATH") ?: props.getProperty("KEYSTORE_PATH", "../fastlane/porta-rokid.keystore"))
+            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: props.getProperty("KEYSTORE_PASSWORD", "")
+            keyAlias = System.getenv("KEY_ALIAS") ?: props.getProperty("KEY_ALIAS", "porta-rokid")
+            keyPassword = System.getenv("KEY_PASSWORD") ?: props.getProperty("KEY_PASSWORD", "")
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.porta.rokid.shared"
+    namespace = "id.infinia.porta.shared"
     compileSdk = 35
 
     defaultConfig {

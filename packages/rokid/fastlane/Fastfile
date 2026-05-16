@@ -1,5 +1,10 @@
 default_platform(:android)
 
+# Fastlane runs from the fastlane/ directory,
+# so all paths are relative to that.
+PROJECT_ROOT = File.expand_path("..", __dir__)
+BUILD_GRADLE = File.join(PROJECT_ROOT, "app", "build.gradle.kts")
+
 platform :android do
 
   # ── Build lanes ──
@@ -9,9 +14,9 @@ platform :android do
     gradle(
       task: "assemble",
       build_type: "Debug",
-      project_dir: "."
+      project_dir: PROJECT_ROOT
     )
-    UI.success "✅ Debug APK: app/build/outputs/apk/debug/app-debug.apk"
+    UI.success "✅ Debug APK ready"
   end
 
   desc "Build release APK"
@@ -19,9 +24,9 @@ platform :android do
     gradle(
       task: "assemble",
       build_type: "Release",
-      project_dir: "."
+      project_dir: PROJECT_ROOT
     )
-    UI.success "✅ Release APK: app/build/outputs/apk/release/app-release.apk"
+    UI.success "✅ Release APK ready"
   end
 
   desc "Build release AAB (for Play Store)"
@@ -29,9 +34,9 @@ platform :android do
     gradle(
       task: "bundle",
       build_type: "Release",
-      project_dir: "."
+      project_dir: PROJECT_ROOT
     )
-    UI.success "✅ Release AAB: app/build/outputs/bundle/release/app-release.aab"
+    UI.success "✅ Release AAB ready"
   end
 
   # ── Install lanes ──
@@ -40,7 +45,7 @@ platform :android do
   lane :install do
     gradle(
       task: "installDebug",
-      project_dir: "."
+      project_dir: PROJECT_ROOT
     )
     UI.success "✅ Installed debug APK on device"
   end
@@ -51,7 +56,7 @@ platform :android do
   lane :test do
     gradle(
       task: "test",
-      project_dir: "."
+      project_dir: PROJECT_ROOT
     )
   end
 
@@ -60,7 +65,7 @@ platform :android do
     gradle(
       task: "lint",
       build_type: "Debug",
-      project_dir: "."
+      project_dir: PROJECT_ROOT
     )
   end
 
@@ -68,15 +73,13 @@ platform :android do
 
   desc "Bump version code and name"
   lane :bump_version do |options|
-    # Read current build.gradle.kts
-    build_file = File.read("app/build.gradle.kts")
+    build_file = File.read(BUILD_GRADLE)
 
     current_code = build_file.match(/versionCode\s*=\s*(\d+)/)[1].to_i
     current_name = build_file.match(/versionName\s*=\s*"([^"]+)"/)[1]
 
     new_code = current_code + 1
 
-    # Bump version name: major.minor.patch
     parts = current_name.split(".")
     bump_type = options[:type] || "patch"
     case bump_type
@@ -92,12 +95,61 @@ platform :android do
     end
     new_name = parts.join(".")
 
-    # Write back
     build_file.gsub!(/versionCode\s*=\s*\d+/, "versionCode = #{new_code}")
     build_file.gsub!(/versionName\s*=\s*"[^"]+"/, "versionName = \"#{new_name}\"")
-    File.write("app/build.gradle.kts", build_file)
+    File.write(BUILD_GRADLE, build_file)
 
     UI.success "✅ Version bumped: #{current_name} (#{current_code}) → #{new_name} (#{new_code})"
+    { version_name: new_name, version_code: new_code }
+  end
+
+  # ── Alpha distribution ──
+
+  desc "Alpha release: bump version → build signed APK → install on device"
+  lane :alpha do |options|
+    # 1. Bump version
+    version = bump_version(type: options[:bump] || "patch")
+
+    # 2. Build signed release APK
+    gradle(
+      task: "assemble",
+      build_type: "Release",
+      project_dir: PROJECT_ROOT
+    )
+
+    apk_path = File.join(PROJECT_ROOT, "app/build/outputs/apk/release/app-release.apk")
+    UI.success "✅ Alpha APK built: #{apk_path}"
+
+    # 3. Install on connected device (if available)
+    begin
+      gradle(
+        task: "installRelease",
+        project_dir: PROJECT_ROOT
+      )
+      UI.success "✅ Installed on device"
+    rescue => e
+      UI.important "⚠️  No device connected, skipping install: #{e.message}"
+    end
+
+    # 4. Git tag the alpha release
+    version_name = version[:version_name]
+    version_code = version[:version_code]
+    tag = "alpha/v#{version_name}-#{version_code}"
+
+    git_add(path: BUILD_GRADLE)
+    git_commit(
+      path: BUILD_GRADLE,
+      message: "chore(rokid): alpha release v#{version_name} (#{version_code})"
+    )
+    add_git_tag(tag: tag)
+
+    UI.success "🏷️  Tagged: #{tag}"
+    UI.success "🚀 Alpha v#{version_name} (#{version_code}) ready!"
+    UI.message ""
+    UI.message "  APK:  #{apk_path}"
+    UI.message "  Tag:  #{tag}"
+    UI.message ""
+    UI.message "  Push with: git push && git push origin #{tag}"
   end
 
   # ── Distribution lanes ──
@@ -113,13 +165,30 @@ platform :android do
     )
   end
 
+  desc "Deploy alpha to Play Store alpha track"
+  lane :deploy_alpha do
+    build_aab
+
+    supply(
+      track: "alpha",
+      aab: File.join(PROJECT_ROOT, "app/build/outputs/bundle/release/app-release.aab"),
+      skip_upload_apk: true,
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+      release_status: "draft"
+    )
+    UI.success "✅ Deployed to Play Store alpha track"
+  end
+
   desc "Deploy to Play Store internal testing track"
   lane :deploy_internal do
     build_aab
 
     supply(
       track: "internal",
-      aab: "app/build/outputs/bundle/release/app-release.aab",
+      aab: File.join(PROJECT_ROOT, "app/build/outputs/bundle/release/app-release.aab"),
+      skip_upload_apk: true,
       skip_upload_metadata: true,
       skip_upload_images: true,
       skip_upload_screenshots: true
@@ -127,14 +196,24 @@ platform :android do
     UI.success "✅ Deployed to Play Store internal track"
   end
 
-  desc "Promote internal to beta"
-  lane :promote_beta do
+  desc "Promote internal to alpha"
+  lane :promote_alpha do
     supply(
       track: "internal",
+      track_promote_to: "alpha",
+      skip_upload_changelogs: false
+    )
+    UI.success "✅ Promoted internal → alpha"
+  end
+
+  desc "Promote alpha to beta"
+  lane :promote_beta do
+    supply(
+      track: "alpha",
       track_promote_to: "beta",
       skip_upload_changelogs: false
     )
-    UI.success "✅ Promoted internal → beta"
+    UI.success "✅ Promoted alpha → beta"
   end
 
   desc "Promote beta to production"
