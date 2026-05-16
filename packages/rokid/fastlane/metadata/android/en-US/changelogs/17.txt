@@ -1,0 +1,4 @@
+• Fixed: chat history now loads automatically when opening conversations
+• Fixed: WebSocket sync messages use reliable raw JSON encoding
+• Added: retry mechanism for history loading with 1.5s fallback
+• Improved: debug logging for connection diagnostics
