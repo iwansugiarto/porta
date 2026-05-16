@@ -661,9 +661,9 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 stepCount = message.stepCount
                 _statusMessage.value = "Ready (${message.stepCount} steps)"
 
-                // Load last few steps for context
+                // Fetch full conversation history from step 0
                 if (message.stepCount > 0) {
-                    portaClient.syncOffset(maxOf(0, message.stepCount - 20))
+                    portaClient.refresh()
                 }
             }
 
