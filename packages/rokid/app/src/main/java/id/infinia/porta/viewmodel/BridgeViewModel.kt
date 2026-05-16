@@ -49,6 +49,8 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         val GLASSES_AUTO_FORWARD = booleanPreferencesKey("glasses_auto_forward")
         val VOICE_LANGUAGE = stringPreferencesKey("voice_language")
         val THEME_MODE = stringPreferencesKey("theme_mode")
+        val SELECTED_MODEL = stringPreferencesKey("selected_model")
+        val PLANNER_TYPE = stringPreferencesKey("planner_type")
     }
 
     private val dataStore = application.settingsDataStore
@@ -213,6 +215,8 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 _themeMode.value = try {
                     ThemeMode.valueOf(prefs[PrefKeys.THEME_MODE] ?: "SYSTEM")
                 } catch (_: Exception) { ThemeMode.SYSTEM }
+                _selectedModel.value = prefs[PrefKeys.SELECTED_MODEL]
+                _plannerType.value = prefs[PrefKeys.PLANNER_TYPE]
                 // Restore glasses provider
                 val savedProvider = prefs[PrefKeys.GLASSES_PROVIDER] ?: "mock"
                 setGlassesProvider(savedProvider, persist = false)
@@ -432,10 +436,22 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     fun selectModel(modelId: String?) {
         _selectedModel.value = modelId
+        viewModelScope.launch {
+            dataStore.edit {
+                if (modelId != null) it[PrefKeys.SELECTED_MODEL] = modelId
+                else it.remove(PrefKeys.SELECTED_MODEL)
+            }
+        }
     }
 
     fun setPlannerType(type: String?) {
         _plannerType.value = type
+        viewModelScope.launch {
+            dataStore.edit {
+                if (type != null) it[PrefKeys.PLANNER_TYPE] = type
+                else it.remove(PrefKeys.PLANNER_TYPE)
+            }
+        }
     }
 
     // ── Revert ──
