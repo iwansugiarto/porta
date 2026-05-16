@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import com.google.gson.JsonObject
 import id.infinia.porta.data.PortaClient
 import id.infinia.porta.service.NotificationService
+import id.infinia.porta.service.glasses.*
 import id.infinia.porta.service.voice.TextToSpeechService
 import id.infinia.porta.service.voice.VoiceInputService
 import id.infinia.porta.shared.protocol.*
@@ -41,6 +42,8 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         val NOTIFY_SOUND = booleanPreferencesKey("notify_sound")
         val NOTIFY_VIBRATE = booleanPreferencesKey("notify_vibrate")
         val NOTIFY_ENABLED = booleanPreferencesKey("notify_enabled")
+        val GLASSES_PROVIDER = stringPreferencesKey("glasses_provider")
+        val GLASSES_AUTO_FORWARD = booleanPreferencesKey("glasses_auto_forward")
     }
 
     private val dataStore = application.settingsDataStore
@@ -55,6 +58,20 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     val voiceInput = VoiceInputService(application)
     val tts = TextToSpeechService(application)
+
+    // ── Glasses ──
+
+    private var _glassesProvider: GlassesProvider = MockGlassesProvider()
+
+    val glassesState: StateFlow<GlassesState> get() = _glassesProvider.state
+    val glassesError: StateFlow<String?> get() = _glassesProvider.errorMessage
+    val glassesCapabilities: StateFlow<GlassesCapabilities> get() = _glassesProvider.capabilities
+
+    private val _glassesProviderName = MutableStateFlow("Mock (Development)")
+    val glassesProviderName: StateFlow<String> = _glassesProviderName.asStateFlow()
+
+    private val _autoForwardToGlasses = MutableStateFlow(false)
+    val autoForwardToGlasses: StateFlow<Boolean> = _autoForwardToGlasses.asStateFlow()
 
     /** Whether to auto-read responses aloud. */
     private val _ttsEnabled = MutableStateFlow(false)
@@ -174,6 +191,10 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 _notifyEnabled.value = prefs[PrefKeys.NOTIFY_ENABLED] ?: true
                 _notifySound.value = prefs[PrefKeys.NOTIFY_SOUND] ?: true
                 _notifyVibrate.value = prefs[PrefKeys.NOTIFY_VIBRATE] ?: true
+                _autoForwardToGlasses.value = prefs[PrefKeys.GLASSES_AUTO_FORWARD] ?: false
+                // Restore glasses provider
+                val savedProvider = prefs[PrefKeys.GLASSES_PROVIDER] ?: "mock"
+                setGlassesProvider(savedProvider, persist = false)
                 // Apply saved config to client
                 portaClient.configure(_host.value, _port.value, _authToken.value, _useTls.value)
             }
@@ -557,6 +578,61 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // ── Glasses ──
+
+    fun connectGlasses(context: Context) {
+        _glassesProvider.connect(context)
+    }
+
+    fun disconnectGlasses() {
+        _glassesProvider.disconnect()
+    }
+
+    fun setGlassesProvider(providerId: String, persist: Boolean = true) {
+        _glassesProvider.destroy()
+        _glassesProvider = when (providerId) {
+            "rokid_cxrl" -> RokidCXRLProvider()
+            else -> MockGlassesProvider()
+        }
+        _glassesProviderName.value = _glassesProvider.providerName
+        if (persist) {
+            viewModelScope.launch {
+                dataStore.edit { it[PrefKeys.GLASSES_PROVIDER] = providerId }
+            }
+        }
+    }
+
+    fun setAutoForwardToGlasses(enabled: Boolean) {
+        _autoForwardToGlasses.value = enabled
+        viewModelScope.launch {
+            dataStore.edit { it[PrefKeys.GLASSES_AUTO_FORWARD] = enabled }
+        }
+    }
+
+    fun testGlassesDisplay() {
+        _glassesProvider.displayText(
+            "Porta Test",
+            "If you can see this on your AR glasses, the connection is working! 🎉"
+        )
+    }
+
+    fun testGlassesPhoto() {
+        _glassesProvider.takePhoto(callback = object : PhotoCallback {
+            override fun onPhotoCaptured(jpegData: ByteArray, width: Int, height: Int) {
+                _statusMessage.value = "📷 Photo captured (${width}x${height}, ${jpegData.size} bytes)"
+            }
+            override fun onPhotoError(error: String) {
+                _statusMessage.value = "📷 Photo error: $error"
+            }
+        })
+    }
+
+    private fun forwardToGlasses(text: String) {
+        if (_autoForwardToGlasses.value && _glassesProvider.state.value == GlassesState.SCENE_ACTIVE) {
+            _glassesProvider.displayText("Porta", text)
+        }
+    }
+
     // ── WebSocket message handling ──
 
     private fun handleIncomingMessage(message: PortaMessage) {
@@ -606,6 +682,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                     ?.plannerText
                 if (latestText != null) {
                     _latestResponse.value = latestText
+                    forwardToGlasses(latestText)
                 }
 
                 // Update step count
@@ -653,6 +730,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         voiceInput.destroy()
         tts.destroy()
         notificationService.destroy()
+        _glassesProvider.destroy()
         portaClient.destroy()
     }
 }

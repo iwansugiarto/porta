@@ -28,7 +28,8 @@ class MainActivity : ComponentActivity() {
                     "settings" -> SettingsScreen(
                         viewModel = viewModel,
                         onBack = { screen = "chat" },
-                        onNavigateToAbout = { screen = "about" }
+                        onNavigateToAbout = { screen = "about" },
+                        onNavigateToGlasses = { screen = "glasses" }
                     )
                     "conversations" -> ConversationsScreen(
                         viewModel = viewModel,
@@ -39,6 +40,10 @@ class MainActivity : ComponentActivity() {
                         }
                     )
                     "about" -> AboutScreen(
+                        viewModel = viewModel,
+                        onBack = { screen = "settings" }
+                    )
+                    "glasses" -> GlassesScreen(
                         viewModel = viewModel,
                         onBack = { screen = "settings" }
                     )

@@ -23,7 +23,7 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToAbout: () -> Unit = {}) {
+fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToAbout: () -> Unit = {}, onNavigateToGlasses: () -> Unit = {}) {
     val host by viewModel.host.collectAsState()
     val port by viewModel.port.collectAsState()
     val authToken by viewModel.authToken.collectAsState()
@@ -230,11 +230,27 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
 
             HorizontalDivider(color = PortaSurfaceVariant)
 
-            Text("Rokid Glasses", style = MaterialTheme.typography.titleMedium, color = PortaSecondary)
-            Text("CXR SDK integration coming soon.\nDevelop and test with the phone app first.",
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                style = MaterialTheme.typography.bodySmall)
+            Text("AR Glasses", style = MaterialTheme.typography.titleMedium, color = PortaSecondary)
 
+            val glassesState by viewModel.glassesState.collectAsState()
+            val glassesProviderName by viewModel.glassesProviderName.collectAsState()
+
+            OutlinedButton(
+                onClick = onNavigateToGlasses,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.Visibility, null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    when (glassesState) {
+                        id.infinia.porta.service.glasses.GlassesState.SCENE_ACTIVE -> "Connected — $glassesProviderName"
+                        id.infinia.porta.service.glasses.GlassesState.CONNECTED -> "Connected"
+                        id.infinia.porta.service.glasses.GlassesState.CONNECTING -> "Connecting..."
+                        else -> "Manage Glasses"
+                    }
+                )
+            }
             HorizontalDivider(color = PortaSurfaceVariant)
 
             // ── About ──
