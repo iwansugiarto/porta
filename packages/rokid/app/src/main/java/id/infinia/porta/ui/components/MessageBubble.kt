@@ -14,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -65,7 +66,7 @@ private fun UserBubble(message: ChatMessage) {
         Surface(
             modifier = Modifier.widthIn(max = 320.dp),
             shape = RoundedCornerShape(16.dp, 16.dp, 4.dp, 16.dp),
-            color = PortaPrimary.copy(alpha = 0.15f),
+            color = PortaPrimary.copy(alpha = if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) 0.10f else 0.15f),
             tonalElevation = 1.dp
         ) {
             Column(
@@ -137,7 +138,9 @@ private fun AssistantBubble(message: ChatMessage, onRevert: ((Int) -> Unit)? = n
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp),
-                    color = Color.Transparent,
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(
+                        alpha = if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) 0.6f else 0f
+                    ),
                 ) {
                     MarkdownText(
                         markdown = message.content,
