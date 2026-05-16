@@ -22,10 +22,16 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { /* granted or denied — we handle gracefully either way */ }
 
+    // Runtime permission request for microphone (voice input)
+    private val audioPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* granted or denied — VoiceInputService checks availability */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         requestNotificationPermissionIfNeeded()
+        requestAudioPermissionIfNeeded()
 
         setContent {
             PortaRokidTheme(darkTheme = true) {
@@ -77,6 +83,19 @@ class MainActivity : ComponentActivity() {
             ) {
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
+        }
+    }
+
+    /**
+     * Request RECORD_AUDIO permission for voice input (speech-to-text).
+     * Required for hands-free usage and Android Auto integration.
+     */
+    private fun requestAudioPermissionIfNeeded() {
+        if (ContextCompat.checkSelfPermission(
+                this, Manifest.permission.RECORD_AUDIO
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
 }
