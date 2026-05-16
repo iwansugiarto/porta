@@ -72,7 +72,7 @@ fun MarkdownText(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(PortaSurface, RoundedCornerShape(6.dp))
+                            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(6.dp))
                             .padding(8.dp)
                             .horizontalScroll(rememberScrollState())
                     ) {

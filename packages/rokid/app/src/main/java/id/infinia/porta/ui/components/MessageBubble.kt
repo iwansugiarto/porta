@@ -209,7 +209,7 @@ private fun ThinkingBlock(thinking: String, duration: String?) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .clickable { expanded = !expanded },
-        color = PortaSurfaceVariant.copy(alpha = 0.5f),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
             Row(
@@ -412,7 +412,7 @@ private fun CommandCard(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(PortaSurface, RoundedCornerShape(6.dp))
+                        .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(6.dp))
                         .padding(8.dp)
                 )
             }
@@ -458,7 +458,7 @@ private fun CodeActionCard(message: ChatMessage) {
             .fillMaxWidth()
             .clickable(enabled = hasDiff) { expanded = !expanded },
         shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = PortaSurfaceVariant.copy(alpha = 0.5f))
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
             Row(
@@ -498,7 +498,7 @@ private fun CodeActionCard(message: ChatMessage) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(PortaSurface, RoundedCornerShape(6.dp))
+                        .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(6.dp))
                         .padding(6.dp)
                 ) {
                     if (fileUri.isNotEmpty()) {
@@ -574,7 +574,7 @@ private fun FilePermissionCard(
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (isWaiting && !responded) PortaWarning.copy(alpha = 0.08f)
-            else PortaSurfaceVariant.copy(alpha = 0.4f)
+            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
         )
     ) {
         Column(modifier = Modifier.padding(10.dp)) {

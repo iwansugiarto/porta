@@ -573,7 +573,7 @@ fun ChatScreen(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .padding(16.dp),
-                        containerColor = PortaSurfaceVariant,
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
                         contentColor = PortaPrimary
                     ) {
                         Icon(

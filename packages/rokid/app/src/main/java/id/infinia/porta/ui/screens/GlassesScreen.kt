@@ -43,7 +43,7 @@ fun GlassesScreen(viewModel: BridgeViewModel, onBack: () -> Unit) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = PortaSurface)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
             )
         }
     ) { padding ->
@@ -51,7 +51,7 @@ fun GlassesScreen(viewModel: BridgeViewModel, onBack: () -> Unit) {
             Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .background(PortaSurface)
+                .background(MaterialTheme.colorScheme.surface)
                 .verticalScroll(rememberScrollState())
                 .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -60,7 +60,7 @@ fun GlassesScreen(viewModel: BridgeViewModel, onBack: () -> Unit) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = PortaSurfaceVariant)
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
             ) {
                 Column(
                     modifier = Modifier.padding(20.dp),
@@ -118,7 +118,7 @@ fun GlassesScreen(viewModel: BridgeViewModel, onBack: () -> Unit) {
                         },
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = PortaOnSurface
+                        color = MaterialTheme.colorScheme.onSurface
                     )
 
                     Text(
@@ -198,7 +198,7 @@ fun GlassesScreen(viewModel: BridgeViewModel, onBack: () -> Unit) {
                 }
             }
 
-            HorizontalDivider(color = PortaSurfaceVariant)
+            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
 
             // ── Settings ──
             Text("Settings", style = MaterialTheme.typography.titleSmall, color = PortaPrimary)
@@ -270,7 +270,7 @@ fun GlassesScreen(viewModel: BridgeViewModel, onBack: () -> Unit) {
                 exit = fadeOut() + shrinkVertically()
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    HorizontalDivider(color = PortaSurfaceVariant)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
                     Text("Test Actions", style = MaterialTheme.typography.titleSmall, color = PortaSecondary)
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

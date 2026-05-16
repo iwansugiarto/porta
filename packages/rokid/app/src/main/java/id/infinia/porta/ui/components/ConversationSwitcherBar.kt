@@ -106,7 +106,7 @@ fun ConversationSwitcherBar(
 
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = PortaSurface,
+        color = MaterialTheme.colorScheme.surface,
         tonalElevation = 2.dp
     ) {
         Column {
@@ -174,7 +174,7 @@ fun ConversationSwitcherBar(
                     modifier = Modifier.height(28.dp),
                     shape = CircleShape,
                     colors = SuggestionChipDefaults.suggestionChipColors(
-                        containerColor = PortaSurfaceVariant
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
                     )
                 )
 
@@ -189,7 +189,7 @@ fun ConversationSwitcherBar(
                     modifier = Modifier.height(28.dp),
                     shape = CircleShape,
                     colors = SuggestionChipDefaults.suggestionChipColors(
-                        containerColor = PortaSurfaceVariant
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
                     )
                 )
             }
@@ -227,7 +227,7 @@ private fun ConvoChipItem(
         color = when {
             isActive -> PortaPrimary.copy(alpha = 0.15f)
             chip.isRunning -> PortaTertiary.copy(alpha = 0.08f)
-            else -> PortaSurfaceVariant
+            else -> MaterialTheme.colorScheme.surfaceVariant
         },
         tonalElevation = if (isActive) 4.dp else 0.dp
     ) {

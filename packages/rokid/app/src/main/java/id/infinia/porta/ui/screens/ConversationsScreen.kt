@@ -223,7 +223,7 @@ fun ConversationsScreen(
                                 colors = CardDefaults.cardColors(
                                     containerColor = when {
                                         isActive -> PortaPrimary.copy(alpha = 0.12f)
-                                        else -> PortaSurfaceVariant
+                                        else -> MaterialTheme.colorScheme.surfaceVariant
                                     }
                                 )
                             ) {

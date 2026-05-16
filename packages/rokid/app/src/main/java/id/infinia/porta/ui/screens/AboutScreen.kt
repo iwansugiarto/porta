@@ -55,7 +55,7 @@ fun AboutScreen(viewModel: BridgeViewModel, onBack: () -> Unit) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = PortaSurface)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
             )
         }
     ) { padding ->
@@ -63,7 +63,7 @@ fun AboutScreen(viewModel: BridgeViewModel, onBack: () -> Unit) {
             Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .background(PortaSurface)
+                .background(MaterialTheme.colorScheme.surface)
                 .verticalScroll(rememberScrollState())
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -90,7 +90,7 @@ fun AboutScreen(viewModel: BridgeViewModel, onBack: () -> Unit) {
                 "Porta",
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
-                color = PortaOnSurface
+                color = MaterialTheme.colorScheme.onSurface
             )
             Text(
                 "Remote AI Coding Bridge",
@@ -174,7 +174,7 @@ private fun InfoCard(title: String, content: @Composable ColumnScope.() -> Unit)
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = PortaSurfaceVariant)
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -187,7 +187,7 @@ private fun InfoCard(title: String, content: @Composable ColumnScope.() -> Unit)
                 color = PortaPrimary,
                 letterSpacing = 0.5.sp
             )
-            HorizontalDivider(color = PortaSurface, thickness = 1.dp)
+            HorizontalDivider(color = MaterialTheme.colorScheme.surface, thickness = 1.dp)
             content()
         }
     }
@@ -209,7 +209,7 @@ private fun InfoRow(label: String, value: String) {
         Text(
             value,
             fontSize = 13.sp,
-            color = PortaOnSurface,
+            color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.Medium,
             textAlign = TextAlign.End,
             modifier = Modifier.weight(0.65f)
