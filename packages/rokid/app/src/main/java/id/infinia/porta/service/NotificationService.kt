@@ -28,7 +28,10 @@ class NotificationService(private val context: Context) {
     companion object {
         const val CHANNEL_ID = "porta_task_complete"
         const val CHANNEL_NAME = "Task Completion"
+        const val CHANNEL_APPROVAL_ID = "porta_approval"
+        const val CHANNEL_APPROVAL_NAME = "Approval Requests"
         const val NOTIFICATION_ID_TASK_COMPLETE = 1001
+        const val NOTIFICATION_ID_APPROVAL = 1002
 
         const val ACTION_QUICK_REPLY = "id.infinia.porta.QUICK_REPLY"
         const val EXTRA_REPLY_TEXT = "reply_text"
@@ -71,6 +74,25 @@ class NotificationService(private val context: Context) {
             )
         }
         notificationManager.createNotificationChannel(channel)
+
+        // Approval channel — urgent, persistent
+        val approvalChannel = NotificationChannel(
+            CHANNEL_APPROVAL_ID,
+            CHANNEL_APPROVAL_NAME,
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Alerts when agent needs your approval to proceed"
+            enableVibration(true)
+            vibrationPattern = longArrayOf(0, 300, 150, 300, 150, 300)
+            setSound(
+                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+            )
+        }
+        notificationManager.createNotificationChannel(approvalChannel)
     }
 
     /**
@@ -152,6 +174,66 @@ class NotificationService(private val context: Context) {
         notificationManager.cancel(NOTIFICATION_ID_TASK_COMPLETE)
     }
 
+    /** Dismiss approval notification. */
+    fun dismissApproval() {
+        notificationManager.cancel(NOTIFICATION_ID_APPROVAL)
+    }
+
+    /**
+     * Show an approval-needed notification.
+     *
+     * @param title      Notification title (e.g., "⚠️ Approval Needed")
+     * @param description What the agent wants to do
+     * @param cascadeId  The conversation ID
+     * @param playSound  Whether to play notification sound
+     * @param vibrate    Whether to vibrate
+     */
+    fun showApprovalNeeded(
+        title: String,
+        description: String,
+        cascadeId: String,
+        playSound: Boolean = true,
+        vibrate: Boolean = true
+    ) {
+        // Launch intent — opens the app
+        val launchIntent = context.packageManager
+            .getLaunchIntentForPackage(context.packageName)
+            ?.apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(EXTRA_CASCADE_ID, cascadeId)
+            }
+        val contentPendingIntent = PendingIntent.getActivity(
+            context, 2, launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val builder = NotificationCompat.Builder(context, CHANNEL_APPROVAL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle(title)
+            .setContentText(description)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(description))
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setContentIntent(contentPendingIntent)
+            .setAutoCancel(true)
+            .setOngoing(true) // Persistent until user acts
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+
+        if (!playSound) {
+            builder.setSound(null)
+        }
+
+        if (!vibrate) {
+            builder.setVibrate(longArrayOf(0))
+        }
+
+        notificationManager.notify(NOTIFICATION_ID_APPROVAL, builder.build())
+
+        // Urgent vibration pattern for approval
+        if (vibrate) {
+            triggerApprovalVibration()
+        }
+    }
+
     private fun triggerVibration() {
         val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
@@ -162,6 +244,19 @@ class NotificationService(private val context: Context) {
         }
         vibrator.vibrate(
             VibrationEffect.createWaveform(longArrayOf(0, 150, 80, 150), -1)
+        )
+    }
+
+    private fun triggerApprovalVibration() {
+        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            vm.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        }
+        vibrator.vibrate(
+            VibrationEffect.createWaveform(longArrayOf(0, 250, 100, 250, 100, 250), -1)
         )
     }
 

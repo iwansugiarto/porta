@@ -506,6 +506,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             try {
                 portaClient.handleCommandAction(cascadeId, trajectoryId, stepIndex, true)
+                notificationService.dismissApproval()
                 _statusMessage.value = "Approved"
             } catch (e: Exception) {
                 _statusMessage.value = "Approval failed: ${e.message}"
@@ -518,6 +519,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             try {
                 portaClient.handleCommandAction(cascadeId, trajectoryId, stepIndex, false)
+                notificationService.dismissApproval()
                 _statusMessage.value = "Rejected"
             } catch (e: Exception) {
                 _statusMessage.value = "Rejection failed: ${e.message}"
@@ -536,6 +538,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                     scope = if (allow) scope else 0
                 )
                 _statusMessage.value = if (allow) "Allowed" else "Denied"
+                notificationService.dismissApproval()
             } catch (e: Exception) {
                 _statusMessage.value = "Permission failed: ${e.message}"
             }
@@ -706,6 +709,32 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 val newEnd = message.offset + message.steps.size
                 if (newEnd > stepCount) {
                     stepCount = newEnd
+                }
+
+                // Check for new steps needing approval → fire notification
+                if (_notifyEnabled.value) {
+                    val pendingSteps = newSteps.filter { it.needsApproval }
+                    if (pendingSteps.isNotEmpty()) {
+                        val step = pendingSteps.last()
+                        val description = step.toolAction
+                            ?: step.toolSummary
+                            ?: step.approvalInfo?.let {
+                                when (it.type) {
+                                    ApprovalType.COMMAND -> "Command: ${step.commandInfo?.commandLine ?: "execute command"}"
+                                    ApprovalType.PERMISSION -> "File permission request"
+                                    ApprovalType.OTHER -> "Action requires approval"
+                                }
+                            }
+                            ?: "Agent needs your approval to proceed"
+                        val cascadeId = _currentConversationId.value ?: ""
+                        notificationService.showApprovalNeeded(
+                            title = "⚠️ Approval Needed",
+                            description = description,
+                            cascadeId = cascadeId,
+                            playSound = _notifySound.value,
+                            vibrate = _notifyVibrate.value
+                        )
+                    }
                 }
             }
 
