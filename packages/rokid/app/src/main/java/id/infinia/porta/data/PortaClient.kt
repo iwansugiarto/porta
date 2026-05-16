@@ -404,18 +404,22 @@ class PortaClient(
 
     /**
      * Send a sync message to update the step offset cursor.
+     * Uses raw JSON to avoid Gson sealed-class serialization issues.
      */
     fun syncOffset(fromOffset: Int) {
-        val msg = PortaMessage.Sync(fromOffset)
-        sendWsMessage(PortaMessage.serialize(msg))
+        val json = """{"type":"sync","fromOffset":$fromOffset}"""
+        println("[PortaClient] Sending sync: $json")
+        sendWsMessage(json)
     }
 
     /**
      * Send a refresh message to re-fetch all steps from the beginning.
+     * Uses raw JSON to avoid Gson sealed-class serialization issues.
      */
     fun refresh() {
-        val msg = PortaMessage.Refresh()
-        sendWsMessage(PortaMessage.serialize(msg))
+        val json = """{"type":"refresh"}"""
+        println("[PortaClient] Sending refresh: $json")
+        sendWsMessage(json)
     }
 
     /**

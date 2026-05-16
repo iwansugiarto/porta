@@ -663,7 +663,16 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
                 // Fetch full conversation history from step 0
                 if (message.stepCount > 0) {
-                    portaClient.refresh()
+                    portaClient.syncOffset(0)
+
+                    // Retry if steps don't arrive within 1.5s
+                    viewModelScope.launch {
+                        kotlinx.coroutines.delay(1500)
+                        if (_steps.value.isEmpty() && stepCount > 0) {
+                            println("[BridgeVM] Steps not received after Ready, retrying sync(0)...")
+                            portaClient.syncOffset(0)
+                        }
+                    }
                 }
             }
 
