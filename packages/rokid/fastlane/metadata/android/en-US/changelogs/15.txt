@@ -1,0 +1,6 @@
+• Conversation Switcher — horizontal scrollable bar for quick-switching between active conversations across workspaces
+• Auto-Connect — automatically connects on app launch when credentials are configured
+• Approval Notifications — persistent system alert when agent needs command or file permission approval
+• Task Complete Notifications — now working on Android 13+ with proper runtime permission
+• Chat History — full conversation history loads automatically when opening a conversation
+• Company info updated to PT. Infinia Solusi Sistem
