@@ -56,6 +56,7 @@ fun ChatScreen(
     val statusMessage by viewModel.statusMessage.collectAsState()
     val currentConversationId by viewModel.currentConversationId.collectAsState()
     val pendingApprovals by viewModel.pendingApprovals.collectAsState()
+    val conversations by viewModel.conversations.collectAsState()
 
     val isListening by viewModel.isListening.collectAsState()
     val partialVoice by viewModel.voiceInput.partialResult.collectAsState()
@@ -67,6 +68,24 @@ fun ChatScreen(
     val selectedModel by viewModel.selectedModel.collectAsState()
     val defaultModel by viewModel.defaultModel.collectAsState()
     val plannerType by viewModel.plannerType.collectAsState()
+
+    // Derive workspace name and conversation title from active conversation
+    val activeConvoSummary = currentConversationId?.let { conversations[it] }
+    val workspaceName = remember(activeConvoSummary) {
+        activeConvoSummary?.let { summary ->
+            val workspaces = summary.getAsJsonArray("workspaces")
+            if (workspaces != null && workspaces.size() > 0) {
+                val ws = workspaces[0].asJsonObject
+                ws.getAsJsonObject("repository")?.get("computedName")?.asString
+                    ?.substringAfterLast("/")
+                    ?: ws.get("workspaceFolderAbsoluteUri")?.asString
+                        ?.substringAfterLast("/")
+            } else null
+        }
+    }
+    val conversationTitle = remember(activeConvoSummary) {
+        activeConvoSummary?.get("summary")?.asString
+    }
 
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -102,9 +121,47 @@ fun ChatScreen(
                             fontWeight = FontWeight.Bold,
                             fontSize = 18.sp
                         )
+                        // Workspace / conversation subtitle
+                        if (workspaceName != null || conversationTitle != null) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                if (workspaceName != null) {
+                                    Icon(
+                                        Icons.Default.Folder,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(11.dp),
+                                        tint = PortaTertiary
+                                    )
+                                    Text(
+                                        workspaceName,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = PortaTertiary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                if (workspaceName != null && conversationTitle != null) {
+                                    Text("›", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))
+                                }
+                                if (conversationTitle != null) {
+                                    Text(
+                                        conversationTitle,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                }
+                            }
+                        }
+                        // Connection status line
                         Text(
                             statusMessage,
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             color = when (connectionState) {
                                 ConnectionState.CONNECTED -> PortaSuccess
                                 ConnectionState.ERROR -> PortaError

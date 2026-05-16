@@ -1,0 +1,161 @@
+default_platform(:android)
+
+platform :android do
+
+  # ── Build lanes ──
+
+  desc "Build debug APK"
+  lane :build_debug do
+    gradle(
+      task: "assemble",
+      build_type: "Debug",
+      project_dir: "."
+    )
+    UI.success "✅ Debug APK: app/build/outputs/apk/debug/app-debug.apk"
+  end
+
+  desc "Build release APK"
+  lane :build_release do
+    gradle(
+      task: "assemble",
+      build_type: "Release",
+      project_dir: "."
+    )
+    UI.success "✅ Release APK: app/build/outputs/apk/release/app-release.apk"
+  end
+
+  desc "Build release AAB (for Play Store)"
+  lane :build_aab do
+    gradle(
+      task: "bundle",
+      build_type: "Release",
+      project_dir: "."
+    )
+    UI.success "✅ Release AAB: app/build/outputs/bundle/release/app-release.aab"
+  end
+
+  # ── Install lanes ──
+
+  desc "Build and install debug APK on connected device"
+  lane :install do
+    gradle(
+      task: "installDebug",
+      project_dir: "."
+    )
+    UI.success "✅ Installed debug APK on device"
+  end
+
+  # ── Test lanes ──
+
+  desc "Run unit tests"
+  lane :test do
+    gradle(
+      task: "test",
+      project_dir: "."
+    )
+  end
+
+  desc "Run lint checks"
+  lane :lint do
+    gradle(
+      task: "lint",
+      build_type: "Debug",
+      project_dir: "."
+    )
+  end
+
+  # ── Version management ──
+
+  desc "Bump version code and name"
+  lane :bump_version do |options|
+    # Read current build.gradle.kts
+    build_file = File.read("app/build.gradle.kts")
+
+    current_code = build_file.match(/versionCode\s*=\s*(\d+)/)[1].to_i
+    current_name = build_file.match(/versionName\s*=\s*"([^"]+)"/)[1]
+
+    new_code = current_code + 1
+
+    # Bump version name: major.minor.patch
+    parts = current_name.split(".")
+    bump_type = options[:type] || "patch"
+    case bump_type
+    when "major"
+      parts[0] = (parts[0].to_i + 1).to_s
+      parts[1] = "0"
+      parts[2] = "0"
+    when "minor"
+      parts[1] = (parts[1].to_i + 1).to_s
+      parts[2] = "0"
+    when "patch"
+      parts[2] = (parts[2].to_i + 1).to_s
+    end
+    new_name = parts.join(".")
+
+    # Write back
+    build_file.gsub!(/versionCode\s*=\s*\d+/, "versionCode = #{new_code}")
+    build_file.gsub!(/versionName\s*=\s*"[^"]+"/, "versionName = \"#{new_name}\"")
+    File.write("app/build.gradle.kts", build_file)
+
+    UI.success "✅ Version bumped: #{current_name} (#{current_code}) → #{new_name} (#{new_code})"
+  end
+
+  # ── Distribution lanes ──
+
+  desc "Build and deploy to Firebase App Distribution"
+  lane :firebase do |options|
+    build_debug
+
+    firebase_app_distribution(
+      app: ENV["FIREBASE_APP_ID"],
+      groups: options[:groups] || "testers",
+      release_notes: options[:notes] || changelog_from_git_commits(commits_count: 5, pretty: "- %s")
+    )
+  end
+
+  desc "Deploy to Play Store internal testing track"
+  lane :deploy_internal do
+    build_aab
+
+    supply(
+      track: "internal",
+      aab: "app/build/outputs/bundle/release/app-release.aab",
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+    UI.success "✅ Deployed to Play Store internal track"
+  end
+
+  desc "Promote internal to beta"
+  lane :promote_beta do
+    supply(
+      track: "internal",
+      track_promote_to: "beta",
+      skip_upload_changelogs: false
+    )
+    UI.success "✅ Promoted internal → beta"
+  end
+
+  desc "Promote beta to production"
+  lane :promote_production do |options|
+    supply(
+      track: "beta",
+      track_promote_to: "production",
+      rollout: options[:rollout] || "0.1",
+      skip_upload_changelogs: false
+    )
+    UI.success "✅ Promoted beta → production (rollout: #{options[:rollout] || '10%'})"
+  end
+
+  # ── CI/CD helper ──
+
+  desc "Full CI pipeline: lint → test → build"
+  lane :ci do
+    lint
+    test
+    build_release
+    UI.success "✅ CI pipeline passed"
+  end
+
+end

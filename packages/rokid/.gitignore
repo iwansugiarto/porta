@@ -8,3 +8,12 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+fastlane/test_output
+fastlane/play-store-key.json
+fastlane/README.md
+vendor/bundle
