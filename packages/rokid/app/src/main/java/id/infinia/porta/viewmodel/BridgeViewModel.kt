@@ -39,6 +39,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         val PORT = intPreferencesKey("port")
         val AUTH_TOKEN = stringPreferencesKey("auth_token")
         val USE_TLS = booleanPreferencesKey("use_tls")
+        val AUTO_CONNECT = booleanPreferencesKey("auto_connect")
         val NOTIFY_SOUND = booleanPreferencesKey("notify_sound")
         val NOTIFY_VIBRATE = booleanPreferencesKey("notify_vibrate")
         val NOTIFY_ENABLED = booleanPreferencesKey("notify_enabled")
@@ -108,6 +109,9 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _useTls = MutableStateFlow(false)
     val useTls: StateFlow<Boolean> = _useTls.asStateFlow()
+
+    private val _autoConnect = MutableStateFlow(false)
+    val autoConnect: StateFlow<Boolean> = _autoConnect.asStateFlow()
 
     // ── Conversations ──
 
@@ -192,11 +196,17 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 _notifySound.value = prefs[PrefKeys.NOTIFY_SOUND] ?: true
                 _notifyVibrate.value = prefs[PrefKeys.NOTIFY_VIBRATE] ?: true
                 _autoForwardToGlasses.value = prefs[PrefKeys.GLASSES_AUTO_FORWARD] ?: false
+                _autoConnect.value = prefs[PrefKeys.AUTO_CONNECT] ?: false
                 // Restore glasses provider
                 val savedProvider = prefs[PrefKeys.GLASSES_PROVIDER] ?: "mock"
                 setGlassesProvider(savedProvider, persist = false)
                 // Apply saved config to client
                 portaClient.configure(_host.value, _port.value, _authToken.value, _useTls.value)
+
+                // Auto-connect if enabled and credentials are configured
+                if (_autoConnect.value && !_authToken.value.isNullOrBlank()) {
+                    connect()
+                }
             }
         }
 
@@ -575,6 +585,13 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         _notifyVibrate.value = enabled
         viewModelScope.launch {
             dataStore.edit { it[PrefKeys.NOTIFY_VIBRATE] = enabled }
+        }
+    }
+
+    fun setAutoConnect(enabled: Boolean) {
+        _autoConnect.value = enabled
+        viewModelScope.launch {
+            dataStore.edit { it[PrefKeys.AUTO_CONNECT] = enabled }
         }
     }
 

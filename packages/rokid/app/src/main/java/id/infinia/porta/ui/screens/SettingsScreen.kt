@@ -33,11 +33,13 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
     val notifyEnabled by viewModel.notifyEnabled.collectAsState()
     val notifySound by viewModel.notifySound.collectAsState()
     val notifyVibrate by viewModel.notifyVibrate.collectAsState()
+    val autoConnect by viewModel.autoConnect.collectAsState()
 
     var editHost by remember(host) { mutableStateOf(host) }
     var editPort by remember(port) { mutableStateOf(port.toString()) }
     var editToken by remember(authToken) { mutableStateOf(authToken ?: "") }
     var editUseTls by remember(useTls) { mutableStateOf(useTls) }
+    var editAutoConnect by remember(autoConnect) { mutableStateOf(autoConnect) }
     var connectAttempted by remember { mutableStateOf(false) }
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -113,6 +115,29 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
                 Switch(
                     checked = editUseTls,
                     onCheckedChange = { editUseTls = it },
+                    colors = SwitchDefaults.colors(checkedTrackColor = PortaPrimary)
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Auto-Connect", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Connect automatically on app launch",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    )
+                }
+                Switch(
+                    checked = editAutoConnect,
+                    onCheckedChange = {
+                        editAutoConnect = it
+                        viewModel.setAutoConnect(it)
+                    },
                     colors = SwitchDefaults.colors(checkedTrackColor = PortaPrimary)
                 )
             }
