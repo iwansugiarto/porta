@@ -1,0 +1,4 @@
+• Full light/dark/system theme support across all screens
+• Improved chat bubble contrast in light mode
+• Theme-aware conversation list, switcher bar, and system cards
+• Voice language selector (8 languages, default Indonesian)

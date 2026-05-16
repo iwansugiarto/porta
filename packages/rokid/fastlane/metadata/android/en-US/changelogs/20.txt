@@ -1,0 +1,5 @@
+• Voice command enabled — tap mic button to speak
+• Works with phone mic, Bluetooth headset, and wired headset
+• Speech auto-transcribed and sent to conversation
+• RECORD_AUDIO permission requested at startup
+• New minimalist P lettermark app icon

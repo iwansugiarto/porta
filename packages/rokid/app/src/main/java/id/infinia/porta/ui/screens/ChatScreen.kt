@@ -1,10 +1,18 @@
 package id.infinia.porta.ui.screens
 
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.util.Base64
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -21,6 +29,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -31,6 +41,7 @@ import id.infinia.porta.ui.components.ConversationSwitcherBar
 import id.infinia.porta.ui.components.MessageBubble
 import id.infinia.porta.ui.theme.*
 import id.infinia.porta.viewmodel.BridgeViewModel
+import java.io.ByteArrayOutputStream
 
 /**
  * Main chat screen — full UX parity with the Porta PWA.
@@ -93,6 +104,41 @@ fun ChatScreen(
 
     // Model selector expanded state
     var modelDropdownOpen by remember { mutableStateOf(false) }
+
+    // ── Attachment state ──
+    data class Attachment(
+        val uri: Uri,
+        val mimeType: String,
+        val base64: String,
+        val fileName: String
+    )
+    val attachments = remember { mutableStateListOf<Attachment>() }
+    val context = LocalContext.current
+
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetMultipleContents()
+    ) { uris: List<Uri> ->
+        for (uri in uris) {
+            try {
+                val resolver = context.contentResolver
+                val mime = resolver.getType(uri) ?: "image/png"
+                val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: continue
+
+                // Compress images > 1MB to keep payload reasonable
+                val finalBytes = if (mime.startsWith("image/") && bytes.size > 1_000_000) {
+                    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: continue
+                    val bos = ByteArrayOutputStream()
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, bos)
+                    bitmap.recycle()
+                    bos.toByteArray()
+                } else bytes
+
+                val b64 = Base64.encodeToString(finalBytes, Base64.NO_WRAP)
+                val name = uri.lastPathSegment?.substringAfterLast('/') ?: "file"
+                attachments.add(Attachment(uri, mime, b64, name))
+            } catch (_: Exception) { /* skip failed reads */ }
+        }
+    }
 
     // Show partial voice transcription in the input field
     val displayText = if (isListening && partialVoice.isNotBlank()) partialVoice else inputText
@@ -371,6 +417,61 @@ fun ChatScreen(
                         }
                     }
 
+                    // ── Attachment preview strip ──
+                    if (attachments.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                                .padding(horizontal = 12.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            attachments.forEachIndexed { idx, att ->
+                                Box(
+                                    modifier = Modifier
+                                        .size(56.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                                ) {
+                                    if (att.mimeType.startsWith("image/")) {
+                                        val bytes = Base64.decode(att.base64, Base64.NO_WRAP)
+                                        val bmp = remember(att.base64) {
+                                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                        }
+                                        if (bmp != null) {
+                                            androidx.compose.foundation.Image(
+                                                bitmap = bmp.asImageBitmap(),
+                                                contentDescription = att.fileName,
+                                                modifier = Modifier.fillMaxSize(),
+                                                contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                            )
+                                        }
+                                    } else {
+                                        Icon(
+                                            Icons.Default.Description,
+                                            att.fileName,
+                                            modifier = Modifier.align(Alignment.Center).size(24.dp),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    // Remove button
+                                    Icon(
+                                        Icons.Default.Close,
+                                        "Remove",
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .size(18.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.error.copy(alpha = 0.8f))
+                                            .clickable { attachments.removeAt(idx) }
+                                            .padding(2.dp),
+                                        tint = Color.White
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     // Input row
                     Row(
                         modifier = Modifier
@@ -397,19 +498,53 @@ fun ChatScreen(
                             )
                         }
 
+                        // Attach button
+                        FilledIconButton(
+                            onClick = { imagePickerLauncher.launch("image/*") },
+                            enabled = connectionState == ConnectionState.CONNECTED &&
+                                    currentConversationId != null,
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = if (attachments.isNotEmpty()) PortaTertiary.copy(alpha = 0.2f)
+                                    else MaterialTheme.colorScheme.surfaceVariant
+                            )
+                        ) {
+                            BadgedBox(
+                                badge = {
+                                    if (attachments.isNotEmpty()) {
+                                        Badge { Text("${attachments.size}") }
+                                    }
+                                }
+                            ) {
+                                Icon(Icons.Default.AttachFile, "Attach")
+                            }
+                        }
+
                         OutlinedTextField(
                             value = displayText,
                             onValueChange = { if (!isListening) inputText = it },
                             modifier = Modifier.weight(1f),
-                            placeholder = { Text("Ask Antigravity...") },
+                            placeholder = {
+                                Text(
+                                    if (attachments.isNotEmpty()) "Describe the image..."
+                                    else "Ask Antigravity..."
+                                )
+                            },
                             maxLines = 4,
                             readOnly = isListening,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                             keyboardActions = KeyboardActions(
                                 onSend = {
-                                    if (inputText.isNotBlank()) {
-                                        viewModel.sendMessage(inputText.trim())
+                                    val hasContent = inputText.isNotBlank() || attachments.isNotEmpty()
+                                    if (hasContent) {
+                                        val media = attachments.map {
+                                            mapOf("mimeType" to it.mimeType, "inlineData" to it.base64)
+                                        }.ifEmpty { null }
+                                        viewModel.sendMessage(
+                                            inputText.trim().ifBlank { " " },
+                                            media = media
+                                        )
                                         inputText = ""
+                                        attachments.clear()
                                     }
                                 }
                             ),
@@ -433,14 +568,22 @@ fun ChatScreen(
                                 Icon(Icons.Default.Stop, "Stop")
                             }
                         } else {
+                            val hasContent = inputText.isNotBlank() || attachments.isNotEmpty()
                             FilledIconButton(
                                 onClick = {
-                                    if (inputText.isNotBlank()) {
-                                        viewModel.sendMessage(inputText.trim())
+                                    if (hasContent) {
+                                        val media = attachments.map {
+                                            mapOf("mimeType" to it.mimeType, "inlineData" to it.base64)
+                                        }.ifEmpty { null }
+                                        viewModel.sendMessage(
+                                            inputText.trim().ifBlank { " " },
+                                            media = media
+                                        )
                                         inputText = ""
+                                        attachments.clear()
                                     }
                                 },
-                                enabled = inputText.isNotBlank() &&
+                                enabled = hasContent &&
                                         connectionState == ConnectionState.CONNECTED &&
                                         currentConversationId != null,
                                 colors = IconButtonDefaults.filledIconButtonColors(

@@ -1,0 +1,5 @@
+• Theme switching: System / Light / Dark modes
+• Default follows Android system theme
+• Setting persisted across app restarts
+• Voice language selector (8 languages supported)
+• Voice input with phone/headset mic support

@@ -86,12 +86,15 @@ fun stepsToMessages(steps: List<JsonObject>): List<ChatMessage> {
                 val texts = items
                     .mapNotNull { it.asJsonObject.get("text")?.asString?.trim() }
                     .filter { it.isNotEmpty() }
-                if (texts.isNotEmpty()) {
+                val mediaArray = userInput.getAsJsonArray("media")
+                    ?.map { it.asJsonObject }
+                if (texts.isNotEmpty() || !mediaArray.isNullOrEmpty()) {
                     messages.add(ChatMessage(
                         role = "user",
                         content = texts.joinToString("\n\n"),
                         stepIndex = i,
-                        type = type
+                        type = type,
+                        media = mediaArray
                     ))
                 }
             }

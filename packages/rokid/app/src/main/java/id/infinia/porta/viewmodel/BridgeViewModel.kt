@@ -357,14 +357,14 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     // ── Messaging ──
 
-    fun sendMessage(text: String, model: String? = null) {
+    fun sendMessage(text: String, model: String? = null, media: List<Map<String, String>>? = null) {
         val cascadeId = _currentConversationId.value ?: return
         val activeModel = model ?: _selectedModel.value
         val activePlanner = _plannerType.value
         viewModelScope.launch {
             try {
                 _statusMessage.value = "Sending..."
-                portaClient.sendMessage(cascadeId, text, activeModel, activePlanner)
+                portaClient.sendMessage(cascadeId, text, activeModel, activePlanner, media)
                 _statusMessage.value = "Message sent"
             } catch (e: Exception) {
                 _statusMessage.value = "Send failed: ${e.message}"

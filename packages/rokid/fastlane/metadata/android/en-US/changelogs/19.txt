@@ -1,0 +1,4 @@
+• New minimalist app icon — clean geometric P lettermark
+• Unified icon across all launcher shapes (square, round, adaptive)
+• Chat history auto-loads when opening conversations
+• Reliable WebSocket sync with retry fallback

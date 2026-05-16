@@ -1,0 +1,4 @@
+• Voice language selector in Settings (8 languages)
+• Default: Indonesian, supports English, Chinese, Japanese, Korean
+• Language preference saved and persisted across sessions
+• Voice input works with phone mic, Bluetooth, and wired headset

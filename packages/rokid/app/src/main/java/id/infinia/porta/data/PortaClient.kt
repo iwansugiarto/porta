@@ -136,7 +136,8 @@ class PortaClient(
         cascadeId: String,
         text: String,
         model: String? = null,
-        plannerType: String? = null
+        plannerType: String? = null,
+        media: List<Map<String, String>>? = null
     ): JsonObject = withContext(Dispatchers.IO) {
         val url = buildHttpUrl("/api/conversations/$cascadeId/messages")
 
@@ -146,6 +147,9 @@ class PortaClient(
             )))
             model?.let { addProperty("model", it) }
             plannerType?.let { addProperty("plannerType", it) }
+            if (!media.isNullOrEmpty()) {
+                add("media", gson.toJsonTree(media))
+            }
             addProperty("fileAccessGranted", true)
         }
 
