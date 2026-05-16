@@ -45,6 +45,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         val NOTIFY_ENABLED = booleanPreferencesKey("notify_enabled")
         val GLASSES_PROVIDER = stringPreferencesKey("glasses_provider")
         val GLASSES_AUTO_FORWARD = booleanPreferencesKey("glasses_auto_forward")
+        val VOICE_LANGUAGE = stringPreferencesKey("voice_language")
     }
 
     private val dataStore = application.settingsDataStore
@@ -150,6 +151,10 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     private val _isListening = MutableStateFlow(false)
     val isListening: StateFlow<Boolean> = _isListening.asStateFlow()
 
+    /** Voice input language (BCP-47 code). Default: Indonesian. */
+    private val _voiceLanguage = MutableStateFlow("id-ID")
+    val voiceLanguage: StateFlow<String> = _voiceLanguage.asStateFlow()
+
     // ── UI state ──
 
     private val _isLoading = MutableStateFlow(false)
@@ -197,6 +202,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 _notifyVibrate.value = prefs[PrefKeys.NOTIFY_VIBRATE] ?: true
                 _autoForwardToGlasses.value = prefs[PrefKeys.GLASSES_AUTO_FORWARD] ?: false
                 _autoConnect.value = prefs[PrefKeys.AUTO_CONNECT] ?: false
+                _voiceLanguage.value = prefs[PrefKeys.VOICE_LANGUAGE] ?: "id-ID"
                 // Restore glasses provider
                 val savedProvider = prefs[PrefKeys.GLASSES_PROVIDER] ?: "mock"
                 setGlassesProvider(savedProvider, persist = false)
@@ -547,8 +553,27 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     // ── Voice ──
 
-    fun startVoiceInput(language: String = "id-ID") {
-        voiceInput.startListening(language)
+    fun startVoiceInput() {
+        voiceInput.startListening(_voiceLanguage.value)
+    }
+
+    /** Available voice language options. */
+    val voiceLanguageOptions = listOf(
+        "id-ID" to "Indonesia",
+        "en-US" to "English (US)",
+        "en-GB" to "English (UK)",
+        "jv-ID" to "Jawa",
+        "su-ID" to "Sunda",
+        "zh-CN" to "中文 (Mandarin)",
+        "ja-JP" to "日本語",
+        "ko-KR" to "한국어",
+    )
+
+    fun setVoiceLanguage(code: String) {
+        _voiceLanguage.value = code
+        viewModelScope.launch {
+            dataStore.edit { it[PrefKeys.VOICE_LANGUAGE] = code }
+        }
     }
 
     fun stopVoiceInput() {

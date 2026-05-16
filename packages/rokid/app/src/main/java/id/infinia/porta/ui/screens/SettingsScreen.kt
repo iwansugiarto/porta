@@ -256,6 +256,67 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
 
             HorizontalDivider(color = PortaSurfaceVariant)
 
+            // ── Voice Settings ──
+            Text("Voice Input", style = MaterialTheme.typography.titleMedium, color = PortaPrimary)
+
+            val voiceLanguage by viewModel.voiceLanguage.collectAsState()
+            var languageDropdownOpen by remember { mutableStateOf(false) }
+
+            val currentLabel = viewModel.voiceLanguageOptions
+                .firstOrNull { it.first == voiceLanguage }?.second ?: voiceLanguage
+
+            Box {
+                OutlinedButton(
+                    onClick = { languageDropdownOpen = true },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.Mic, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Language: $currentLabel")
+                    Spacer(Modifier.weight(1f))
+                    Icon(Icons.Default.ArrowDropDown, null, modifier = Modifier.size(18.dp))
+                }
+
+                DropdownMenu(
+                    expanded = languageDropdownOpen,
+                    onDismissRequest = { languageDropdownOpen = false }
+                ) {
+                    viewModel.voiceLanguageOptions.forEach { (code, label) ->
+                        DropdownMenuItem(
+                            text = {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(label)
+                                    Text(
+                                        code,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                    )
+                                }
+                            },
+                            onClick = {
+                                viewModel.setVoiceLanguage(code)
+                                languageDropdownOpen = false
+                            },
+                            leadingIcon = {
+                                if (code == voiceLanguage) {
+                                    Icon(
+                                        Icons.Default.Check, null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = PortaSuccess
+                                    )
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(color = PortaSurfaceVariant)
+
             Text("AR Glasses", style = MaterialTheme.typography.titleMedium, color = PortaSecondary)
 
             val glassesState by viewModel.glassesState.collectAsState()
