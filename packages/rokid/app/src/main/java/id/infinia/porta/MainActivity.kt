@@ -34,8 +34,10 @@ class MainActivity : ComponentActivity() {
         requestAudioPermissionIfNeeded()
 
         setContent {
-            PortaRokidTheme(darkTheme = true) {
-                val viewModel: BridgeViewModel = viewModel()
+            val viewModel: BridgeViewModel = viewModel()
+            val themeMode by viewModel.themeMode.collectAsState()
+
+            PortaRokidTheme(themeMode = themeMode) {
                 var screen by remember { mutableStateOf("chat") }
 
                 when (screen) {

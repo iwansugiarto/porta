@@ -65,13 +65,13 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
             TopAppBar(
                 title = { Text("Settings") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = PortaSurface)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Column(
-            Modifier.fillMaxSize().padding(padding).imePadding().background(PortaSurface)
+            Modifier.fillMaxSize().padding(padding).imePadding().background(MaterialTheme.colorScheme.surface)
                 .verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -184,7 +184,7 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
                 )
             }
 
-            HorizontalDivider(color = PortaSurfaceVariant)
+            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
 
             // ── Notification Settings ──
             Text("Notifications", style = MaterialTheme.typography.titleMedium, color = PortaPrimary)
@@ -254,7 +254,46 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
                 }
             }
 
-            HorizontalDivider(color = PortaSurfaceVariant)
+            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+
+            // ── Theme Settings ──
+            Text("Appearance", style = MaterialTheme.typography.titleMedium, color = PortaPrimary)
+
+            val themeMode by viewModel.themeMode.collectAsState()
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                data class ThemeOption(
+                    val mode: id.infinia.porta.ui.theme.ThemeMode,
+                    val label: String,
+                    val icon: androidx.compose.ui.graphics.vector.ImageVector
+                )
+                val options = listOf(
+                    ThemeOption(id.infinia.porta.ui.theme.ThemeMode.SYSTEM, "System", Icons.Default.BrightnessAuto),
+                    ThemeOption(id.infinia.porta.ui.theme.ThemeMode.LIGHT, "Light", Icons.Default.LightMode),
+                    ThemeOption(id.infinia.porta.ui.theme.ThemeMode.DARK, "Dark", Icons.Default.DarkMode),
+                )
+                options.forEach { option ->
+                    FilterChip(
+                        selected = themeMode == option.mode,
+                        onClick = { viewModel.setThemeMode(option.mode) },
+                        label = { Text(option.label) },
+                        leadingIcon = {
+                            Icon(option.icon, null, modifier = Modifier.size(16.dp))
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = PortaPrimary.copy(alpha = 0.15f),
+                            selectedLabelColor = PortaPrimary,
+                            selectedLeadingIconColor = PortaPrimary
+                        )
+                    )
+                }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
 
             // ── Voice Settings ──
             Text("Voice Input", style = MaterialTheme.typography.titleMedium, color = PortaPrimary)
@@ -315,7 +354,7 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
                 }
             }
 
-            HorizontalDivider(color = PortaSurfaceVariant)
+            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
 
             Text("AR Glasses", style = MaterialTheme.typography.titleMedium, color = PortaSecondary)
 
@@ -338,7 +377,7 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
                     }
                 )
             }
-            HorizontalDivider(color = PortaSurfaceVariant)
+            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
 
             // ── About ──
             OutlinedButton(

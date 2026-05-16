@@ -127,7 +127,7 @@ fun ConversationsScreen(
                         Icon(Icons.Default.Add, "New")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = PortaSurface)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
             )
         }
     ) { padding ->
@@ -135,7 +135,7 @@ fun ConversationsScreen(
             Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .background(PortaSurface)
+                .background(MaterialTheme.colorScheme.surface)
         ) {
             if (isLoading && conversations.isEmpty()) {
                 CircularProgressIndicator(

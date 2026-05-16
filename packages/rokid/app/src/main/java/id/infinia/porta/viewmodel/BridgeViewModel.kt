@@ -1,5 +1,7 @@
 package id.infinia.porta.viewmodel
 
+import id.infinia.porta.ui.theme.ThemeMode
+
 import android.app.Application
 import android.content.Context
 import androidx.datastore.core.DataStore
@@ -46,6 +48,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         val GLASSES_PROVIDER = stringPreferencesKey("glasses_provider")
         val GLASSES_AUTO_FORWARD = booleanPreferencesKey("glasses_auto_forward")
         val VOICE_LANGUAGE = stringPreferencesKey("voice_language")
+        val THEME_MODE = stringPreferencesKey("theme_mode")
     }
 
     private val dataStore = application.settingsDataStore
@@ -74,6 +77,10 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _autoForwardToGlasses = MutableStateFlow(false)
     val autoForwardToGlasses: StateFlow<Boolean> = _autoForwardToGlasses.asStateFlow()
+
+    /** App theme: SYSTEM, LIGHT, or DARK. */
+    private val _themeMode = MutableStateFlow(ThemeMode.SYSTEM)
+    val themeMode: StateFlow<ThemeMode> = _themeMode.asStateFlow()
 
     /** Whether to auto-read responses aloud. */
     private val _ttsEnabled = MutableStateFlow(false)
@@ -203,6 +210,9 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 _autoForwardToGlasses.value = prefs[PrefKeys.GLASSES_AUTO_FORWARD] ?: false
                 _autoConnect.value = prefs[PrefKeys.AUTO_CONNECT] ?: false
                 _voiceLanguage.value = prefs[PrefKeys.VOICE_LANGUAGE] ?: "id-ID"
+                _themeMode.value = try {
+                    ThemeMode.valueOf(prefs[PrefKeys.THEME_MODE] ?: "SYSTEM")
+                } catch (_: Exception) { ThemeMode.SYSTEM }
                 // Restore glasses provider
                 val savedProvider = prefs[PrefKeys.GLASSES_PROVIDER] ?: "mock"
                 setGlassesProvider(savedProvider, persist = false)
@@ -573,6 +583,13 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         _voiceLanguage.value = code
         viewModelScope.launch {
             dataStore.edit { it[PrefKeys.VOICE_LANGUAGE] = code }
+        }
+    }
+
+    fun setThemeMode(mode: ThemeMode) {
+        _themeMode.value = mode
+        viewModelScope.launch {
+            dataStore.edit { it[PrefKeys.THEME_MODE] = mode.name }
         }
     }
 

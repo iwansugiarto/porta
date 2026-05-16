@@ -207,14 +207,14 @@ fun ChatScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = PortaSurface
+                    containerColor = MaterialTheme.colorScheme.surface
                 )
             )
         },
         bottomBar = {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = PortaSurfaceVariant,
+                color = MaterialTheme.colorScheme.surfaceVariant,
                 tonalElevation = 8.dp
             ) {
                 Column {
@@ -388,7 +388,7 @@ fun ChatScreen(
                             enabled = connectionState == ConnectionState.CONNECTED &&
                                     currentConversationId != null,
                             colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = if (isListening) PortaError else PortaSurfaceVariant
+                                containerColor = if (isListening) PortaError else MaterialTheme.colorScheme.surfaceVariant
                             )
                         ) {
                             Icon(
@@ -417,8 +417,8 @@ fun ChatScreen(
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = PortaPrimary,
                                 unfocusedBorderColor = Color.Transparent,
-                                focusedContainerColor = PortaSurface,
-                                unfocusedContainerColor = PortaSurface,
+                                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
                             )
                         )
 
@@ -459,7 +459,7 @@ fun ChatScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .background(PortaSurface)
+                .background(MaterialTheme.colorScheme.surface)
         ) {
             // ── Conversation switcher bar ──
             if (connectionState == ConnectionState.CONNECTED && conversations.isNotEmpty()) {
