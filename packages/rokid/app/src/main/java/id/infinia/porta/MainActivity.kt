@@ -3,6 +3,9 @@ package id.infinia.porta
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ShortcutInfo
+import android.content.pm.ShortcutManager
+import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -45,14 +48,29 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         requestNotificationPermissionIfNeeded()
         requestAudioPermissionIfNeeded()
+        setupAppShortcuts()
 
         // Handle share intent on cold start
         handleShareIntent(intent)
+
+        // Handle shortcut action
+        val shortcutAction = intent?.getStringExtra("shortcut_action")
 
         setContent {
             val viewModel: BridgeViewModel = viewModel()
             val themeMode by viewModel.themeMode.collectAsState()
             val sharedContent by _sharedContent
+
+            // Handle shortcut: auto-create new conversation
+            LaunchedEffect(shortcutAction) {
+                when (shortcutAction) {
+                    "new_conversation" -> viewModel.createNewConversation()
+                    "voice_mode" -> {
+                        viewModel.createNewConversation()
+                        viewModel.startVoiceInput()
+                    }
+                }
+            }
 
             PortaRokidTheme(themeMode = themeMode) {
                 var screen by remember { mutableStateOf("chat") }
@@ -156,5 +174,41 @@ class MainActivity : ComponentActivity() {
         ) {
             audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
+    }
+
+    /**
+     * Register dynamic app shortcuts — visible on long-press of the app icon.
+     * Available on Android 7.1+ (API 25+).
+     */
+    private fun setupAppShortcuts() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N_MR1) return
+
+        val shortcutManager = getSystemService(ShortcutManager::class.java) ?: return
+
+        val newConvo = ShortcutInfo.Builder(this, "new_conversation")
+            .setShortLabel("New Chat")
+            .setLongLabel("Start a new conversation")
+            .setIcon(Icon.createWithResource(this, android.R.drawable.ic_menu_add))
+            .setIntent(
+                Intent(this, MainActivity::class.java).apply {
+                    action = Intent.ACTION_VIEW
+                    putExtra("shortcut_action", "new_conversation")
+                }
+            )
+            .build()
+
+        val voiceMode = ShortcutInfo.Builder(this, "voice_mode")
+            .setShortLabel("Voice Chat")
+            .setLongLabel("Start voice conversation")
+            .setIcon(Icon.createWithResource(this, android.R.drawable.ic_btn_speak_now))
+            .setIntent(
+                Intent(this, MainActivity::class.java).apply {
+                    action = Intent.ACTION_VIEW
+                    putExtra("shortcut_action", "voice_mode")
+                }
+            )
+            .build()
+
+        shortcutManager.dynamicShortcuts = listOf(newConvo, voiceMode)
     }
 }

@@ -1,5 +1,6 @@
 package id.infinia.porta.ui.screens
 
+import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -21,6 +22,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.gson.JsonObject
+import id.infinia.porta.ui.components.ConversationListSkeleton
 import id.infinia.porta.ui.theme.*
 import id.infinia.porta.viewmodel.BridgeViewModel
 
@@ -111,6 +113,24 @@ fun ConversationsScreen(
     // Delete confirmation dialog
     var deleteTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
 
+    // Search state
+    var searchQuery by remember { mutableStateOf("") }
+    var searchVisible by remember { mutableStateOf(false) }
+
+    // Filtered groups based on search
+    val filteredGroups = remember(groups, searchQuery) {
+        if (searchQuery.isBlank()) groups
+        else groups.mapNotNull { group ->
+            val filtered = group.conversations.filter { (_, summary) ->
+                val title = summary.get("summary")?.asString ?: ""
+                title.contains(searchQuery, ignoreCase = true) ||
+                    group.name.contains(searchQuery, ignoreCase = true)
+            }
+            if (filtered.isEmpty()) null
+            else group.copy(conversations = filtered)
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -121,6 +141,15 @@ fun ConversationsScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = {
+                        searchVisible = !searchVisible
+                        if (!searchVisible) searchQuery = ""
+                    }) {
+                        Icon(
+                            if (searchVisible) Icons.Default.SearchOff else Icons.Default.Search,
+                            "Search"
+                        )
+                    }
                     IconButton(onClick = { viewModel.loadConversations() }) {
                         Icon(Icons.Default.Refresh, "Refresh")
                     }
@@ -132,17 +161,61 @@ fun ConversationsScreen(
             )
         }
     ) { padding ->
-        Box(
+        Column(
             Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .background(MaterialTheme.colorScheme.surface)
         ) {
-            if (isLoading && conversations.isEmpty()) {
-                CircularProgressIndicator(
-                    Modifier.align(Alignment.Center),
-                    color = PortaPrimary
+            // Search bar
+            AnimatedVisibility(
+                visible = searchVisible,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Search conversations…", fontSize = 14.sp) },
+                    leadingIcon = { Icon(Icons.Default.Search, null, Modifier.size(18.dp)) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Default.Close, "Clear", Modifier.size(18.dp))
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = PortaPrimary,
+                        cursorColor = PortaPrimary
+                    )
                 )
+            }
+
+            Box(Modifier.fillMaxSize()) {
+            if (isLoading && conversations.isEmpty()) {
+                ConversationListSkeleton(Modifier.fillMaxSize())
+            } else if (filteredGroups.isEmpty() && searchQuery.isNotBlank()) {
+                Column(
+                    Modifier.align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        Icons.Default.SearchOff, null,
+                        modifier = Modifier.size(48.dp),
+                        tint = PortaPrimary.copy(alpha = 0.3f)
+                    )
+                    Text(
+                        "No matches for \"$searchQuery\"",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    )
+                }
             } else if (groups.isEmpty()) {
                 Column(
                     Modifier.align(Alignment.Center),
@@ -176,7 +249,7 @@ fun ConversationsScreen(
                     contentPadding = PaddingValues(12.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    groups.forEach { group ->
+                    filteredGroups.forEach { group ->
                         // Workspace header
                         item(key = "header-${group.name}") {
                             Row(
@@ -321,7 +394,8 @@ fun ConversationsScreen(
                 }
                 } // PullToRefreshBox
             }
-        }
+            } // Box
+        } // Column
     }
 
     // Delete confirmation dialog
