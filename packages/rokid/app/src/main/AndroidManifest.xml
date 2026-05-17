@@ -83,6 +83,19 @@
             android:name=".service.QuickReplyReceiver"
             android:exported="false" />
 
+        <!-- Home screen widget -->
+        <receiver
+            android:name=".widget.PortaWidgetReceiver"
+            android:exported="true"
+            android:label="Porta Status">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/porta_widget_info" />
+        </receiver>
+
     </application>
 
 </manifest>

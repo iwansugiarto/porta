@@ -95,6 +95,13 @@ dependencies {
     implementation(libs.richtext.commonmark)
     implementation(libs.richtext.ui.material3)
 
+    // WorkManager (background polling)
+    implementation(libs.androidx.work.runtime)
+
+    // Glance (home screen widget)
+    implementation(libs.androidx.glance)
+    implementation(libs.androidx.glance.material3)
+
     // Debug
     debugImplementation(libs.androidx.ui.tooling)
 }

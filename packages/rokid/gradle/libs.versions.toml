@@ -11,6 +11,8 @@ gson = "2.11.0"
 datastore = "1.1.1"
 coroutines = "1.9.0"
 richtext = "1.0.0-alpha01"
+workManager = "2.10.0"
+glance = "1.1.1"
 
 [libraries]
 # Core Android
@@ -42,6 +44,13 @@ kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 # Markdown
 richtext-commonmark = { group = "com.halilibo.compose-richtext", name = "richtext-commonmark", version.ref = "richtext" }
 richtext-ui-material3 = { group = "com.halilibo.compose-richtext", name = "richtext-ui-material3", version.ref = "richtext" }
+
+# WorkManager
+androidx-work-runtime = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "workManager" }
+
+# Glance (App Widgets)
+androidx-glance = { group = "androidx.glance", name = "glance-appwidget", version.ref = "glance" }
+androidx-glance-material3 = { group = "androidx.glance", name = "glance-material3", version.ref = "glance" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

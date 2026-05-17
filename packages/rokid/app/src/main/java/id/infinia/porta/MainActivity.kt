@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
         requestNotificationPermissionIfNeeded()
         requestAudioPermissionIfNeeded()
         setupAppShortcuts()
+        id.infinia.porta.service.ConversationPollWorker.enqueue(this)
 
         // Handle share intent on cold start
         handleShareIntent(intent)
