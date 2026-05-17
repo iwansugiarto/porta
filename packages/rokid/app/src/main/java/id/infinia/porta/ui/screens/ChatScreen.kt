@@ -324,6 +324,7 @@ fun ChatScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
                                 .padding(horizontal = 12.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -497,8 +498,7 @@ fun ChatScreen(
                             }
                         }
                     }
-
-                    // Input row — compact layout
+                    // Input row — clean single-row layout
                     Row(
                         modifier = Modifier
                             .padding(horizontal = 8.dp, vertical = 6.dp)
@@ -506,57 +506,49 @@ fun ChatScreen(
                         verticalAlignment = Alignment.Bottom,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        // Action buttons column (mic, attach, camera) — compact vertical stack
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(2.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            // Mic button
+                        // Media attach button (+) with popup menu
+                        var attachMenuOpen by remember { mutableStateOf(false) }
+                        Box {
                             IconButton(
-                                onClick = {
-                                    if (isListening) viewModel.stopVoiceInput()
-                                    else viewModel.startVoiceInput()
-                                },
+                                onClick = { attachMenuOpen = true },
                                 enabled = connectionState == ConnectionState.CONNECTED &&
                                         currentConversationId != null,
-                                modifier = Modifier.size(36.dp)
+                                modifier = Modifier.size(40.dp)
                             ) {
-                                Icon(
-                                    if (isListening) Icons.Default.MicOff else Icons.Default.Mic,
-                                    if (isListening) "Stop" else "Voice",
-                                    tint = if (isListening) PortaError
-                                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                                    modifier = Modifier.size(20.dp)
-                                )
+                                BadgedBox(
+                                    badge = {
+                                        if (attachments.isNotEmpty()) {
+                                            Badge { Text("${attachments.size}") }
+                                        }
+                                    }
+                                ) {
+                                    Icon(
+                                        Icons.Default.AddCircleOutline, "Attach",
+                                        tint = if (attachments.isNotEmpty()) PortaTertiary
+                                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
                             }
 
-                            Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
-                                // Attach button
-                                IconButton(
-                                    onClick = { imagePickerLauncher.launch("image/*") },
-                                    enabled = connectionState == ConnectionState.CONNECTED &&
-                                            currentConversationId != null,
-                                    modifier = Modifier.size(36.dp)
-                                ) {
-                                    BadgedBox(
-                                        badge = {
-                                            if (attachments.isNotEmpty()) {
-                                                Badge { Text("${attachments.size}") }
-                                            }
-                                        }
-                                    ) {
-                                        Icon(
-                                            Icons.Default.AttachFile, "Attach",
-                                            tint = if (attachments.isNotEmpty()) PortaTertiary
-                                                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                }
-
-                                // Camera button
-                                IconButton(
+                            DropdownMenu(
+                                expanded = attachMenuOpen,
+                                onDismissRequest = { attachMenuOpen = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Gallery", fontSize = 14.sp) },
                                     onClick = {
+                                        attachMenuOpen = false
+                                        imagePickerLauncher.launch("image/*")
+                                    },
+                                    leadingIcon = {
+                                        Icon(Icons.Default.Image, null, modifier = Modifier.size(20.dp))
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Camera", fontSize = 14.sp) },
+                                    onClick = {
+                                        attachMenuOpen = false
                                         val photoFile = File.createTempFile(
                                             "porta_", ".jpg",
                                             context.cacheDir
@@ -569,17 +561,30 @@ fun ChatScreen(
                                         cameraUri = uri
                                         cameraLauncher.launch(uri)
                                     },
-                                    enabled = connectionState == ConnectionState.CONNECTED &&
-                                            currentConversationId != null,
-                                    modifier = Modifier.size(36.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.CameraAlt, "Camera",
-                                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
+                                    leadingIcon = {
+                                        Icon(Icons.Default.CameraAlt, null, modifier = Modifier.size(20.dp))
+                                    }
+                                )
                             }
+                        }
+
+                        // Mic button
+                        IconButton(
+                            onClick = {
+                                if (isListening) viewModel.stopVoiceInput()
+                                else viewModel.startVoiceInput()
+                            },
+                            enabled = connectionState == ConnectionState.CONNECTED &&
+                                    currentConversationId != null,
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Icon(
+                                if (isListening) Icons.Default.MicOff else Icons.Default.Mic,
+                                if (isListening) "Stop" else "Voice",
+                                tint = if (isListening) PortaError
+                                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                modifier = Modifier.size(22.dp)
+                            )
                         }
 
                         // Text field — takes maximum available width
