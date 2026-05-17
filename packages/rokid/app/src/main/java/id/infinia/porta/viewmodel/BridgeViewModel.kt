@@ -10,7 +10,9 @@ import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.JsonObject
+import id.infinia.porta.data.OfflineMessageQueue
 import id.infinia.porta.data.PortaClient
+import id.infinia.porta.data.ServerProfileManager
 import id.infinia.porta.service.NotificationService
 import id.infinia.porta.service.glasses.*
 import id.infinia.porta.service.voice.TextToSpeechService
@@ -56,6 +58,12 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     private val dataStore = application.settingsDataStore
 
     val portaClient = PortaClient(viewModelScope)
+
+    // ── Offline queue ──
+    val offlineQueue = OfflineMessageQueue(application)
+
+    // ── Server profiles ──
+    val serverProfiles = ServerProfileManager(application)
 
     // ── Notification service ──
 
@@ -252,7 +260,11 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 _statusMessage.value = when (state) {
                     ConnectionState.DISCONNECTED -> "Not connected"
                     ConnectionState.CONNECTING -> "Connecting..."
-                    ConnectionState.CONNECTED -> "Connected"
+                    ConnectionState.CONNECTED -> {
+                        // Drain offline queue on reconnect
+                        drainOfflineQueue()
+                        "Connected"
+                    }
                     ConnectionState.RECONNECTING -> "Reconnecting..."
                     ConnectionState.ERROR -> "Connection error"
                 }
@@ -301,6 +313,18 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ── Connection ──
+
+    /**
+     * Switch to a saved server profile.
+     * Disconnects current session, updates config, and reconnects.
+     */
+    fun switchToProfile(profileId: String) {
+        val profile = serverProfiles.profiles.value.find { it.id == profileId } ?: return
+        disconnect()
+        serverProfiles.setActive(profileId)
+        updateConfig(profile.host, profile.port, profile.authToken, profile.useTls)
+        connect()
+    }
 
     fun connect() {
         portaClient.configure(_host.value, _port.value, _authToken.value, _useTls.value)
@@ -361,13 +385,65 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         val cascadeId = _currentConversationId.value ?: return
         val activeModel = model ?: _selectedModel.value
         val activePlanner = _plannerType.value
+
+        // If disconnected, queue for later
+        if (connectionState.value != ConnectionState.CONNECTED) {
+            viewModelScope.launch {
+                offlineQueue.enqueue(
+                    OfflineMessageQueue.PendingMessage(
+                        cascadeId = cascadeId,
+                        text = text,
+                        model = activeModel,
+                        planner = activePlanner,
+                        media = media
+                    )
+                )
+                _statusMessage.value = "Queued offline (${offlineQueue.size} pending)"
+            }
+            return
+        }
+
         viewModelScope.launch {
             try {
                 _statusMessage.value = "Sending..."
                 portaClient.sendMessage(cascadeId, text, activeModel, activePlanner, media)
                 _statusMessage.value = "Message sent"
             } catch (e: Exception) {
-                _statusMessage.value = "Send failed: ${e.message}"
+                // Queue on send failure too
+                offlineQueue.enqueue(
+                    OfflineMessageQueue.PendingMessage(
+                        cascadeId = cascadeId,
+                        text = text,
+                        model = activeModel,
+                        planner = activePlanner,
+                        media = media
+                    )
+                )
+                _statusMessage.value = "Queued (send failed): ${e.message}"
+            }
+        }
+    }
+
+    // ── Offline queue drain ──
+
+    private fun drainOfflineQueue() {
+        if (offlineQueue.size == 0) return
+        viewModelScope.launch {
+            val pending = offlineQueue.drainAll()
+            _statusMessage.value = "Sending ${pending.size} queued message(s)..."
+            for (msg in pending) {
+                try {
+                    portaClient.sendMessage(
+                        msg.cascadeId, msg.text, msg.model, msg.planner, msg.media
+                    )
+                    offlineQueue.dequeue(msg.id)
+                } catch (e: Exception) {
+                    _statusMessage.value = "Queue drain failed: ${e.message}"
+                    break // Stop draining on first failure; will retry on next reconnect
+                }
+            }
+            if (offlineQueue.size == 0) {
+                _statusMessage.value = "Connected — all queued messages sent"
             }
         }
     }
