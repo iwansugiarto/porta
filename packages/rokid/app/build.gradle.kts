@@ -102,6 +102,10 @@ dependencies {
     implementation(libs.androidx.glance)
     implementation(libs.androidx.glance.material3)
 
+    // Car App (Android Auto)
+    implementation(libs.androidx.car.app)
+    implementation(libs.androidx.car.app.projected)
+
     // Debug
     debugImplementation(libs.androidx.ui.tooling)
 }

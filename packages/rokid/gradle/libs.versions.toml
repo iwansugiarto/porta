@@ -13,6 +13,7 @@ coroutines = "1.9.0"
 richtext = "1.0.0-alpha01"
 workManager = "2.10.0"
 glance = "1.1.1"
+carApp = "1.7.0"
 
 [libraries]
 # Core Android
@@ -51,6 +52,10 @@ androidx-work-runtime = { group = "androidx.work", name = "work-runtime-ktx", ve
 # Glance (App Widgets)
 androidx-glance = { group = "androidx.glance", name = "glance-appwidget", version.ref = "glance" }
 androidx-glance-material3 = { group = "androidx.glance", name = "glance-material3", version.ref = "glance" }
+
+# Car App (Android Auto)
+androidx-car-app = { group = "androidx.car.app", name = "app", version.ref = "carApp" }
+androidx-car-app-projected = { group = "androidx.car.app", name = "app-projected", version.ref = "carApp" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
