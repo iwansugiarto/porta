@@ -503,7 +503,7 @@ fun ChatScreen(
                         modifier = Modifier
                             .padding(horizontal = 8.dp, vertical = 6.dp)
                             .fillMaxWidth(),
-                        verticalAlignment = Alignment.Bottom,
+                        verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         // Media attach button (+) with popup menu
