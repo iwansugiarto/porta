@@ -1,7 +1,9 @@
 package id.infinia.porta
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -15,6 +17,14 @@ import id.infinia.porta.ui.screens.*
 import id.infinia.porta.ui.theme.PortaRokidTheme
 import id.infinia.porta.viewmodel.BridgeViewModel
 
+/**
+ * Shared content from external apps (via Android share sheet).
+ */
+data class SharedContent(
+    val text: String? = null,
+    val imageUris: List<Uri> = emptyList()
+)
+
 class MainActivity : ComponentActivity() {
 
     // Runtime permission request for Android 13+ notification permission
@@ -27,15 +37,22 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { /* granted or denied — VoiceInputService checks availability */ }
 
+    /** Shared content state — consumed by ChatScreen */
+    private val _sharedContent = mutableStateOf<SharedContent?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         requestNotificationPermissionIfNeeded()
         requestAudioPermissionIfNeeded()
 
+        // Handle share intent on cold start
+        handleShareIntent(intent)
+
         setContent {
             val viewModel: BridgeViewModel = viewModel()
             val themeMode by viewModel.themeMode.collectAsState()
+            val sharedContent by _sharedContent
 
             PortaRokidTheme(themeMode = themeMode) {
                 var screen by remember { mutableStateOf("chat") }
@@ -44,7 +61,9 @@ class MainActivity : ComponentActivity() {
                     "chat" -> ChatScreen(
                         viewModel = viewModel,
                         onNavigateToSettings = { screen = "settings" },
-                        onNavigateToConversations = { screen = "conversations" }
+                        onNavigateToConversations = { screen = "conversations" },
+                        sharedContent = sharedContent,
+                        onSharedContentConsumed = { _sharedContent.value = null }
                     )
                     "settings" -> SettingsScreen(
                         viewModel = viewModel,
@@ -68,6 +87,44 @@ class MainActivity : ComponentActivity() {
                         viewModel = viewModel,
                         onBack = { screen = "settings" }
                     )
+                }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleShareIntent(intent)
+    }
+
+    /**
+     * Parse ACTION_SEND / ACTION_SEND_MULTIPLE intents and expose
+     * the shared content for ChatScreen to consume.
+     */
+    private fun handleShareIntent(intent: Intent?) {
+        if (intent == null) return
+
+        when (intent.action) {
+            Intent.ACTION_SEND -> {
+                val type = intent.type ?: return
+                if (type.startsWith("text/")) {
+                    val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+                    if (!text.isNullOrBlank()) {
+                        _sharedContent.value = SharedContent(text = text)
+                    }
+                } else if (type.startsWith("image/")) {
+                    @Suppress("DEPRECATION")
+                    val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                    if (uri != null) {
+                        _sharedContent.value = SharedContent(imageUris = listOf(uri))
+                    }
+                }
+            }
+            Intent.ACTION_SEND_MULTIPLE -> {
+                @Suppress("DEPRECATION")
+                val uris = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+                if (!uris.isNullOrEmpty()) {
+                    _sharedContent.value = SharedContent(imageUris = uris)
                 }
             }
         }

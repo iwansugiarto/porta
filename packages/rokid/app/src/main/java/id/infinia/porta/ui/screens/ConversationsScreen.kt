@@ -224,73 +224,95 @@ fun ConversationsScreen(
                             val isRunning = summary.get("status")?.asString == "CASCADE_RUN_STATUS_RUNNING"
                             val isActive = id == currentId
 
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(10.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = when {
-                                        isActive -> PortaPrimary.copy(alpha = 0.12f)
-                                        else -> MaterialTheme.colorScheme.surfaceVariant
+                            val dismissState = rememberSwipeToDismissBoxState(
+                                confirmValueChange = { value ->
+                                    if (value == SwipeToDismissBoxValue.EndToStart) {
+                                        deleteTarget = id to title
                                     }
-                                )
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .clickable { onSelectConversation(id) }
-                                        .padding(12.dp)
-                                        .fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    // Status indicator
-                                    if (isRunning) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(16.dp),
-                                            strokeWidth = 2.dp,
-                                            color = PortaTertiary
-                                        )
-                                    } else {
-                                        Icon(
-                                            Icons.Default.ChatBubbleOutline, null,
-                                            modifier = Modifier.size(16.dp),
-                                            tint = if (isActive) PortaPrimary
-                                            else PortaPrimary.copy(alpha = 0.3f)
-                                        )
-                                    }
-                                    Spacer(Modifier.width(10.dp))
-                                    Column(Modifier.weight(1f)) {
-                                        Text(
-                                            title,
-                                            fontWeight = FontWeight.Medium,
-                                            fontSize = 13.sp,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Row(
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Text(
-                                                relativeTime(lastModified),
-                                                fontSize = 11.sp,
-                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                    false // Don't auto-dismiss; let the dialog handle it
+                                }
+                            )
+
+                            SwipeToDismissBox(
+                                state = dismissState,
+                                backgroundContent = {
+                                    Box(
+                                        Modifier
+                                            .fillMaxSize()
+                                            .background(
+                                                MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
+                                                RoundedCornerShape(10.dp)
                                             )
-                                            Text(
-                                                "· $stepCount steps",
-                                                fontSize = 11.sp,
-                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                                            )
-                                        }
-                                    }
-                                    // Delete button
-                                    IconButton(
-                                        onClick = { deleteTarget = id to title },
-                                        modifier = Modifier.size(32.dp)
+                                            .padding(end = 20.dp),
+                                        contentAlignment = Alignment.CenterEnd
                                     ) {
                                         Icon(
-                                            Icons.Default.Delete, "Delete",
-                                            modifier = Modifier.size(16.dp),
-                                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                                            Icons.Default.Delete,
+                                            "Delete",
+                                            tint = MaterialTheme.colorScheme.error
                                         )
+                                    }
+                                },
+                                enableDismissFromStartToEnd = false,
+                                enableDismissFromEndToStart = true
+                            ) {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = when {
+                                            isActive -> PortaPrimary.copy(alpha = 0.12f)
+                                            else -> MaterialTheme.colorScheme.surfaceVariant
+                                        }
+                                    )
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .clickable { onSelectConversation(id) }
+                                            .padding(12.dp)
+                                            .fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        // Status indicator
+                                        if (isRunning) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(16.dp),
+                                                strokeWidth = 2.dp,
+                                                color = PortaTertiary
+                                            )
+                                        } else {
+                                            Icon(
+                                                Icons.Default.ChatBubbleOutline, null,
+                                                modifier = Modifier.size(16.dp),
+                                                tint = if (isActive) PortaPrimary
+                                                else PortaPrimary.copy(alpha = 0.3f)
+                                            )
+                                        }
+                                        Spacer(Modifier.width(10.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(
+                                                title,
+                                                fontWeight = FontWeight.Medium,
+                                                fontSize = 13.sp,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Text(
+                                                    relativeTime(lastModified),
+                                                    fontSize = 11.sp,
+                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                                )
+                                                Text(
+                                                    "· $stepCount steps",
+                                                    fontSize = 11.sp,
+                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }

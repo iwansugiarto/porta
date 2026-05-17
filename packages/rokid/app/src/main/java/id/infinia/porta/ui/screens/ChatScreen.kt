@@ -36,12 +36,15 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
+import id.infinia.porta.SharedContent
 import id.infinia.porta.shared.protocol.*
 import id.infinia.porta.ui.components.ConversationSwitcherBar
 import id.infinia.porta.ui.components.MessageBubble
 import id.infinia.porta.ui.theme.*
 import id.infinia.porta.viewmodel.BridgeViewModel
 import java.io.ByteArrayOutputStream
+import java.io.File
 
 /**
  * Main chat screen — full UX parity with the Porta PWA.
@@ -60,7 +63,9 @@ import java.io.ByteArrayOutputStream
 fun ChatScreen(
     viewModel: BridgeViewModel,
     onNavigateToSettings: () -> Unit,
-    onNavigateToConversations: () -> Unit
+    onNavigateToConversations: () -> Unit,
+    sharedContent: SharedContent? = null,
+    onSharedContentConsumed: () -> Unit = {}
 ) {
     val connectionState by viewModel.connectionState.collectAsState()
     val agentRunning by viewModel.agentRunning.collectAsState()
@@ -115,28 +120,49 @@ fun ChatScreen(
     val attachments = remember { mutableStateListOf<Attachment>() }
     val context = LocalContext.current
 
+    // Helper to add a URI as an attachment
+    fun addUriAsAttachment(uri: Uri) {
+        try {
+            val resolver = context.contentResolver
+            val mime = resolver.getType(uri) ?: "image/png"
+            val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: return
+
+            val finalBytes = if (mime.startsWith("image/") && bytes.size > 1_000_000) {
+                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return
+                val bos = ByteArrayOutputStream()
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, bos)
+                bitmap.recycle()
+                bos.toByteArray()
+            } else bytes
+
+            val b64 = Base64.encodeToString(finalBytes, Base64.NO_WRAP)
+            val name = uri.lastPathSegment?.substringAfterLast('/') ?: "file"
+            attachments.add(Attachment(uri, mime, b64, name))
+        } catch (_: Exception) { /* skip failed reads */ }
+    }
+
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetMultipleContents()
     ) { uris: List<Uri> ->
-        for (uri in uris) {
-            try {
-                val resolver = context.contentResolver
-                val mime = resolver.getType(uri) ?: "image/png"
-                val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: continue
+        uris.forEach { addUriAsAttachment(it) }
+    }
 
-                // Compress images > 1MB to keep payload reasonable
-                val finalBytes = if (mime.startsWith("image/") && bytes.size > 1_000_000) {
-                    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: continue
-                    val bos = ByteArrayOutputStream()
-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, bos)
-                    bitmap.recycle()
-                    bos.toByteArray()
-                } else bytes
+    // Camera capture
+    var cameraUri by remember { mutableStateOf<Uri?>(null) }
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success) {
+            cameraUri?.let { addUriAsAttachment(it) }
+        }
+    }
 
-                val b64 = Base64.encodeToString(finalBytes, Base64.NO_WRAP)
-                val name = uri.lastPathSegment?.substringAfterLast('/') ?: "file"
-                attachments.add(Attachment(uri, mime, b64, name))
-            } catch (_: Exception) { /* skip failed reads */ }
+    // Handle shared content from external apps
+    LaunchedEffect(sharedContent) {
+        if (sharedContent != null) {
+            sharedContent.text?.let { inputText = it }
+            sharedContent.imageUris.forEach { addUriAsAttachment(it) }
+            onSharedContentConsumed()
         }
     }
 
@@ -506,7 +532,8 @@ fun ChatScreen(
                             colors = IconButtonDefaults.filledIconButtonColors(
                                 containerColor = if (attachments.isNotEmpty()) PortaTertiary.copy(alpha = 0.2f)
                                     else MaterialTheme.colorScheme.surfaceVariant
-                            )
+                            ),
+                            modifier = Modifier.size(40.dp)
                         ) {
                             BadgedBox(
                                 badge = {
@@ -515,8 +542,33 @@ fun ChatScreen(
                                     }
                                 }
                             ) {
-                                Icon(Icons.Default.AttachFile, "Attach")
+                                Icon(Icons.Default.AttachFile, "Attach", modifier = Modifier.size(20.dp))
                             }
+                        }
+
+                        // Camera button
+                        FilledIconButton(
+                            onClick = {
+                                val photoFile = File.createTempFile(
+                                    "porta_", ".jpg",
+                                    context.cacheDir
+                                )
+                                val uri = FileProvider.getUriForFile(
+                                    context,
+                                    "${context.packageName}.provider",
+                                    photoFile
+                                )
+                                cameraUri = uri
+                                cameraLauncher.launch(uri)
+                            },
+                            enabled = connectionState == ConnectionState.CONNECTED &&
+                                    currentConversationId != null,
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            ),
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Icon(Icons.Default.CameraAlt, "Camera", modifier = Modifier.size(20.dp))
                         }
 
                         OutlinedTextField(
