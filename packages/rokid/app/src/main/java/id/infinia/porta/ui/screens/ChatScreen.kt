@@ -5,6 +5,7 @@ import android.net.Uri
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -752,16 +753,32 @@ fun ChatScreen(
                         item {
                             Row(
                                 modifier = Modifier.padding(8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
+                                val infiniteTransition = rememberInfiniteTransition(label = "dots")
                                 repeat(3) { i ->
+                                    val offsetY by infiniteTransition.animateFloat(
+                                        initialValue = 0f,
+                                        targetValue = -6f,
+                                        animationSpec = infiniteRepeatable(
+                                            animation = keyframes {
+                                                durationMillis = 800
+                                                0f at 0
+                                                -6f at 200
+                                                0f at 400
+                                                0f at 800
+                                            },
+                                            initialStartOffset = StartOffset(i * 150)
+                                        ),
+                                        label = "dot$i"
+                                    )
                                     Box(
                                         modifier = Modifier
+                                            .offset(y = offsetY.dp)
                                             .size(8.dp)
                                             .clip(CircleShape)
-                                            .background(
-                                                PortaPrimary.copy(alpha = 0.3f + (i * 0.2f))
-                                            )
+                                            .background(PortaPrimary.copy(alpha = 0.6f))
                                     )
                                 }
                             }
