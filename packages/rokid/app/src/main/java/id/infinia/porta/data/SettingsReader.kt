@@ -1,22 +1,21 @@
 package id.infinia.porta.data
 
 import android.content.Context
-import androidx.datastore.preferences.core.*
-import kotlinx.coroutines.flow.first
+import com.google.gson.Gson
+import com.google.gson.JsonObject
 import java.io.File
 
 /**
- * Safe, read-only accessor for the main app's DataStore settings.
+ * Safe, read-only accessor for shared settings.
  *
- * Background components (widget, poll worker, Android Auto) must NOT
- * create their own DataStore instance — the DataStore contract requires
- * a strict singleton per file. This utility reads the protobuf file
- * directly to avoid the singleton conflict.
- *
- * For write operations, use the main app's `settingsDataStore` delegate
- * only from the ViewModel.
+ * Background components (widget, poll worker, Android Auto) read from
+ * a simple JSON file that the main ViewModel writes on every settings change.
+ * This avoids DataStore singleton conflicts entirely.
  */
 object SettingsReader {
+
+    private const val SETTINGS_FILE = "porta_shared_settings.json"
+    private val gson = Gson()
 
     data class ConnectionConfig(
         val host: String,
@@ -26,22 +25,16 @@ object SettingsReader {
     )
 
     /**
-     * Read connection config directly from the DataStore protobuf file.
+     * Read connection config from the shared JSON settings file.
      * Returns null if not configured or on any error.
      */
     fun readConnectionConfig(context: Context): ConnectionConfig? {
         return try {
-            val file = File(context.filesDir, "datastore/porta_settings.preferences_pb")
-            if (!file.exists() || file.length() == 0L) return null
-
-            // Read the protobuf bytes and decode preferences
-            val bytes = file.readBytes()
-            val prefs = decodePreferences(bytes)
-
-            val host = prefs["host"] ?: return null
-            val port = prefs["port"]?.toIntOrNull() ?: 3170
-            val token = prefs["auth_token"]
-            val useTls = prefs["use_tls"]?.toBooleanStrictOrNull() ?: false
+            val json = readJson(context) ?: return null
+            val host = json.get("host")?.asString ?: return null
+            val port = json.get("port")?.asInt ?: 3170
+            val token = json.get("auth_token")?.asString
+            val useTls = json.get("use_tls")?.asBoolean ?: false
 
             ConnectionConfig(host, port, token, useTls)
         } catch (_: Exception) {
@@ -54,170 +47,44 @@ object SettingsReader {
      */
     fun readBoolean(context: Context, key: String, default: Boolean = false): Boolean {
         return try {
-            val file = File(context.filesDir, "datastore/porta_settings.preferences_pb")
-            if (!file.exists()) return default
-            val prefs = decodePreferences(file.readBytes())
-            prefs[key]?.toBooleanStrictOrNull() ?: default
+            val json = readJson(context) ?: return default
+            if (json.has(key)) json.get(key).asBoolean else default
         } catch (_: Exception) {
             default
         }
     }
 
     /**
-     * Decode the preferences protobuf into a string map.
-     *
-     * The DataStore preferences protobuf format uses:
-     * - Field 1 (PreferencesMap): repeated PreferenceEntry
-     *   - Field 1 (key): string
-     *   - Field 2 (value): oneof PreferenceValue
-     *     - Field 1: string
-     *     - Field 2: bool
-     *     - Field 3: int32
-     *     - Field 4: float
-     *     - Field 5: double
-     *     - Field 6: int64
-     *     - Field 7: string_set
+     * Write current settings to the shared JSON file.
+     * Called by the ViewModel whenever settings change.
      */
-    private fun decodePreferences(bytes: ByteArray): Map<String, String> {
-        val result = mutableMapOf<String, String>()
-        var offset = 0
-
-        while (offset < bytes.size) {
-            val (fieldTag, newOffset) = readVarint(bytes, offset)
-            offset = newOffset
-            val fieldNumber = (fieldTag shr 3).toInt()
-            val wireType = (fieldTag and 0x7).toInt()
-
-            when (wireType) {
-                0 -> { // Varint
-                    val (_, nextOffset) = readVarint(bytes, offset)
-                    offset = nextOffset
+    fun writeSettings(context: Context, settings: Map<String, Any?>) {
+        try {
+            val json = JsonObject()
+            for ((key, value) in settings) {
+                when (value) {
+                    is String -> json.addProperty(key, value)
+                    is Int -> json.addProperty(key, value)
+                    is Boolean -> json.addProperty(key, value)
+                    is Long -> json.addProperty(key, value)
+                    is Float -> json.addProperty(key, value)
+                    is Double -> json.addProperty(key, value)
+                    null -> {} // skip nulls
                 }
-                1 -> { // 64-bit
-                    offset += 8
-                }
-                2 -> { // Length-delimited
-                    val (length, lenOffset) = readVarint(bytes, offset)
-                    offset = lenOffset
-                    if (fieldNumber == 1) {
-                        // This is a PreferenceEntry — parse the submessage
-                        val entryBytes = bytes.copyOfRange(offset, offset + length.toInt())
-                        val entry = decodeEntry(entryBytes)
-                        if (entry != null) {
-                            result[entry.first] = entry.second
-                        }
-                    }
-                    offset += length.toInt()
-                }
-                5 -> { // 32-bit
-                    offset += 4
-                }
-                else -> break
             }
-        }
-
-        return result
-    }
-
-    private fun decodeEntry(bytes: ByteArray): Pair<String, String>? {
-        var key: String? = null
-        var value: String? = null
-        var offset = 0
-
-        while (offset < bytes.size) {
-            val (fieldTag, newOffset) = readVarint(bytes, offset)
-            offset = newOffset
-            val fieldNumber = (fieldTag shr 3).toInt()
-            val wireType = (fieldTag and 0x7).toInt()
-
-            when {
-                fieldNumber == 1 && wireType == 2 -> {
-                    // Key (string)
-                    val (length, lenOffset) = readVarint(bytes, offset)
-                    offset = lenOffset
-                    key = String(bytes, offset, length.toInt(), Charsets.UTF_8)
-                    offset += length.toInt()
-                }
-                fieldNumber == 2 && wireType == 2 -> {
-                    // Value submessage
-                    val (length, lenOffset) = readVarint(bytes, offset)
-                    offset = lenOffset
-                    val valueBytes = bytes.copyOfRange(offset, offset + length.toInt())
-                    value = decodeValue(valueBytes)
-                    offset += length.toInt()
-                }
-                wireType == 0 -> {
-                    val (_, nextOffset) = readVarint(bytes, offset)
-                    offset = nextOffset
-                }
-                wireType == 2 -> {
-                    val (length, lenOffset) = readVarint(bytes, offset)
-                    offset = lenOffset + length.toInt()
-                }
-                wireType == 1 -> offset += 8
-                wireType == 5 -> offset += 4
-                else -> break
-            }
-        }
-
-        return if (key != null && value != null) key to value else null
-    }
-
-    private fun decodeValue(bytes: ByteArray): String? {
-        if (bytes.isEmpty()) return null
-        var offset = 0
-
-        val (fieldTag, newOffset) = readVarint(bytes, offset)
-        offset = newOffset
-        val fieldNumber = (fieldTag shr 3).toInt()
-        val wireType = (fieldTag and 0x7).toInt()
-
-        return when {
-            // String value
-            fieldNumber == 1 && wireType == 2 -> {
-                val (length, lenOffset) = readVarint(bytes, offset)
-                String(bytes, lenOffset, length.toInt(), Charsets.UTF_8)
-            }
-            // Bool value
-            fieldNumber == 2 && wireType == 0 -> {
-                val (v, _) = readVarint(bytes, offset)
-                (v != 0L).toString()
-            }
-            // Int value
-            fieldNumber == 3 && wireType == 0 -> {
-                val (v, _) = readVarint(bytes, offset)
-                v.toString()
-            }
-            // Float
-            fieldNumber == 4 && wireType == 5 -> {
-                if (offset + 4 <= bytes.size) {
-                    val bits = (bytes[offset].toInt() and 0xFF) or
-                            ((bytes[offset+1].toInt() and 0xFF) shl 8) or
-                            ((bytes[offset+2].toInt() and 0xFF) shl 16) or
-                            ((bytes[offset+3].toInt() and 0xFF) shl 24)
-                    Float.fromBits(bits).toString()
-                } else null
-            }
-            // Long
-            fieldNumber == 6 && wireType == 0 -> {
-                val (v, _) = readVarint(bytes, offset)
-                v.toString()
-            }
-            else -> null
+            File(context.filesDir, SETTINGS_FILE).writeText(gson.toJson(json))
+        } catch (_: Exception) {
+            // Best-effort write
         }
     }
 
-    private fun readVarint(bytes: ByteArray, start: Int): Pair<Long, Int> {
-        var result = 0L
-        var shift = 0
-        var offset = start
-        while (offset < bytes.size) {
-            val b = bytes[offset].toInt() and 0xFF
-            result = result or ((b.toLong() and 0x7F) shl shift)
-            offset++
-            if (b and 0x80 == 0) break
-            shift += 7
+    private fun readJson(context: Context): JsonObject? {
+        val file = File(context.filesDir, SETTINGS_FILE)
+        if (!file.exists() || file.length() == 0L) return null
+        return try {
+            gson.fromJson(file.readText(), JsonObject::class.java)
+        } catch (_: Exception) {
+            null
         }
-        return result to offset
     }
 }

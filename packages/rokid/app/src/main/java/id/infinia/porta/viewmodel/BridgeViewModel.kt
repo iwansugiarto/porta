@@ -11,6 +11,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.JsonObject
 import id.infinia.porta.data.OfflineMessageQueue
+import id.infinia.porta.data.SettingsReader
 import id.infinia.porta.data.PortaClient
 import id.infinia.porta.data.ServerProfileManager
 import id.infinia.porta.service.NotificationService
@@ -231,6 +232,9 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 // Apply saved config to client
                 portaClient.configure(_host.value, _port.value, _authToken.value, _useTls.value)
 
+                // Sync settings to shared JSON for background components
+                syncSharedSettings()
+
                 // Auto-connect if enabled and credentials are configured
                 if (_autoConnect.value && !_authToken.value.isNullOrBlank()) {
                     connect()
@@ -290,6 +294,20 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     // ── Configuration ──
 
+    /** Write current settings to shared JSON file for background components */
+    private fun syncSharedSettings() {
+        SettingsReader.writeSettings(getApplication(), mapOf(
+            "host" to _host.value,
+            "port" to _port.value,
+            "auth_token" to _authToken.value,
+            "use_tls" to _useTls.value,
+            "auto_connect" to _autoConnect.value,
+            "notify_enabled" to _notifyEnabled.value,
+            "notify_sound" to _notifySound.value,
+            "notify_vibrate" to _notifyVibrate.value
+        ))
+    }
+
     fun updateConfig(host: String, port: Int, authToken: String?, useTls: Boolean = true) {
         _host.value = host
         _port.value = port
@@ -309,6 +327,8 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 prefs[PrefKeys.USE_TLS] = useTls
             }
+            // Sync to shared JSON for background components
+            syncSharedSettings()
         }
     }
 
