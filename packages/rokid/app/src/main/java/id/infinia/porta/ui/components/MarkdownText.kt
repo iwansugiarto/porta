@@ -45,6 +45,18 @@ fun MarkdownText(
     val uriHandler = LocalUriHandler.current
     val textColor = MaterialTheme.colorScheme.onSurface
 
+    // Safe link opener — only handles http/https, ignores file:/// and other schemes
+    val safeOpenUri: (String) -> Unit = { url ->
+        try {
+            if (url.startsWith("http://") || url.startsWith("https://")) {
+                uriHandler.openUri(url)
+            }
+            // Silently ignore file:/// and other non-web URIs
+        } catch (_: Exception) {
+            // Prevent crash from ActivityNotFoundException or SecurityException
+        }
+    }
+
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         for (block in blocks) {
             when (block) {
@@ -59,7 +71,7 @@ fun MarkdownText(
                         ),
                         onClick = { offset ->
                             annotated.getStringAnnotations("URL", offset, offset)
-                                .firstOrNull()?.let { uriHandler.openUri(it.item) }
+                                .firstOrNull()?.let { safeOpenUri(it.item) }
                         }
                     )
                 }
@@ -82,7 +94,7 @@ fun MarkdownText(
                         ),
                         onClick = { offset ->
                             annotated.getStringAnnotations("URL", offset, offset)
-                                .firstOrNull()?.let { uriHandler.openUri(it.item) }
+                                .firstOrNull()?.let { safeOpenUri(it.item) }
                         }
                     )
                 }
@@ -121,7 +133,7 @@ fun MarkdownText(
                             ),
                             onClick = { offset ->
                                 annotated.getStringAnnotations("URL", offset, offset)
-                                    .firstOrNull()?.let { uriHandler.openUri(it.item) }
+                                    .firstOrNull()?.let { safeOpenUri(it.item) }
                             }
                         )
                     }
