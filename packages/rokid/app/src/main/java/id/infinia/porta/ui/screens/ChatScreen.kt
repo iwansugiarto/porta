@@ -498,79 +498,91 @@ fun ChatScreen(
                         }
                     }
 
-                    // Input row
+                    // Input row — compact layout
                     Row(
                         modifier = Modifier
-                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .padding(horizontal = 8.dp, vertical = 6.dp)
                             .fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalAlignment = Alignment.Bottom,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        // Mic button
-                        FilledIconButton(
-                            onClick = {
-                                if (isListening) viewModel.stopVoiceInput()
-                                else viewModel.startVoiceInput()
-                            },
-                            enabled = connectionState == ConnectionState.CONNECTED &&
-                                    currentConversationId != null,
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = if (isListening) PortaError else MaterialTheme.colorScheme.surfaceVariant
-                            )
+                        // Action buttons column (mic, attach, camera) — compact vertical stack
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Icon(
-                                if (isListening) Icons.Default.MicOff else Icons.Default.Mic,
-                                if (isListening) "Stop" else "Voice"
-                            )
-                        }
+                            // Mic button
+                            IconButton(
+                                onClick = {
+                                    if (isListening) viewModel.stopVoiceInput()
+                                    else viewModel.startVoiceInput()
+                                },
+                                enabled = connectionState == ConnectionState.CONNECTED &&
+                                        currentConversationId != null,
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    if (isListening) Icons.Default.MicOff else Icons.Default.Mic,
+                                    if (isListening) "Stop" else "Voice",
+                                    tint = if (isListening) PortaError
+                                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
 
-                        // Attach button
-                        FilledIconButton(
-                            onClick = { imagePickerLauncher.launch("image/*") },
-                            enabled = connectionState == ConnectionState.CONNECTED &&
-                                    currentConversationId != null,
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = if (attachments.isNotEmpty()) PortaTertiary.copy(alpha = 0.2f)
-                                    else MaterialTheme.colorScheme.surfaceVariant
-                            ),
-                            modifier = Modifier.size(40.dp)
-                        ) {
-                            BadgedBox(
-                                badge = {
-                                    if (attachments.isNotEmpty()) {
-                                        Badge { Text("${attachments.size}") }
+                            Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                                // Attach button
+                                IconButton(
+                                    onClick = { imagePickerLauncher.launch("image/*") },
+                                    enabled = connectionState == ConnectionState.CONNECTED &&
+                                            currentConversationId != null,
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    BadgedBox(
+                                        badge = {
+                                            if (attachments.isNotEmpty()) {
+                                                Badge { Text("${attachments.size}") }
+                                            }
+                                        }
+                                    ) {
+                                        Icon(
+                                            Icons.Default.AttachFile, "Attach",
+                                            tint = if (attachments.isNotEmpty()) PortaTertiary
+                                                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                            modifier = Modifier.size(18.dp)
+                                        )
                                     }
                                 }
-                            ) {
-                                Icon(Icons.Default.AttachFile, "Attach", modifier = Modifier.size(20.dp))
+
+                                // Camera button
+                                IconButton(
+                                    onClick = {
+                                        val photoFile = File.createTempFile(
+                                            "porta_", ".jpg",
+                                            context.cacheDir
+                                        )
+                                        val uri = FileProvider.getUriForFile(
+                                            context,
+                                            "${context.packageName}.provider",
+                                            photoFile
+                                        )
+                                        cameraUri = uri
+                                        cameraLauncher.launch(uri)
+                                    },
+                                    enabled = connectionState == ConnectionState.CONNECTED &&
+                                            currentConversationId != null,
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.CameraAlt, "Camera",
+                                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                             }
                         }
 
-                        // Camera button
-                        FilledIconButton(
-                            onClick = {
-                                val photoFile = File.createTempFile(
-                                    "porta_", ".jpg",
-                                    context.cacheDir
-                                )
-                                val uri = FileProvider.getUriForFile(
-                                    context,
-                                    "${context.packageName}.provider",
-                                    photoFile
-                                )
-                                cameraUri = uri
-                                cameraLauncher.launch(uri)
-                            },
-                            enabled = connectionState == ConnectionState.CONNECTED &&
-                                    currentConversationId != null,
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant
-                            ),
-                            modifier = Modifier.size(40.dp)
-                        ) {
-                            Icon(Icons.Default.CameraAlt, "Camera", modifier = Modifier.size(20.dp))
-                        }
-
+                        // Text field — takes maximum available width
                         OutlinedTextField(
                             value = displayText,
                             onValueChange = { if (!isListening) inputText = it },
@@ -578,11 +590,13 @@ fun ChatScreen(
                             placeholder = {
                                 Text(
                                     if (attachments.isNotEmpty()) "Describe the image..."
-                                    else "Ask Antigravity..."
+                                    else "Ask Antigravity...",
+                                    fontSize = 14.sp
                                 )
                             },
                             maxLines = 4,
                             readOnly = isListening,
+                            textStyle = LocalTextStyle.current.copy(fontSize = 14.sp),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                             keyboardActions = KeyboardActions(
                                 onSend = {
@@ -600,10 +614,10 @@ fun ChatScreen(
                                     }
                                 }
                             ),
-                            shape = RoundedCornerShape(24.dp),
+                            shape = RoundedCornerShape(20.dp),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = PortaPrimary,
-                                unfocusedBorderColor = Color.Transparent,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.surfaceVariant,
                                 focusedContainerColor = MaterialTheme.colorScheme.surface,
                                 unfocusedContainerColor = MaterialTheme.colorScheme.surface,
                             )
@@ -615,9 +629,10 @@ fun ChatScreen(
                                 onClick = { viewModel.stopGeneration() },
                                 colors = IconButtonDefaults.filledIconButtonColors(
                                     containerColor = PortaError
-                                )
+                                ),
+                                modifier = Modifier.size(44.dp)
                             ) {
-                                Icon(Icons.Default.Stop, "Stop")
+                                Icon(Icons.Default.Stop, "Stop", modifier = Modifier.size(22.dp))
                             }
                         } else {
                             val hasContent = inputText.isNotBlank() || attachments.isNotEmpty()
@@ -640,9 +655,10 @@ fun ChatScreen(
                                         currentConversationId != null,
                                 colors = IconButtonDefaults.filledIconButtonColors(
                                     containerColor = PortaPrimary
-                                )
+                                ),
+                                modifier = Modifier.size(44.dp)
                             ) {
-                                Icon(Icons.AutoMirrored.Filled.Send, "Send")
+                                Icon(Icons.AutoMirrored.Filled.Send, "Send", modifier = Modifier.size(20.dp))
                             }
                         }
                     }
