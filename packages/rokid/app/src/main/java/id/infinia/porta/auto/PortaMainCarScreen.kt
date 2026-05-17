@@ -1,5 +1,6 @@
 package id.infinia.porta.auto
 
+import android.util.Log
 import androidx.car.app.CarContext
 import androidx.car.app.Screen
 import androidx.car.app.model.*
@@ -20,6 +21,10 @@ import java.util.concurrent.TimeUnit
  * - Quick action to start a new voice conversation
  */
 class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
+
+    companion object {
+        private const val TAG = "PortaAuto"
+    }
 
     private val gson = Gson()
     private val httpClient = OkHttpClient.Builder()
@@ -61,14 +66,17 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
     private fun loadData() {
         scope.launch {
             try {
+                Log.i(TAG, "Loading data...")
                 val config = readConnectionConfig()
                 if (config == null) {
-                    errorMessage = "Not configured. Open Porta on your phone first."
+                    Log.w(TAG, "No connection config found")
+                    errorMessage = "Not configured.\nOpen Porta on your phone first, then retry."
                     isLoading = false
                     invalidate()
                     return@launch
                 }
                 connectionConfig = config
+                Log.i(TAG, "Config loaded: ${config.host}:${config.port}")
 
                 val scheme = if (config.useTls) "https" else "http"
                 val url = "$scheme://${config.host}:${config.port}/api/conversations"
@@ -82,8 +90,10 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
                     }
                     .build()
 
+                Log.i(TAG, "Fetching conversations from $url")
                 val response = httpClient.newCall(request).execute()
                 if (!response.isSuccessful) {
+                    Log.e(TAG, "Server error: ${response.code}")
                     errorMessage = "Server error: ${response.code}"
                     isLoading = false
                     invalidate()
@@ -91,27 +101,43 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
                 }
 
                 val body = response.body?.string() ?: "{}"
-                val json = gson.fromJson(body, JsonObject::class.java)
+                val json = try {
+                    gson.fromJson(body, JsonObject::class.java)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to parse response: ${e.message}")
+                    errorMessage = "Invalid server response"
+                    isLoading = false
+                    invalidate()
+                    return@launch
+                }
+
                 val summaries = json.getAsJsonObject("trajectorySummaries") ?: JsonObject()
 
                 conversations = summaries.entrySet()
-                    .map { (id, value) ->
-                        val obj = value.asJsonObject
-                        ConvoSummary(
-                            id = id,
-                            title = obj.get("summary")?.asString ?: id.take(12),
-                            status = obj.get("status")?.asString ?: "unknown",
-                            stepCount = obj.get("stepCount")?.asInt ?: 0,
-                            lastModified = obj.get("lastModifiedTime")?.asString ?: ""
-                        )
+                    .mapNotNull { (id, value) ->
+                        try {
+                            val obj = value.asJsonObject
+                            ConvoSummary(
+                                id = id,
+                                title = obj.get("summary")?.asString ?: id.take(12),
+                                status = obj.get("status")?.asString ?: "unknown",
+                                stepCount = obj.get("stepCount")?.asInt ?: 0,
+                                lastModified = obj.get("lastModifiedTime")?.asString ?: ""
+                            )
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Skipping conversation $id: ${e.message}")
+                            null
+                        }
                     }
                     .sortedByDescending { it.lastModified }
                     .take(10) // Android Auto list limits
 
+                Log.i(TAG, "Loaded ${conversations.size} conversations")
                 isLoading = false
                 invalidate()
             } catch (e: Exception) {
-                errorMessage = "Connection failed: ${e.message}"
+                Log.e(TAG, "Connection failed: ${e.message}", e)
+                errorMessage = "Connection failed:\n${e.message?.take(100)}"
                 isLoading = false
                 invalidate()
             }
@@ -147,13 +173,23 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
 
         // Empty state
         if (conversations.isEmpty()) {
-            return MessageTemplate.Builder("No conversations yet. Start one with voice!")
+            return MessageTemplate.Builder("No conversations yet.\nStart one with voice!")
                 .setTitle("Porta")
                 .addAction(
                     Action.Builder()
                         .setTitle("New Chat")
                         .setOnClickListener {
                             screenManager.push(PortaVoiceChatScreen(carContext, connectionConfig))
+                        }
+                        .build()
+                )
+                .addAction(
+                    Action.Builder()
+                        .setTitle("Refresh")
+                        .setOnClickListener {
+                            isLoading = true
+                            invalidate()
+                            loadData()
                         }
                         .build()
                 )
@@ -196,8 +232,14 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
     }
 
     private fun readConnectionConfig(): ConnectionConfig? {
-        return SettingsReader.readConnectionConfig(carContext)?.let { config ->
-            ConnectionConfig(config.host, config.port, config.authToken, config.useTls)
+        return try {
+            SettingsReader.readConnectionConfig(carContext)?.let { config ->
+                Log.i(TAG, "Settings read OK: host=${config.host}")
+                ConnectionConfig(config.host, config.port, config.authToken, config.useTls)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to read settings: ${e.message}", e)
+            null
         }
     }
 }

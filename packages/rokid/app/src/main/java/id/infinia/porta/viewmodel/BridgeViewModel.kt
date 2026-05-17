@@ -296,7 +296,8 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Write current settings to shared JSON file for background components */
     private fun syncSharedSettings() {
-        SettingsReader.writeSettings(getApplication(), mapOf(
+        val ctx: Context = getApplication()
+        SettingsReader.writeSettings(ctx, mapOf(
             "host" to _host.value,
             "port" to _port.value,
             "auth_token" to _authToken.value,
@@ -306,6 +307,14 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
             "notify_sound" to _notifySound.value,
             "notify_vibrate" to _notifyVibrate.value
         ))
+        // Also write to SharedPreferences as fallback for Android Auto
+        ctx.getSharedPreferences("porta_fallback_prefs", Context.MODE_PRIVATE)
+            .edit()
+            .putString("host", _host.value)
+            .putInt("port", _port.value)
+            .putString("auth_token", _authToken.value)
+            .putBoolean("use_tls", _useTls.value)
+            .apply()
     }
 
     fun updateConfig(host: String, port: Int, authToken: String?, useTls: Boolean = true) {
