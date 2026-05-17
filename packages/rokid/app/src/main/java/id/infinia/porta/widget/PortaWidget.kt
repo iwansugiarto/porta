@@ -5,7 +5,6 @@ import android.content.Intent
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.datastore.preferences.core.*
 import androidx.glance.*
 import androidx.glance.action.actionStartActivity
 import androidx.glance.action.clickable
@@ -19,8 +18,8 @@ import androidx.glance.text.TextStyle
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import id.infinia.porta.MainActivity
+import id.infinia.porta.data.SettingsReader
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -44,14 +43,11 @@ class PortaWidget : GlanceAppWidget() {
     private suspend fun fetchWidgetData(context: Context): WidgetData =
         withContext(Dispatchers.IO) {
             try {
-                val prefs = settingsDataStore(context).data.first()
-                val host = prefs[stringPreferencesKey("host")] ?: return@withContext WidgetData()
-                val port = prefs[intPreferencesKey("port")] ?: 3170
-                val token = prefs[stringPreferencesKey("auth_token")]
-                val useTls = prefs[booleanPreferencesKey("use_tls")] ?: false
+                val config = SettingsReader.readConnectionConfig(context)
+                    ?: return@withContext WidgetData()
 
-                val scheme = if (useTls) "https" else "http"
-                val url = "$scheme://$host:$port/api/conversations"
+                val scheme = if (config.useTls) "https" else "http"
+                val url = "$scheme://${config.host}:${config.port}/api/conversations"
 
                 val httpClient = OkHttpClient.Builder()
                     .connectTimeout(5, TimeUnit.SECONDS)
@@ -61,8 +57,8 @@ class PortaWidget : GlanceAppWidget() {
                 val request = Request.Builder()
                     .url(url)
                     .apply {
-                        if (!token.isNullOrBlank()) {
-                            addHeader("Authorization", "Bearer $token")
+                        if (!config.authToken.isNullOrBlank()) {
+                            addHeader("Authorization", "Bearer ${config.authToken}")
                         }
                     }
                     .build()
@@ -177,12 +173,4 @@ private fun PortaWidgetContent(data: WidgetData) {
  */
 class PortaWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = PortaWidget()
-}
-
-/**
- * Access the main app settings DataStore from widget context.
- */
-private fun settingsDataStore(context: Context): androidx.datastore.core.DataStore<Preferences> {
-    val file = java.io.File(context.filesDir, "datastore/porta_settings.preferences_pb")
-    return PreferenceDataStoreFactory.create { file }
 }

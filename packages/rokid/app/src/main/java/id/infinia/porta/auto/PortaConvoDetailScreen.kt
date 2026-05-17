@@ -130,13 +130,7 @@ class PortaConvoDetailScreen(
             )
         }
 
-        paneBuilder.addAction(
-            Action.Builder()
-                .setTitle("Back")
-                .setOnClickListener { screenManager.pop() }
-                .build()
-        )
-
+        // Only show Refresh action for running convos
         if (isRunning) {
             paneBuilder.addAction(
                 Action.Builder()

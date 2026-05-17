@@ -11,6 +11,7 @@ import androidx.work.*
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import id.infinia.porta.R
+import id.infinia.porta.data.SettingsReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -82,26 +83,21 @@ class ConversationPollWorker(
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
-            // Read connection settings from the main app DataStore
-            val settingsStore = settingsDataStore(applicationContext)
-            val prefs = settingsStore.data.first()
+            // Read connection settings via safe direct-file reader
+            val config = SettingsReader.readConnectionConfig(applicationContext)
+                ?: return@withContext Result.success()
 
-            val host = prefs[stringPreferencesKey("host")] ?: return@withContext Result.success()
-            val port = prefs[intPreferencesKey("port")] ?: 3170
-            val token = prefs[stringPreferencesKey("auth_token")]
-            val useTls = prefs[booleanPreferencesKey("use_tls")] ?: false
-            val notifyEnabled = prefs[booleanPreferencesKey("notify_enabled")] ?: true
-
+            val notifyEnabled = SettingsReader.readBoolean(applicationContext, "notify_enabled", true)
             if (!notifyEnabled) return@withContext Result.success()
 
-            val scheme = if (useTls) "https" else "http"
-            val url = "$scheme://$host:$port/api/conversations"
+            val scheme = if (config.useTls) "https" else "http"
+            val url = "$scheme://${config.host}:${config.port}/api/conversations"
 
             val request = Request.Builder()
                 .url(url)
                 .apply {
-                    if (!token.isNullOrBlank()) {
-                        addHeader("Authorization", "Bearer $token")
+                    if (!config.authToken.isNullOrBlank()) {
+                        addHeader("Authorization", "Bearer ${config.authToken}")
                     }
                 }
                 .build()
@@ -181,13 +177,4 @@ class ConversationPollWorker(
 
         nm.notify(System.currentTimeMillis().toInt(), notification)
     }
-}
-
-/**
- * Access the main app settings DataStore from a non-Activity context.
- * Constructs the file path directly to avoid duplicate preferencesDataStore delegate.
- */
-private fun settingsDataStore(context: Context): androidx.datastore.core.DataStore<Preferences> {
-    val file = java.io.File(context.filesDir, "datastore/porta_settings.preferences_pb")
-    return PreferenceDataStoreFactory.create { file }
 }

@@ -239,7 +239,12 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { viewModel.switchToProfile(profile.id) },
+                            .clickable {
+                                viewModel.switchToProfile(profile.id)
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("Switched to ${profile.name}")
+                                }
+                            },
                         colors = CardDefaults.cardColors(
                             containerColor = if (profile.isActive)
                                 PortaPrimary.copy(alpha = 0.1f)

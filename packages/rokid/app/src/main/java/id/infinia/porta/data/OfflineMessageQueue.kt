@@ -22,7 +22,7 @@ import java.io.File
 class OfflineMessageQueue(context: Context) {
 
     data class PendingMessage(
-        val id: String = System.currentTimeMillis().toString(),
+        val id: String = "${System.currentTimeMillis()}-${System.nanoTime()}",
         val cascadeId: String,
         val text: String,
         val model: String? = null,

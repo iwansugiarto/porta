@@ -3,15 +3,12 @@ package id.infinia.porta.auto
 import androidx.car.app.CarContext
 import androidx.car.app.Screen
 import androidx.car.app.model.*
-import androidx.datastore.preferences.core.*
 import com.google.gson.Gson
 import com.google.gson.JsonObject
+import id.infinia.porta.data.SettingsReader
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.first
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.MediaType.Companion.toMediaType
 import java.util.concurrent.TimeUnit
 
 /**
@@ -198,22 +195,9 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
             .build()
     }
 
-    private suspend fun readConnectionConfig(): ConnectionConfig? {
-        return try {
-            val file = java.io.File(carContext.filesDir, "datastore/porta_settings.preferences_pb")
-            if (!file.exists()) return null
-
-            val store = PreferenceDataStoreFactory.create { file }
-            val prefs = store.data.first()
-
-            val host = prefs[stringPreferencesKey("host")] ?: return null
-            val port = prefs[intPreferencesKey("port")] ?: 3170
-            val token = prefs[stringPreferencesKey("auth_token")]
-            val useTls = prefs[booleanPreferencesKey("use_tls")] ?: false
-
-            ConnectionConfig(host, port, token, useTls)
-        } catch (_: Exception) {
-            null
+    private fun readConnectionConfig(): ConnectionConfig? {
+        return SettingsReader.readConnectionConfig(carContext)?.let { config ->
+            ConnectionConfig(config.host, config.port, config.authToken, config.useTls)
         }
     }
 }

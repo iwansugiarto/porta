@@ -76,9 +76,10 @@ class ServerProfileManager(context: Context) {
         _profiles.value = _profiles.value.filter { it.id != profileId }
         if (_activeProfile.value?.id == profileId) {
             _activeProfile.value = _profiles.value.firstOrNull()
-            _activeProfile.value?.let { setActive(it.id) }
+            _activeProfile.value?.let { setActive(it.id) } ?: saveToDisk()
+        } else {
+            saveToDisk()
         }
-        saveToDisk()
     }
 
     /**

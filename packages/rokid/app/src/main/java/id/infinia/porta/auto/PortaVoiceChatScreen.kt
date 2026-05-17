@@ -65,18 +65,16 @@ class PortaVoiceChatScreen(
     }
 
     private fun buildReadyTemplate(): Template {
-        return MessageTemplate.Builder("Tap 'Speak' to start a new conversation with Porta AI.")
+        return MessageTemplate.Builder(
+            "Start a new conversation from your phone, then monitor progress here. " +
+            "Android Auto shows your conversations and their status."
+        )
             .setTitle("New Chat")
             .setHeaderAction(Action.BACK)
             .addAction(
                 Action.Builder()
-                    .setTitle("Speak")
-                    .setOnClickListener {
-                        // Use the car's built-in voice input
-                        carContext.startCarApp(
-                            android.content.Intent(CarContext.ACTION_NAVIGATE)
-                        )
-                    }
+                    .setTitle("Back")
+                    .setOnClickListener { screenManager.pop() }
                     .build()
             )
             .build()
