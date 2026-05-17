@@ -1,12 +1,17 @@
 package id.infinia.porta.ui.components
 
+import android.graphics.BitmapFactory
+import android.util.Base64
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -14,10 +19,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -81,12 +89,43 @@ private fun UserBubble(message: ChatMessage) {
                     )
                     .padding(12.dp)
             ) {
-                Text(
-                    message.content,
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+                // Media thumbnails
+                val mediaList = message.media
+                if (!mediaList.isNullOrEmpty()) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.padding(bottom = if (message.content.isNotBlank()) 8.dp else 0.dp)
+                    ) {
+                        mediaList.take(4).forEach { mediaObj ->
+                            val mimeType = (mediaObj as? JsonObject)?.get("mimeType")?.asString ?: ""
+                            val inlineData = (mediaObj as? JsonObject)?.get("inlineData")?.asString
+                            if (mimeType.startsWith("image/") && inlineData != null) {
+                                val bytes = Base64.decode(inlineData, Base64.NO_WRAP)
+                                val bmp = remember(inlineData.hashCode()) {
+                                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                }
+                                if (bmp != null) {
+                                    Image(
+                                        bitmap = bmp.asImageBitmap(),
+                                        contentDescription = "Attachment",
+                                        modifier = Modifier
+                                            .size(64.dp)
+                                            .clip(RoundedCornerShape(8.dp)),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                if (message.content.isNotBlank()) {
+                    Text(
+                        message.content,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
                 if (showCopied) {
                     LaunchedEffect(Unit) {
                         kotlinx.coroutines.delay(1500)
@@ -182,7 +221,7 @@ private fun AssistantBubble(message: ChatMessage, onRevert: ((Int) -> Unit)? = n
                 DropdownMenuItem(
                     text = { Text("Revert to here", fontSize = 13.sp) },
                     leadingIcon = {
-                        Icon(Icons.Default.Undo, null, Modifier.size(16.dp), tint = PortaWarning)
+                        Icon(Icons.AutoMirrored.Filled.Undo, null, Modifier.size(16.dp), tint = PortaWarning)
                     },
                     onClick = {
                         onRevert(message.stepIndex)
@@ -637,7 +676,7 @@ private fun InfoCard(message: ChatMessage) {
         "search" -> Icons.Default.Search
         "eye" -> Icons.Default.Visibility
         "folder" -> Icons.Default.Folder
-        "list" -> Icons.Default.ViewList
+        "list" -> Icons.AutoMirrored.Filled.ViewList
         "file-search" -> Icons.Default.FindInPage
         else -> Icons.Default.Info
     }

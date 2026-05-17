@@ -5,11 +5,13 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -40,16 +42,25 @@ fun MarkdownText(
 ) {
     val lines = markdown.lines()
     val blocks = parseBlocks(lines)
+    val uriHandler = LocalUriHandler.current
+    val textColor = MaterialTheme.colorScheme.onSurface
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         for (block in blocks) {
             when (block) {
                 is MdBlock.Paragraph -> {
-                    Text(
-                        text = parseInline(block.text),
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        color = MaterialTheme.colorScheme.onSurface
+                    val annotated = parseInline(block.text)
+                    ClickableText(
+                        text = annotated,
+                        style = TextStyle(
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
+                            color = textColor
+                        ),
+                        onClick = { offset ->
+                            annotated.getStringAnnotations("URL", offset, offset)
+                                .firstOrNull()?.let { uriHandler.openUri(it.item) }
+                        }
                     )
                 }
                 is MdBlock.Heading -> {
@@ -60,12 +71,19 @@ fun MarkdownText(
                         else -> 14.sp to FontWeight.Medium
                     }
                     Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = parseInline(block.text),
-                        fontSize = size,
-                        fontWeight = weight,
-                        lineHeight = (size.value + 6).sp,
-                        color = MaterialTheme.colorScheme.onSurface
+                    val annotated = parseInline(block.text)
+                    ClickableText(
+                        text = annotated,
+                        style = TextStyle(
+                            fontSize = size,
+                            fontWeight = weight,
+                            lineHeight = (size.value + 6).sp,
+                            color = textColor
+                        ),
+                        onClick = { offset ->
+                            annotated.getStringAnnotations("URL", offset, offset)
+                                .firstOrNull()?.let { uriHandler.openUri(it.item) }
+                        }
                     )
                 }
                 is MdBlock.CodeBlock -> {
@@ -81,7 +99,7 @@ fun MarkdownText(
                             fontSize = 12.sp,
                             fontFamily = FontFamily.Monospace,
                             lineHeight = 16.sp,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
+                            color = textColor.copy(alpha = 0.85f)
                         )
                     }
                 }
@@ -93,11 +111,18 @@ fun MarkdownText(
                             color = PortaTertiary,
                             modifier = Modifier.width(20.dp)
                         )
-                        Text(
-                            text = parseInline(block.text),
-                            fontSize = 14.sp,
-                            lineHeight = 20.sp,
-                            color = MaterialTheme.colorScheme.onSurface
+                        val annotated = parseInline(block.text)
+                        ClickableText(
+                            text = annotated,
+                            style = TextStyle(
+                                fontSize = 14.sp,
+                                lineHeight = 20.sp,
+                                color = textColor
+                            ),
+                            onClick = { offset ->
+                                annotated.getStringAnnotations("URL", offset, offset)
+                                    .firstOrNull()?.let { uriHandler.openUri(it.item) }
+                            }
                         )
                     }
                 }
@@ -107,7 +132,7 @@ fun MarkdownText(
                         Modifier
                             .fillMaxWidth()
                             .height(1.dp)
-                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                            .background(textColor.copy(alpha = 0.1f))
                     )
                     Spacer(Modifier.height(4.dp))
                 }
@@ -274,12 +299,15 @@ private fun parseInline(text: String): AnnotatedString {
                     val closeParen = text.indexOf(')', closeBracket + 2)
                     if (closeParen > 0) {
                         val linkText = text.substring(i + 1, closeBracket)
+                        val linkUrl = text.substring(closeBracket + 2, closeParen)
+                        pushStringAnnotation(tag = "URL", annotation = linkUrl)
                         withStyle(SpanStyle(
                             color = PortaTertiary,
                             textDecoration = TextDecoration.Underline
                         )) {
                             append(linkText)
                         }
+                        pop()
                         i = closeParen + 1
                         continue
                     }

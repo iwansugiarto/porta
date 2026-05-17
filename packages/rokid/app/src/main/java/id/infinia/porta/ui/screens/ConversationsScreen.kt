@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -164,6 +165,12 @@ fun ConversationsScreen(
                     }
                 }
             } else {
+                val isRefreshing = isLoading && conversations.isNotEmpty()
+                PullToRefreshBox(
+                    isRefreshing = isRefreshing,
+                    onRefresh = { viewModel.loadConversations() },
+                    modifier = Modifier.fillMaxSize()
+                ) {
                 LazyColumn(
                     Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(12.dp),
@@ -290,6 +297,7 @@ fun ConversationsScreen(
                         }
                     }
                 }
+                } // PullToRefreshBox
             }
         }
     }

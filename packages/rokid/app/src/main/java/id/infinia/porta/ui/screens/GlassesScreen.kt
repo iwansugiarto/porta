@@ -9,6 +9,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.BluetoothSearching
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -91,7 +92,7 @@ fun GlassesScreen(viewModel: BridgeViewModel, onBack: () -> Unit) {
                                 GlassesState.CONNECTED, GlassesState.SCENE_ACTIVE ->
                                     Icons.Default.Visibility
                                 GlassesState.CONNECTING ->
-                                    Icons.Default.BluetoothSearching
+                                    Icons.AutoMirrored.Filled.BluetoothSearching
                                 GlassesState.ERROR ->
                                     Icons.Default.ErrorOutline
                                 GlassesState.DISCONNECTED ->
