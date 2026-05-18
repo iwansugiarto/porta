@@ -257,6 +257,10 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     private val _defaultModel = MutableStateFlow<String?>(null)
     val defaultModel: StateFlow<String?> = _defaultModel.asStateFlow()
 
+    /** Timestamp (millis) when models/quota were last refreshed. */
+    private val _lastModelRefresh = MutableStateFlow(0L)
+    val lastModelRefresh: StateFlow<Long> = _lastModelRefresh.asStateFlow()
+
     /** Planner mode: null = default, "fast" = no planning, "plan" = full planning */
     private val _plannerType = MutableStateFlow<String?>(null)
     val plannerType: StateFlow<String?> = _plannerType.asStateFlow()
@@ -585,6 +589,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 } ?: emptyList()
                 _availableModels.value = models
+                _lastModelRefresh.value = System.currentTimeMillis()
 
                 val defaultOverride = result.getAsJsonObject("defaultOverrideModelConfig")
                     ?.getAsJsonObject("modelOrAlias")

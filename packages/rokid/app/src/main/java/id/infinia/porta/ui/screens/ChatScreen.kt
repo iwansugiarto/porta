@@ -450,6 +450,87 @@ fun ChatScreen(
                         }
                     }
 
+                    // ── Quota indicator bar ──
+                    if (currentConversationId != null && availableModels.isNotEmpty()) {
+                        val activeModelId = selectedModel ?: defaultModel
+                        val activeModelConfig = availableModels.find { it.id == activeModelId }
+                        val quota = activeModelConfig?.quotaRemaining ?: 1f
+                        val lastRefresh by viewModel.lastModelRefresh.collectAsState()
+
+                        // Auto-refresh quota every 60 seconds
+                        LaunchedEffect(lastRefresh) {
+                            if (lastRefresh > 0) {
+                                kotlinx.coroutines.delay(60_000)
+                                viewModel.loadModels()
+                            }
+                        }
+
+                        // Timer tick for "Xm ago" display
+                        var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+                        LaunchedEffect(Unit) {
+                            while (true) {
+                                kotlinx.coroutines.delay(10_000)
+                                now = System.currentTimeMillis()
+                            }
+                        }
+
+                        val refreshAgo = if (lastRefresh > 0) {
+                            val secs = (now - lastRefresh) / 1000
+                            when {
+                                secs < 10 -> "just now"
+                                secs < 60 -> "${secs}s ago"
+                                else -> "${secs / 60}m ago"
+                            }
+                        } else ""
+
+                        val quotaPct = (quota * 100).toInt()
+                        val quotaColor = when {
+                            quota >= 0.5f -> PortaSuccess
+                            quota >= 0.2f -> PortaWarning
+                            else -> PortaError
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            // Quota label
+                            Text(
+                                "Quota",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                            )
+                            // Progress bar
+                            LinearProgressIndicator(
+                                progress = { quota },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(4.dp)
+                                    .clip(RoundedCornerShape(2.dp)),
+                                color = quotaColor,
+                                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                            )
+                            // Percentage
+                            Text(
+                                "$quotaPct%",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = quotaColor
+                            )
+                            // Refresh timer
+                            if (refreshAgo.isNotEmpty()) {
+                                Text(
+                                    "· $refreshAgo",
+                                    fontSize = 9.sp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                                )
+                            }
+                        }
+                    }
+
                     // ── Attachment preview strip ──
                     if (attachments.isNotEmpty()) {
                         Row(
