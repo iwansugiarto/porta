@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -188,6 +189,14 @@ fun ChatScreen(
         modifier = Modifier.imePadding(),
         topBar = {
             TopAppBar(
+                navigationIcon = {
+                    IconButton(onClick = onNavigateToConversations) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Home"
+                        )
+                    }
+                },
                 title = {
                     Column {
                         Text(
@@ -271,9 +280,6 @@ fun ChatScreen(
                                 modifier = Modifier.size(18.dp)
                             )
                         }
-                    }
-                    IconButton(onClick = onNavigateToConversations) {
-                        Icon(Icons.Default.Forum, "Conversations")
                     }
                     IconButton(onClick = onNavigateToSettings) {
                         Icon(Icons.Default.Settings, "Settings")
