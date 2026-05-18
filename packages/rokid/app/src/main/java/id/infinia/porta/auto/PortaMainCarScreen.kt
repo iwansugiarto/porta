@@ -16,9 +16,9 @@ import java.util.concurrent.TimeUnit
  * Main screen shown when the user opens Porta in Android Auto.
  *
  * Displays:
- * - Recent conversations as a list
- * - Running conversation status
- * - Quick action to start a new voice conversation
+ * - "Recent" item — last 5 conversations across all workspaces
+ * - Workspace tiles with active/total conversation counts
+ * - Tap workspace → filtered conversation list
  */
 class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
 
@@ -26,6 +26,7 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
         private const val TAG = "PortaAuto"
         // Android Auto list template typically supports 6 items max
         private const val MAX_LIST_ITEMS = 6
+        private const val MAX_RECENT = 5
     }
 
     private val gson = Gson()
@@ -36,7 +37,8 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    private var conversations: List<ConvoSummary> = emptyList()
+    private var allConversations: List<ConvoSummary> = emptyList()
+    private var workspaces: List<WorkspaceGroup> = emptyList()
     private var isLoading = true
     private var errorMessage: String? = null
     private var connectionConfig: ConnectionConfig? = null
@@ -46,7 +48,15 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
         val title: String,
         val status: String,
         val stepCount: Int,
-        val lastModified: String
+        val lastModified: String,
+        val workspaceName: String
+    )
+
+    data class WorkspaceGroup(
+        val name: String,
+        val activeCount: Int,
+        val totalCount: Int,
+        val conversations: List<ConvoSummary>
     )
 
     data class ConnectionConfig(
@@ -63,6 +73,17 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
             }
         })
         loadData()
+    }
+
+    private fun extractWorkspaceName(summary: JsonObject): String {
+        val workspacesArr = summary.getAsJsonArray("workspaces")
+        if (workspacesArr == null || workspacesArr.size() == 0) return "Others"
+        val ws = workspacesArr[0].asJsonObject
+        val repo = ws.getAsJsonObject("repository")?.get("computedName")?.asString
+        if (repo != null) return repo.substringAfterLast("/")
+        val uri = ws.get("workspaceFolderAbsoluteUri")?.asString
+        if (uri != null) return uri.substringAfterLast("/")
+        return "Others"
     }
 
     private fun loadData() {
@@ -115,7 +136,7 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
 
                 val summaries = json.getAsJsonObject("trajectorySummaries") ?: JsonObject()
 
-                conversations = summaries.entrySet()
+                allConversations = summaries.entrySet()
                     .mapNotNull { (id, value) ->
                         try {
                             val obj = value.asJsonObject
@@ -127,7 +148,8 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
                                 ),
                                 status = obj.get("status")?.asString ?: "unknown",
                                 stepCount = obj.get("stepCount")?.asInt ?: 0,
-                                lastModified = obj.get("lastModifiedTime")?.asString ?: ""
+                                lastModified = obj.get("lastModifiedTime")?.asString ?: "",
+                                workspaceName = extractWorkspaceName(obj)
                             )
                         } catch (e: Exception) {
                             Log.w(TAG, "Skipping conversation $id: ${e.message}")
@@ -135,9 +157,24 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
                         }
                     }
                     .sortedByDescending { it.lastModified }
-                    .take(MAX_LIST_ITEMS)
 
-                Log.i(TAG, "Loaded ${conversations.size} conversations")
+                // Group by workspace
+                workspaces = allConversations
+                    .groupBy { it.workspaceName }
+                    .map { (name, convos) ->
+                        WorkspaceGroup(
+                            name = name,
+                            activeCount = convos.count { it.status == "CASCADE_RUN_STATUS_RUNNING" },
+                            totalCount = convos.size,
+                            conversations = convos
+                        )
+                    }
+                    .sortedWith(
+                        compareByDescending<WorkspaceGroup> { it.activeCount > 0 }
+                            .thenByDescending { it.conversations.maxOfOrNull { c -> c.lastModified } ?: "" }
+                    )
+
+                Log.i(TAG, "Loaded ${allConversations.size} conversations in ${workspaces.size} workspaces")
                 isLoading = false
                 invalidate()
             } catch (e: Exception) {
@@ -199,7 +236,7 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
         }
 
         // Empty state
-        if (conversations.isEmpty()) {
+        if (allConversations.isEmpty()) {
             return MessageTemplate.Builder("No conversations yet.\nStart one from your phone.")
                 .setTitle("Porta")
                 .addAction(
@@ -215,20 +252,50 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
                 .build()
         }
 
-        // Conversation list
+        // Workspace home list
         val listBuilder = ItemList.Builder()
 
-        for (convo in conversations) {
-            val isRunning = convo.status == "CASCADE_RUN_STATUS_RUNNING"
-            val statusText = if (isRunning) "Active - Running" else "${convo.stepCount} steps"
+        // 1. "Recent" item — always first
+        val recentConvos = allConversations.take(MAX_RECENT)
+        val recentActive = recentConvos.count { it.status == "CASCADE_RUN_STATUS_RUNNING" }
+        val recentSubtext = if (recentActive > 0) {
+            "$recentActive active · ${recentConvos.size} recent"
+        } else {
+            "${recentConvos.size} recent conversations"
+        }
+
+        listBuilder.addItem(
+            Row.Builder()
+                .setTitle("Recent")
+                .addText(CarTextUtils.sanitize(recentSubtext))
+                .setOnClickListener {
+                    screenManager.push(
+                        PortaWorkspaceConvosScreen(
+                            carContext, "Recent", recentConvos, connectionConfig
+                        )
+                    )
+                }
+                .build()
+        )
+
+        // 2. Workspace items (remaining slots, max MAX_LIST_ITEMS - 1)
+        val maxWsItems = MAX_LIST_ITEMS - 1
+        for (ws in workspaces.take(maxWsItems)) {
+            val subtitle = if (ws.activeCount > 0) {
+                "${ws.activeCount} active · ${ws.totalCount} total"
+            } else {
+                "${ws.totalCount} conversations"
+            }
 
             listBuilder.addItem(
                 Row.Builder()
-                    .setTitle(CarTextUtils.sanitize(convo.title, 80))
-                    .addText(CarTextUtils.sanitize(statusText))
+                    .setTitle(CarTextUtils.sanitize(ws.name, 60))
+                    .addText(CarTextUtils.sanitize(subtitle))
                     .setOnClickListener {
                         screenManager.push(
-                            PortaConvoDetailScreen(carContext, convo, connectionConfig)
+                            PortaWorkspaceConvosScreen(
+                                carContext, ws.name, ws.conversations, connectionConfig
+                            )
                         )
                     }
                     .build()

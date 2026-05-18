@@ -140,6 +140,63 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     private val _currentConversationId = MutableStateFlow<String?>(null)
     val currentConversationId: StateFlow<String?> = _currentConversationId.asStateFlow()
 
+    // ── Workspace grouping ──
+
+    data class WorkspaceInfo(
+        val name: String,
+        val totalCount: Int,
+        val activeCount: Int,
+        val lastModified: String,
+        val conversationIds: List<String>
+    )
+
+    /** Conversations grouped by workspace, sorted by activity. */
+    val workspaceGroups: StateFlow<List<WorkspaceInfo>> = _conversations.map { convos ->
+        val groups = mutableMapOf<String, MutableList<Pair<String, JsonObject>>>()
+        for ((id, summary) in convos) {
+            val wsName = extractWorkspaceName(summary)
+            groups.getOrPut(wsName) { mutableListOf() }.add(id to summary)
+        }
+        groups.entries.map { (name, items) ->
+            val active = items.count {
+                it.second.get("status")?.asString == "CASCADE_RUN_STATUS_RUNNING"
+            }
+            val lastMod = items.maxOfOrNull {
+                it.second.get("lastModifiedTime")?.asString ?: ""
+            } ?: ""
+            WorkspaceInfo(
+                name = name,
+                totalCount = items.size,
+                activeCount = active,
+                lastModified = lastMod,
+                conversationIds = items.map { it.first }
+            )
+        }.sortedWith(
+            compareByDescending<WorkspaceInfo> { it.activeCount > 0 }
+                .thenByDescending { it.lastModified }
+        )
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    /** Recent conversations across all workspaces (last 10). */
+    val recentConversations: StateFlow<List<Pair<String, JsonObject>>> = _conversations.map { convos ->
+        convos.entries
+            .sortedByDescending { it.value.get("lastModifiedTime")?.asString ?: "" }
+            .take(10)
+            .map { it.key to it.value }
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    /** Extract workspace display name from conversation summary JSON. */
+    private fun extractWorkspaceName(summary: JsonObject): String {
+        val workspaces = summary.getAsJsonArray("workspaces")
+        if (workspaces == null || workspaces.size() == 0) return "Others"
+        val ws = workspaces[0].asJsonObject
+        val repo = ws.getAsJsonObject("repository")?.get("computedName")?.asString
+        if (repo != null) return repo.substringAfterLast("/")
+        val uri = ws.get("workspaceFolderAbsoluteUri")?.asString
+        if (uri != null) return uri.substringAfterLast("/")
+        return "Others"
+    }
+
     // ── Steps (agent output) ──
 
     private val _steps = MutableStateFlow<List<AgentStep>>(emptyList())

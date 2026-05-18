@@ -76,21 +76,24 @@ private fun relativeTime(iso: String?): String {
 fun ConversationsScreen(
     viewModel: BridgeViewModel,
     onBack: () -> Unit,
-    onSelectConversation: (String) -> Unit
+    onSelectConversation: (String) -> Unit,
+    workspaceFilter: String? = null
 ) {
     val conversations by viewModel.conversations.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val currentId by viewModel.currentConversationId.collectAsState()
 
     // Group conversations by workspace
-    val groups = remember(conversations) {
+    val groups = remember(conversations, workspaceFilter) {
         val map = mutableMapOf<String, MutableList<Pair<String, JsonObject>>>()
         for ((id, summary) in conversations) {
             val name = extractWorkspaceName(summary)
+            // If workspace filter is set, only include matching workspace
+            if (workspaceFilter != null && name != workspaceFilter) continue
             map.getOrPut(name) { mutableListOf() }.add(id to summary)
         }
         map.entries
-            .filter { it.key != "Others" }
+            .filter { workspaceFilter != null || it.key != "Others" }
             .map { (name, convos) ->
                 convos.sortByDescending { it.second.get("lastModifiedTime")?.asString ?: "" }
                 WorkspaceGroup(
@@ -134,7 +137,7 @@ fun ConversationsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Conversations") },
+                title = { Text(workspaceFilter ?: "Conversations") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")

@@ -74,29 +74,50 @@ class MainActivity : ComponentActivity() {
             }
 
             PortaRokidTheme(themeMode = themeMode) {
-                var screen by remember { mutableStateOf("chat") }
+                var screen by remember { mutableStateOf("home") }
+                var workspaceFilter by remember { mutableStateOf<String?>(null) }
 
                 when (screen) {
+                    "home" -> HomeScreen(
+                        viewModel = viewModel,
+                        onNavigateToSettings = { screen = "settings" },
+                        onNavigateToWorkspace = { wsName ->
+                            workspaceFilter = wsName
+                            screen = "conversations"
+                        },
+                        onSelectConversation = { id ->
+                            viewModel.selectConversation(id)
+                            screen = "chat"
+                        },
+                        onNewConversation = {
+                            viewModel.createNewConversation()
+                            screen = "chat"
+                        }
+                    )
                     "chat" -> ChatScreen(
                         viewModel = viewModel,
                         onNavigateToSettings = { screen = "settings" },
-                        onNavigateToConversations = { screen = "conversations" },
+                        onNavigateToConversations = { screen = "home" },
                         sharedContent = sharedContent,
                         onSharedContentConsumed = { _sharedContent.value = null }
                     )
                     "settings" -> SettingsScreen(
                         viewModel = viewModel,
-                        onBack = { screen = "chat" },
+                        onBack = { screen = "home" },
                         onNavigateToAbout = { screen = "about" },
                         onNavigateToGlasses = { screen = "glasses" }
                     )
                     "conversations" -> ConversationsScreen(
                         viewModel = viewModel,
-                        onBack = { screen = "chat" },
+                        onBack = {
+                            workspaceFilter = null
+                            screen = "home"
+                        },
                         onSelectConversation = { id ->
                             viewModel.selectConversation(id)
                             screen = "chat"
-                        }
+                        },
+                        workspaceFilter = workspaceFilter
                     )
                     "about" -> AboutScreen(
                         viewModel = viewModel,
