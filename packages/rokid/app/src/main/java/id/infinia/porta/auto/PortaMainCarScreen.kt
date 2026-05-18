@@ -239,16 +239,6 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
             .setSingleList(listBuilder.build())
             .setTitle("Porta")
             .setHeaderAction(Action.APP_ICON)
-            .addAction(
-                Action.Builder()
-                    .setTitle("Refresh")
-                    .setOnClickListener {
-                        isLoading = true
-                        invalidate()
-                        loadData()
-                    }
-                    .build()
-            )
             .build()
     }
 

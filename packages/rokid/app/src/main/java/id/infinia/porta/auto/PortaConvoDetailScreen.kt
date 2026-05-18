@@ -6,6 +6,8 @@ import androidx.car.app.CarContext
 import androidx.car.app.CarToast
 import androidx.car.app.Screen
 import androidx.car.app.model.*
+import com.google.gson.JsonElement
+import com.google.gson.JsonParser
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import kotlinx.coroutines.*
@@ -103,7 +105,7 @@ class PortaConvoDetailScreen(
                 val response = httpClient.newCall(request).execute()
                 if (response.isSuccessful) {
                     val body = response.body?.string() ?: "[]"
-                    val steps = gson.fromJson(body, JsonArray::class.java)
+                    val steps = parseStepsFromBody(body)
 
                     // Extract user and assistant text messages
                     val messages = mutableListOf<ChatMessage>()
@@ -113,16 +115,26 @@ class PortaConvoDetailScreen(
                             val type = step.get("type")?.asString ?: continue
 
                             when (type) {
-                                "user_message" -> {
-                                    val text = step.get("text")?.asString
-                                        ?: step.get("content")?.asString
-                                    if (!text.isNullOrBlank()) {
-                                        messages.add(ChatMessage("user", text))
+                                "CORTEX_STEP_TYPE_USER_INPUT" -> {
+                                    // User input: userInput.items[].text
+                                    val userInput = step.getAsJsonObject("userInput")
+                                    val items = userInput?.getAsJsonArray("items")
+                                    if (items != null && items.size() > 0) {
+                                        val textParts = mutableListOf<String>()
+                                        for (j in 0 until items.size()) {
+                                            val itemText = items[j].asJsonObject.get("text")?.asString
+                                            if (!itemText.isNullOrBlank()) textParts.add(itemText.trim())
+                                        }
+                                        if (textParts.isNotEmpty()) {
+                                            messages.add(ChatMessage("user", textParts.joinToString("\n")))
+                                        }
                                     }
                                 }
-                                "text", "response" -> {
-                                    val text = step.get("text")?.asString
-                                        ?: step.get("content")?.asString
+                                "CORTEX_STEP_TYPE_PLANNER_RESPONSE" -> {
+                                    // Assistant response: plannerResponse.modifiedResponse
+                                    val pr = step.getAsJsonObject("plannerResponse")
+                                    val text = pr?.get("modifiedResponse")?.asString
+                                        ?: pr?.get("response")?.asString
                                     if (!text.isNullOrBlank()) {
                                         messages.add(ChatMessage("assistant", text))
                                     }
@@ -192,7 +204,7 @@ class PortaConvoDetailScreen(
             val response = httpClient.newCall(request).execute()
             if (response.isSuccessful) {
                 val body = response.body?.string() ?: "[]"
-                val steps = gson.fromJson(body, JsonArray::class.java)
+                val steps = parseStepsFromBody(body)
 
                 val messages = mutableListOf<ChatMessage>()
                 for (i in 0 until steps.size()) {
@@ -200,16 +212,24 @@ class PortaConvoDetailScreen(
                         val step = steps[i].asJsonObject
                         val type = step.get("type")?.asString ?: continue
                         when (type) {
-                            "user_message" -> {
-                                val text = step.get("text")?.asString
-                                    ?: step.get("content")?.asString
-                                if (!text.isNullOrBlank()) {
-                                    messages.add(ChatMessage("user", text))
+                            "CORTEX_STEP_TYPE_USER_INPUT" -> {
+                                val userInput = step.getAsJsonObject("userInput")
+                                val items = userInput?.getAsJsonArray("items")
+                                if (items != null && items.size() > 0) {
+                                    val textParts = mutableListOf<String>()
+                                    for (j in 0 until items.size()) {
+                                        val itemText = items[j].asJsonObject.get("text")?.asString
+                                        if (!itemText.isNullOrBlank()) textParts.add(itemText.trim())
+                                    }
+                                    if (textParts.isNotEmpty()) {
+                                        messages.add(ChatMessage("user", textParts.joinToString("\n")))
+                                    }
                                 }
                             }
-                            "text", "response" -> {
-                                val text = step.get("text")?.asString
-                                    ?: step.get("content")?.asString
+                            "CORTEX_STEP_TYPE_PLANNER_RESPONSE" -> {
+                                val pr = step.getAsJsonObject("plannerResponse")
+                                val text = pr?.get("modifiedResponse")?.asString
+                                    ?: pr?.get("response")?.asString
                                 if (!text.isNullOrBlank()) {
                                     messages.add(ChatMessage("assistant", text))
                                 }
@@ -326,5 +346,31 @@ class PortaConvoDetailScreen(
             .setTitle(sanitizedTitle)
             .setHeaderAction(Action.BACK)
             .build()
+    }
+
+    /**
+     * Parse steps response body which may be:
+     * - A direct JsonArray: [...]
+     * - A JsonObject with a "steps" key: {"steps": [...]}
+     * - A JsonObject with a "trajectory" key: {"trajectory": [...]}
+     */
+    private fun parseStepsFromBody(body: String): JsonArray {
+        return try {
+            val element = JsonParser.parseString(body)
+            when {
+                element.isJsonArray -> element.asJsonArray
+                element.isJsonObject -> {
+                    val obj = element.asJsonObject
+                    obj.getAsJsonArray("steps")
+                        ?: obj.getAsJsonArray("trajectory")
+                        ?: obj.getAsJsonArray("messages")
+                        ?: JsonArray() // No recognized array key
+                }
+                else -> JsonArray()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse steps body: ${e.message}")
+            JsonArray()
+        }
     }
 }

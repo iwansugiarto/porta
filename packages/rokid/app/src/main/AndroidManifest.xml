@@ -99,7 +99,8 @@
         <!-- Android Auto -->
         <service
             android:name=".auto.PortaCarAppService"
-            android:exported="true">
+            android:exported="true"
+            android:foregroundServiceType="connectedDevice">
             <intent-filter>
                 <action android:name="androidx.car.app.CarAppService" />
                 <category android:name="androidx.car.app.category.IOT" />
@@ -109,6 +110,10 @@
         <meta-data
             android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc" />
+
+        <meta-data
+            android:name="androidx.car.app.minCarApiLevel"
+            android:value="1" />
 
     </application>
 
