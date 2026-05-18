@@ -41,7 +41,6 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import id.infinia.porta.SharedContent
 import id.infinia.porta.shared.protocol.*
-import id.infinia.porta.ui.components.ConversationSwitcherBar
 import id.infinia.porta.ui.components.MessageBubble
 import id.infinia.porta.ui.theme.*
 import id.infinia.porta.viewmodel.BridgeViewModel
@@ -684,16 +683,6 @@ fun ChatScreen(
                 .padding(paddingValues)
                 .background(MaterialTheme.colorScheme.surface)
         ) {
-            // ── Conversation switcher bar ──
-            if (connectionState == ConnectionState.CONNECTED && conversations.isNotEmpty()) {
-                ConversationSwitcherBar(
-                    conversations = conversations,
-                    currentConversationId = currentConversationId,
-                    onSelectConversation = { id -> viewModel.selectConversation(id) },
-                    onNewConversation = { viewModel.createNewConversation() },
-                    onOpenFullList = onNavigateToConversations
-                )
-            }
             // No conversation selected
             if (currentConversationId == null) {
                 Box(
