@@ -1,6 +1,7 @@
 package id.infinia.porta.auto
 
 import android.speech.tts.TextToSpeech
+import android.util.Log
 import androidx.car.app.CarContext
 import androidx.car.app.CarToast
 import androidx.car.app.Screen
@@ -17,15 +18,26 @@ import java.util.concurrent.TimeUnit
  * Shows details of a specific conversation on Android Auto.
  *
  * Features:
- * - Recent chat messages (user + assistant) — up to 4 rows
+ * - Recent chat messages (user + assistant)
  * - Auto-refresh every 5s while conversation is running
  * - Read aloud latest response via TTS
+ *
+ * Safety: All text is sanitized to remove emoji and special chars
+ * that can crash certain head units.
  */
 class PortaConvoDetailScreen(
     carContext: CarContext,
     private val convo: PortaMainCarScreen.ConvoSummary,
     private val config: PortaMainCarScreen.ConnectionConfig?
 ) : Screen(carContext) {
+
+    companion object {
+        private const val TAG = "PortaAutoDetail"
+        // PaneTemplate allows max 4 rows total.
+        // 1 for status row + 2 for messages = 3 (safe under limit)
+        private const val MAX_DISPLAY_MESSAGES = 2
+        private const val MAX_TEXT_LENGTH = 180
+    }
 
     private val gson = Gson()
     private val httpClient = OkHttpClient.Builder()
@@ -96,29 +108,33 @@ class PortaConvoDetailScreen(
                     // Extract user and assistant text messages
                     val messages = mutableListOf<ChatMessage>()
                     for (i in 0 until steps.size()) {
-                        val step = steps[i].asJsonObject
-                        val type = step.get("type")?.asString ?: continue
+                        try {
+                            val step = steps[i].asJsonObject
+                            val type = step.get("type")?.asString ?: continue
 
-                        when (type) {
-                            "user_message" -> {
-                                val text = step.get("text")?.asString
-                                    ?: step.get("content")?.asString
-                                if (!text.isNullOrBlank()) {
-                                    messages.add(ChatMessage("user", text))
+                            when (type) {
+                                "user_message" -> {
+                                    val text = step.get("text")?.asString
+                                        ?: step.get("content")?.asString
+                                    if (!text.isNullOrBlank()) {
+                                        messages.add(ChatMessage("user", text))
+                                    }
+                                }
+                                "text", "response" -> {
+                                    val text = step.get("text")?.asString
+                                        ?: step.get("content")?.asString
+                                    if (!text.isNullOrBlank()) {
+                                        messages.add(ChatMessage("assistant", text))
+                                    }
                                 }
                             }
-                            "text", "response" -> {
-                                val text = step.get("text")?.asString
-                                    ?: step.get("content")?.asString
-                                if (!text.isNullOrBlank()) {
-                                    messages.add(ChatMessage("assistant", text))
-                                }
-                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Skipping step $i: ${e.message}")
                         }
                     }
 
-                    // Keep only the last 4 messages for Auto display
-                    chatMessages = messages.takeLast(4)
+                    // Keep only the last messages for Auto display
+                    chatMessages = messages.takeLast(MAX_DISPLAY_MESSAGES)
 
                     // Check if still running
                     isRunning = convo.status == "CASCADE_RUN_STATUS_RUNNING"
@@ -129,8 +145,9 @@ class PortaConvoDetailScreen(
                     )
                 }
             } catch (e: Exception) {
+                Log.e(TAG, "Failed to load steps: ${e.message}", e)
                 chatMessages = listOf(
-                    ChatMessage("assistant", "Failed to load: ${e.message}")
+                    ChatMessage("assistant", "Failed to load: ${e.message?.take(80)}")
                 )
             } finally {
                 isLoading = false
@@ -179,35 +196,33 @@ class PortaConvoDetailScreen(
 
                 val messages = mutableListOf<ChatMessage>()
                 for (i in 0 until steps.size()) {
-                    val step = steps[i].asJsonObject
-                    val type = step.get("type")?.asString ?: continue
-                    when (type) {
-                        "user_message" -> {
-                            val text = step.get("text")?.asString
-                                ?: step.get("content")?.asString
-                            if (!text.isNullOrBlank()) {
-                                messages.add(ChatMessage("user", text))
+                    try {
+                        val step = steps[i].asJsonObject
+                        val type = step.get("type")?.asString ?: continue
+                        when (type) {
+                            "user_message" -> {
+                                val text = step.get("text")?.asString
+                                    ?: step.get("content")?.asString
+                                if (!text.isNullOrBlank()) {
+                                    messages.add(ChatMessage("user", text))
+                                }
+                            }
+                            "text", "response" -> {
+                                val text = step.get("text")?.asString
+                                    ?: step.get("content")?.asString
+                                if (!text.isNullOrBlank()) {
+                                    messages.add(ChatMessage("assistant", text))
+                                }
                             }
                         }
-                        "text", "response" -> {
-                            val text = step.get("text")?.asString
-                                ?: step.get("content")?.asString
-                            if (!text.isNullOrBlank()) {
-                                messages.add(ChatMessage("assistant", text))
-                            }
-                        }
-                    }
+                    } catch (_: Exception) {}
                 }
 
-                val newMessages = messages.takeLast(4)
+                val newMessages = messages.takeLast(MAX_DISPLAY_MESSAGES)
                 if (newMessages != chatMessages) {
                     chatMessages = newMessages
                     invalidate()
                 }
-
-                // Check if conversation stopped running
-                // (re-check via conversation list would be ideal, but steps response
-                //  growth stopping is a proxy indicator)
             }
         } catch (_: Exception) {}
     }
@@ -225,45 +240,59 @@ class PortaConvoDetailScreen(
         }
 
         // Truncate for TTS (keep it reasonable for driving)
-        val textToSpeak = lastAssistant.text.take(300)
+        val textToSpeak = CarTextUtils.sanitize(lastAssistant.text, 300)
         tts?.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, "porta_auto_tts")
-        CarToast.makeText(carContext, "🔊 Reading aloud...", CarToast.LENGTH_SHORT).show()
+        CarToast.makeText(carContext, "Reading aloud...", CarToast.LENGTH_SHORT).show()
     }
 
     override fun onGetTemplate(): Template {
+        return try {
+            buildTemplate()
+        } catch (e: Exception) {
+            Log.e(TAG, "onGetTemplate crashed", e)
+            MessageTemplate.Builder("Something went wrong.\n${e.message?.take(80)}")
+                .setTitle("Porta")
+                .setHeaderAction(Action.BACK)
+                .build()
+        }
+    }
+
+    private fun buildTemplate(): Template {
+        val sanitizedTitle = CarTextUtils.sanitize(convo.title, 80)
+
         if (isLoading) {
             return MessageTemplate.Builder("Loading conversation...")
-                .setTitle(convo.title)
+                .setTitle(sanitizedTitle)
                 .setLoading(true)
                 .build()
         }
 
         if (chatMessages.isEmpty()) {
             return MessageTemplate.Builder("No messages in this conversation yet.")
-                .setTitle(convo.title)
+                .setTitle(sanitizedTitle)
                 .setHeaderAction(Action.BACK)
                 .build()
         }
 
         val paneBuilder = Pane.Builder()
 
-        // Status row
-        val statusEmoji = if (isRunning) "⚡" else "✓"
-        val statusText = if (isRunning) "Running" else "Completed"
+        // Status row (1 of max 3 rows)
+        val statusText = if (isRunning) "Active - Running" else "Completed"
+        val stepsInfo = "${convo.stepCount} steps" +
+            if (isRunning) " - Auto-refreshing" else ""
         paneBuilder.addRow(
             Row.Builder()
-                .setTitle("$statusEmoji $statusText")
-                .addText("${convo.stepCount} steps" +
-                    if (isRunning) " • Auto-refreshing" else "")
+                .setTitle(CarTextUtils.sanitize(statusText))
+                .addText(CarTextUtils.sanitize(stepsInfo))
                 .build()
         )
 
-        // Show recent chat messages (max 3 to stay within PaneTemplate row limits)
-        // PaneTemplate allows max 4 rows total, 1 used for status
-        val displayMessages = chatMessages.takeLast(3)
+        // Show recent chat messages (max 2 to stay within PaneTemplate 4-row limit)
+        // Total: 1 status + 2 messages = 3 rows (safely under 4)
+        val displayMessages = chatMessages.takeLast(MAX_DISPLAY_MESSAGES)
         for (msg in displayMessages) {
-            val prefix = if (msg.role == "user") "🧑 You" else "🤖 Porta"
-            val truncatedText = msg.text.take(200)
+            val prefix = if (msg.role == "user") "You" else "Porta"
+            val truncatedText = CarTextUtils.sanitize(msg.text, MAX_TEXT_LENGTH)
             paneBuilder.addRow(
                 Row.Builder()
                     .setTitle(prefix)
@@ -272,20 +301,18 @@ class PortaConvoDetailScreen(
             )
         }
 
-        // Actions
-        // Read aloud button
+        // Actions (max 2 actions on PaneTemplate)
         paneBuilder.addAction(
             Action.Builder()
-                .setTitle("🔊 Read Aloud")
+                .setTitle("Read Aloud")
                 .setOnClickListener { speakLatestResponse() }
                 .build()
         )
 
-        // Refresh button for running conversations
         if (isRunning) {
             paneBuilder.addAction(
                 Action.Builder()
-                    .setTitle("↻ Refresh")
+                    .setTitle("Refresh")
                     .setOnClickListener {
                         isLoading = true
                         invalidate()
@@ -296,7 +323,7 @@ class PortaConvoDetailScreen(
         }
 
         return PaneTemplate.Builder(paneBuilder.build())
-            .setTitle(convo.title)
+            .setTitle(sanitizedTitle)
             .setHeaderAction(Action.BACK)
             .build()
     }

@@ -24,6 +24,8 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
 
     companion object {
         private const val TAG = "PortaAuto"
+        // Android Auto list template typically supports 6 items max
+        private const val MAX_LIST_ITEMS = 6
     }
 
     private val gson = Gson()
@@ -119,7 +121,10 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
                             val obj = value.asJsonObject
                             ConvoSummary(
                                 id = id,
-                                title = obj.get("summary")?.asString ?: id.take(12),
+                                title = CarTextUtils.sanitize(
+                                    obj.get("summary")?.asString ?: id.take(12),
+                                    120
+                                ),
                                 status = obj.get("status")?.asString ?: "unknown",
                                 stepCount = obj.get("stepCount")?.asInt ?: 0,
                                 lastModified = obj.get("lastModifiedTime")?.asString ?: ""
@@ -130,7 +135,7 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
                         }
                     }
                     .sortedByDescending { it.lastModified }
-                    .take(10) // Android Auto list limits
+                    .take(MAX_LIST_ITEMS)
 
                 Log.i(TAG, "Loaded ${conversations.size} conversations")
                 isLoading = false
@@ -145,6 +150,28 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
     }
 
     override fun onGetTemplate(): Template {
+        return try {
+            buildTemplate()
+        } catch (e: Exception) {
+            Log.e(TAG, "onGetTemplate crashed", e)
+            MessageTemplate.Builder("Something went wrong.\n${e.message?.take(80)}")
+                .setTitle("Porta")
+                .addAction(
+                    Action.Builder()
+                        .setTitle("Retry")
+                        .setOnClickListener {
+                            isLoading = true
+                            errorMessage = null
+                            invalidate()
+                            loadData()
+                        }
+                        .build()
+                )
+                .build()
+        }
+    }
+
+    private fun buildTemplate(): Template {
         // Loading state
         if (isLoading) {
             return MessageTemplate.Builder("Connecting to Porta...")
@@ -173,16 +200,8 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
 
         // Empty state
         if (conversations.isEmpty()) {
-            return MessageTemplate.Builder("No conversations yet.\nStart one with voice!")
+            return MessageTemplate.Builder("No conversations yet.\nStart one from your phone.")
                 .setTitle("Porta")
-                .addAction(
-                    Action.Builder()
-                        .setTitle("New Chat")
-                        .setOnClickListener {
-                            screenManager.push(PortaVoiceChatScreen(carContext, connectionConfig))
-                        }
-                        .build()
-                )
                 .addAction(
                     Action.Builder()
                         .setTitle("Refresh")
@@ -201,12 +220,12 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
 
         for (convo in conversations) {
             val isRunning = convo.status == "CASCADE_RUN_STATUS_RUNNING"
-            val statusText = if (isRunning) "⚡ Running" else "✓ ${convo.stepCount} steps"
+            val statusText = if (isRunning) "Active - Running" else "${convo.stepCount} steps"
 
             listBuilder.addItem(
                 Row.Builder()
-                    .setTitle(convo.title)
-                    .addText(statusText)
+                    .setTitle(CarTextUtils.sanitize(convo.title, 80))
+                    .addText(CarTextUtils.sanitize(statusText))
                     .setOnClickListener {
                         screenManager.push(
                             PortaConvoDetailScreen(carContext, convo, connectionConfig)
@@ -222,9 +241,11 @@ class PortaMainCarScreen(carContext: CarContext) : Screen(carContext) {
             .setHeaderAction(Action.APP_ICON)
             .addAction(
                 Action.Builder()
-                    .setTitle("New Chat")
+                    .setTitle("Refresh")
                     .setOnClickListener {
-                        screenManager.push(PortaVoiceChatScreen(carContext, connectionConfig))
+                        isLoading = true
+                        invalidate()
+                        loadData()
                     }
                     .build()
             )

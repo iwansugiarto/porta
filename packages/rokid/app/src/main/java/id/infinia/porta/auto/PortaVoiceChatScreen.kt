@@ -1,5 +1,6 @@
 package id.infinia.porta.auto
 
+import android.util.Log
 import androidx.car.app.CarContext
 import androidx.car.app.Screen
 import androidx.car.app.model.*
@@ -21,11 +22,19 @@ import java.util.concurrent.TimeUnit
  * - Continue the conversation or go back
  *
  * Designed for safe, eyes-free interaction while driving.
+ *
+ * Note: Uses MessageTemplate instead of LongMessageTemplate
+ * because LongMessageTemplate is only available when parked.
  */
 class PortaVoiceChatScreen(
     carContext: CarContext,
     private val config: PortaMainCarScreen.ConnectionConfig?
 ) : Screen(carContext) {
+
+    companion object {
+        private const val TAG = "PortaAutoVoice"
+        private const val MAX_RESPONSE_LENGTH = 300
+    }
 
     private val gson = Gson()
     private val httpClient = OkHttpClient.Builder()
@@ -56,11 +65,19 @@ class PortaVoiceChatScreen(
     }
 
     override fun onGetTemplate(): Template {
-        return when (currentState) {
-            ChatState.READY -> buildReadyTemplate()
-            ChatState.SENDING -> buildSendingTemplate()
-            ChatState.RESPONSE -> buildResponseTemplate()
-            ChatState.ERROR -> buildErrorTemplate()
+        return try {
+            when (currentState) {
+                ChatState.READY -> buildReadyTemplate()
+                ChatState.SENDING -> buildSendingTemplate()
+                ChatState.RESPONSE -> buildResponseTemplate()
+                ChatState.ERROR -> buildErrorTemplate()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "onGetTemplate crashed", e)
+            MessageTemplate.Builder("Something went wrong.")
+                .setTitle("Porta")
+                .setHeaderAction(Action.BACK)
+                .build()
         }
     }
 
@@ -81,16 +98,22 @@ class PortaVoiceChatScreen(
     }
 
     private fun buildSendingTemplate(): Template {
-        return MessageTemplate.Builder("Sending: \"${lastUserMessage}\"")
+        val safeMessage = CarTextUtils.sanitize(lastUserMessage ?: "", 100)
+        return MessageTemplate.Builder("Sending: \"$safeMessage\"")
             .setTitle("Porta")
             .setLoading(true)
             .build()
     }
 
     private fun buildResponseTemplate(): Template {
-        val responseText = lastAssistantResponse?.take(400) ?: "No response received."
+        // Use MessageTemplate instead of LongMessageTemplate
+        // LongMessageTemplate is only available while parked and can crash otherwise
+        val responseText = CarTextUtils.sanitize(
+            lastAssistantResponse ?: "No response received.",
+            MAX_RESPONSE_LENGTH
+        )
 
-        return LongMessageTemplate.Builder(responseText)
+        return MessageTemplate.Builder(responseText)
             .setTitle("Porta Response")
             .setHeaderAction(Action.BACK)
             .addAction(
@@ -103,7 +126,8 @@ class PortaVoiceChatScreen(
     }
 
     private fun buildErrorTemplate(): Template {
-        return MessageTemplate.Builder(errorMessage ?: "Unknown error")
+        val safeError = CarTextUtils.sanitize(errorMessage ?: "Unknown error", 200)
+        return MessageTemplate.Builder(safeError)
             .setTitle("Error")
             .setHeaderAction(Action.BACK)
             .addAction(
@@ -168,11 +192,11 @@ class PortaVoiceChatScreen(
                     errorMessage = "Server error: ${response.code}"
                 }
             } catch (e: Exception) {
+                Log.e(TAG, "Send failed: ${e.message}", e)
                 currentState = ChatState.ERROR
-                errorMessage = "Failed: ${e.message}"
+                errorMessage = "Failed: ${e.message?.take(100)}"
             }
             invalidate()
         }
     }
-
 }
