@@ -350,7 +350,8 @@ fun ConversationsScreen(
                                                 color = MaterialTheme.colorScheme.onSurface
                                             )
                                             Row(
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalAlignment = Alignment.CenterVertically
                                             ) {
                                                 Text(
                                                     UiUtils.relativeTime(lastModified),
@@ -362,6 +363,25 @@ fun ConversationsScreen(
                                                     fontSize = 11.sp,
                                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
                                                 )
+                                                // Status chip
+                                                val status = summary.get("status")?.asString
+                                                when (status) {
+                                                    "CASCADE_RUN_STATUS_FINISHED" -> Text(
+                                                        "✓ Done", fontSize = 10.sp,
+                                                        color = PortaSuccess,
+                                                        fontWeight = FontWeight.Medium
+                                                    )
+                                                    "CASCADE_RUN_STATUS_ERROR" -> Text(
+                                                        "✗ Error", fontSize = 10.sp,
+                                                        color = PortaError,
+                                                        fontWeight = FontWeight.Medium
+                                                    )
+                                                    "CASCADE_RUN_STATUS_WAITING" -> Text(
+                                                        "⏸ Waiting", fontSize = 10.sp,
+                                                        color = PortaWarning,
+                                                        fontWeight = FontWeight.Medium
+                                                    )
+                                                }
                                             }
                                         }
                                     }

@@ -102,10 +102,6 @@ dependencies {
     implementation(libs.androidx.glance)
     implementation(libs.androidx.glance.material3)
 
-    // Car App (Android Auto) — service disabled in manifest but sources still depend on it
-    implementation(libs.androidx.car.app)
-    implementation(libs.androidx.car.app.projected)
-
     // Debug
     debugImplementation(libs.androidx.ui.tooling)
 }

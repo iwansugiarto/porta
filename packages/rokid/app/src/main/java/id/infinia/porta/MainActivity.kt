@@ -44,6 +44,9 @@ class MainActivity : ComponentActivity() {
     /** Shared content state — consumed by ChatScreen */
     private val _sharedContent = mutableStateOf<SharedContent?>(null)
 
+    /** Pending notification cascade ID — consumed by LaunchedEffect in Compose */
+    private val _pendingCascadeId = mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -58,8 +61,8 @@ class MainActivity : ComponentActivity() {
         // Handle shortcut action
         val shortcutAction = intent?.getStringExtra("shortcut_action")
 
-        // Handle notification tap → open specific conversation
-        val notificationCascadeId = intent?.getStringExtra(
+        // Handle notification tap → open specific conversation (cold start)
+        _pendingCascadeId.value = intent?.getStringExtra(
             id.infinia.porta.service.NotificationService.EXTRA_CASCADE_ID
         )
 
@@ -67,6 +70,7 @@ class MainActivity : ComponentActivity() {
             val viewModel: BridgeViewModel = viewModel()
             val themeMode by viewModel.themeMode.collectAsState()
             val sharedContent by _sharedContent
+            val pendingCascadeId by _pendingCascadeId
 
             // Handle shortcut: auto-create new conversation
             LaunchedEffect(shortcutAction) {
@@ -82,14 +86,17 @@ class MainActivity : ComponentActivity() {
             PortaRokidTheme(themeMode = themeMode) {
                 // Start on chat screen if launched from notification with cascade ID
                 var screen by remember {
-                    mutableStateOf(if (notificationCascadeId != null) "chat" else "home")
+                    mutableStateOf(if (pendingCascadeId != null) "chat" else "home")
                 }
                 var workspaceFilter by remember { mutableStateOf<String?>(null) }
 
-                // Navigate to the notified conversation
-                LaunchedEffect(notificationCascadeId) {
-                    if (notificationCascadeId != null) {
-                        viewModel.selectConversation(notificationCascadeId)
+                // Navigate to the notified conversation (cold + warm start)
+                LaunchedEffect(pendingCascadeId) {
+                    val cascadeId = pendingCascadeId
+                    if (cascadeId != null) {
+                        viewModel.selectConversation(cascadeId)
+                        screen = "chat"
+                        _pendingCascadeId.value = null  // consume
                     }
                 }
 
@@ -174,7 +181,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         handleShareIntent(intent)
+        // Handle warm-start notification taps
+        intent.getStringExtra(
+            id.infinia.porta.service.NotificationService.EXTRA_CASCADE_ID
+        )?.let { _pendingCascadeId.value = it }
     }
 
     /**

@@ -732,7 +732,18 @@ fun ChatScreen(
                                 unfocusedBorderColor = MaterialTheme.colorScheme.surfaceVariant,
                                 focusedContainerColor = MaterialTheme.colorScheme.surface,
                                 unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                            )
+                            ),
+                            supportingText = if (inputExpanded || displayText.length > 100) {
+                                {
+                                    val lineCount = displayText.count { it == '\n' } + 1
+                                    Text(
+                                        "${displayText.length} chars" +
+                                            if (lineCount > 1) " · $lineCount lines" else "",
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                                    )
+                                }
+                            } else null
                         )
 
                         // Send / Stop button
@@ -1021,25 +1032,53 @@ fun ChatScreen(
                     }
                 }
 
+                // Track unread messages while scrolled away
+                var lastSeenCount by remember { mutableIntStateOf(chatMessages.size) }
+                var unreadCount by remember { mutableIntStateOf(0) }
+
+                LaunchedEffect(chatMessages.size, isAtBottom) {
+                    if (isAtBottom) {
+                        unreadCount = 0
+                        lastSeenCount = chatMessages.size
+                    } else if (chatMessages.size > lastSeenCount) {
+                        unreadCount += chatMessages.size - lastSeenCount
+                        lastSeenCount = chatMessages.size
+                    }
+                }
+
                 if (!isAtBottom && chatMessages.isNotEmpty()) {
                     val scope = rememberCoroutineScope()
-                    SmallFloatingActionButton(
-                        onClick = {
-                            scope.launch {
-                                listState.animateScrollToItem(chatMessages.size - 1)
+                    BadgedBox(
+                        badge = {
+                            if (unreadCount > 0) {
+                                Badge(
+                                    containerColor = PortaPrimary,
+                                    contentColor = Color.White
+                                ) {
+                                    Text("$unreadCount")
+                                }
                             }
                         },
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(16.dp),
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        contentColor = PortaPrimary
+                            .padding(16.dp)
                     ) {
-                        Icon(
-                            Icons.Default.KeyboardArrowDown,
-                            "Scroll to bottom",
-                            modifier = Modifier.size(20.dp)
-                        )
+                        SmallFloatingActionButton(
+                            onClick = {
+                                scope.launch {
+                                    listState.animateScrollToItem(chatMessages.size - 1)
+                                }
+                                unreadCount = 0
+                            },
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = PortaPrimary
+                        ) {
+                            Icon(
+                                Icons.Default.KeyboardArrowDown,
+                                "Scroll to bottom",
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                 }
             }

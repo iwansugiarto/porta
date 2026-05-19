@@ -78,7 +78,13 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
                 .verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text("Porta Proxy Connection", style = MaterialTheme.typography.titleMedium, color = PortaPrimary)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(Icons.Default.Link, null, modifier = Modifier.size(18.dp), tint = PortaPrimary)
+                Text("Porta Proxy Connection", style = MaterialTheme.typography.titleMedium, color = PortaPrimary)
+            }
 
             OutlinedTextField(
                 value = editHost, onValueChange = { editHost = it },
@@ -190,7 +196,13 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
             HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
 
             // ── Server Profiles ──
-            Text("Server Profiles", style = MaterialTheme.typography.titleMedium, color = PortaPrimary)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(Icons.Default.Bookmark, null, modifier = Modifier.size(18.dp), tint = PortaPrimary)
+                Text("Server Profiles", style = MaterialTheme.typography.titleMedium, color = PortaPrimary)
+            }
 
             val profiles by viewModel.serverProfiles.profiles.collectAsState()
             var profileName by remember { mutableStateOf("") }
@@ -304,7 +316,13 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
             HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
 
             // ── Notification Settings ──
-            Text("Notifications", style = MaterialTheme.typography.titleMedium, color = PortaPrimary)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(Icons.Default.Notifications, null, modifier = Modifier.size(18.dp), tint = PortaPrimary)
+                Text("Notifications", style = MaterialTheme.typography.titleMedium, color = PortaPrimary)
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -374,7 +392,13 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
             HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
 
             // ── Theme Settings ──
-            Text("Appearance", style = MaterialTheme.typography.titleMedium, color = PortaPrimary)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(Icons.Default.Palette, null, modifier = Modifier.size(18.dp), tint = PortaPrimary)
+                Text("Appearance", style = MaterialTheme.typography.titleMedium, color = PortaPrimary)
+            }
 
             val themeMode by viewModel.themeMode.collectAsState()
 
@@ -413,7 +437,13 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
             HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
 
             // ── Voice Settings ──
-            Text("Voice Input", style = MaterialTheme.typography.titleMedium, color = PortaPrimary)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(Icons.Default.Mic, null, modifier = Modifier.size(18.dp), tint = PortaPrimary)
+                Text("Voice Input", style = MaterialTheme.typography.titleMedium, color = PortaPrimary)
+            }
 
             val voiceLanguage by viewModel.voiceLanguage.collectAsState()
             var languageDropdownOpen by remember { mutableStateOf(false) }
@@ -473,7 +503,13 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
 
             HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
 
-            Text("AR Glasses", style = MaterialTheme.typography.titleMedium, color = PortaSecondary)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(Icons.Default.Visibility, null, modifier = Modifier.size(18.dp), tint = PortaSecondary)
+                Text("AR Glasses", style = MaterialTheme.typography.titleMedium, color = PortaSecondary)
+            }
 
             val glassesState by viewModel.glassesState.collectAsState()
             val glassesProviderName by viewModel.glassesProviderName.collectAsState()

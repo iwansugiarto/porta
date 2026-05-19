@@ -305,10 +305,21 @@ fun HomeScreen(
                     }
 
                     items(workspaces, key = { it.name }) { ws ->
-                        WorkspaceTile(
-                            workspace = ws,
-                            onClick = { onNavigateToWorkspace(ws.name) }
-                        )
+                        Box(
+                            modifier = Modifier.animateItem(
+                                fadeInSpec = tween(300),
+                                fadeOutSpec = tween(200),
+                                placementSpec = spring(
+                                    stiffness = Spring.StiffnessMediumLow,
+                                    dampingRatio = Spring.DampingRatioLowBouncy
+                                )
+                            )
+                        ) {
+                            WorkspaceTile(
+                                workspace = ws,
+                                onClick = { onNavigateToWorkspace(ws.name) }
+                            )
+                        }
                     }
                 }
             }
