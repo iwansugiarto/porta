@@ -26,6 +26,7 @@ import id.infinia.porta.ui.UiUtils
 import id.infinia.porta.ui.components.ConversationListSkeleton
 import id.infinia.porta.ui.theme.*
 import id.infinia.porta.viewmodel.BridgeViewModel
+import kotlinx.coroutines.launch
 
 /**
  * Conversation list screen — workspace-grouped like the PWA sidebar.
@@ -57,6 +58,8 @@ fun ConversationsScreen(
     val conversations by viewModel.conversations.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val currentId by viewModel.currentConversationId.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     // Group conversations by workspace
     val groups = remember(conversations, workspaceFilter) {
@@ -89,7 +92,7 @@ fun ConversationsScreen(
     }
 
     // Delete confirmation dialog
-    var deleteTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
+    // deleteTarget removed — using snackbar undo pattern instead
 
     // Search state
     var searchQuery by remember { mutableStateOf("") }
@@ -137,7 +140,8 @@ fun ConversationsScreen(
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Column(
             Modifier
@@ -278,9 +282,19 @@ fun ConversationsScreen(
                             val dismissState = rememberSwipeToDismissBoxState(
                                 confirmValueChange = { value ->
                                     if (value == SwipeToDismissBoxValue.EndToStart) {
-                                        deleteTarget = id to title
+                                        // Immediate delete with undo snackbar
+                                        scope.launch {
+                                            val result = snackbarHostState.showSnackbar(
+                                                message = "\"${title.take(30)}\" deleted",
+                                                actionLabel = "Undo",
+                                                duration = SnackbarDuration.Short
+                                            )
+                                            if (result != SnackbarResult.ActionPerformed) {
+                                                viewModel.deleteConversation(id)
+                                            }
+                                        }
                                     }
-                                    false // Don't auto-dismiss; let the dialog handle it
+                                    false
                                 }
                             )
 
@@ -396,30 +410,4 @@ fun ConversationsScreen(
         } // Column
     }
 
-    // Delete confirmation dialog
-    deleteTarget?.let { (id, title) ->
-        AlertDialog(
-            onDismissRequest = { deleteTarget = null },
-            title = { Text("Delete conversation?") },
-            text = {
-                Text(
-                    "\"$title\" will be permanently deleted.",
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        viewModel.deleteConversation(id)
-                        deleteTarget = null
-                    },
-                    colors = ButtonDefaults.textButtonColors(contentColor = PortaError)
-                ) { Text("Delete") }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) { Text("Cancel") }
-            }
-        )
-    }
 }

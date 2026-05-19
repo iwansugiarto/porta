@@ -74,10 +74,12 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Column(
-            Modifier.fillMaxSize().padding(padding).imePadding().background(MaterialTheme.colorScheme.surface)
-                .verticalScroll(rememberScrollState()).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            Modifier.fillMaxSize().padding(padding).imePadding().background(MaterialTheme.colorScheme.background)
+                .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // ── Connection Section ──
+            SettingsCard {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -192,10 +194,10 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
                     modifier = Modifier.fillMaxWidth()
                 )
             }
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+            } // end Connection card
 
             // ── Server Profiles ──
+            SettingsCard {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -312,10 +314,10 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
                     }
                 }
             }
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+            } // end Profiles card
 
             // ── Notification Settings ──
+            SettingsCard {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -388,10 +390,10 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
                     )
                 }
             }
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+            } // end Notifications card
 
             // ── Theme Settings ──
+            SettingsCard {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -433,10 +435,10 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
                     )
                 }
             }
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+            } // end Appearance card
 
             // ── Voice Settings ──
+            SettingsCard {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -500,9 +502,10 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
                     }
                 }
             }
+            } // end Voice card
 
-            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
-
+            // ── AR Glasses ──
+            SettingsCard {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -530,9 +533,10 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
                     }
                 )
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+            } // end AR Glasses card
 
             // ── About ──
+            SettingsCard {
             OutlinedButton(
                 onClick = onNavigateToAbout,
                 modifier = Modifier.fillMaxWidth().height(48.dp),
@@ -542,6 +546,25 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
                 Spacer(Modifier.width(8.dp))
                 Text("About Porta")
             }
+            } // end About card
         }
+    }
+}
+
+/** Reusable grouped card wrapper for settings sections. */
+@Composable
+private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            content = content
+        )
     }
 }
