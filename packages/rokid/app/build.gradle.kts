@@ -14,8 +14,8 @@ android {
         applicationId = "id.infinia.porta"
         minSdk = 28
         targetSdk = 35
-        versionCode = 49
-        versionName = "0.4.23"
+        versionCode = 50
+        versionName = "0.4.24"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
