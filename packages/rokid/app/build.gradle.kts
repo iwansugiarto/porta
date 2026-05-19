@@ -14,8 +14,8 @@ android {
         applicationId = "id.infinia.porta"
         minSdk = 28
         targetSdk = 35
-        versionCode = 45
-        versionName = "0.4.19"
+        versionCode = 47
+        versionName = "0.4.21"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -102,7 +102,7 @@ dependencies {
     implementation(libs.androidx.glance)
     implementation(libs.androidx.glance.material3)
 
-    // Car App (Android Auto)
+    // Car App (Android Auto) — service disabled in manifest but sources still depend on it
     implementation(libs.androidx.car.app)
     implementation(libs.androidx.car.app.projected)
 
