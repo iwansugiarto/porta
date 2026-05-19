@@ -201,60 +201,44 @@ fun ChatScreen(
                     }
                 },
                 title = {
-                    Column {
-                        Text(
-                            "Porta",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        // Connection status dot
+                        Box(
+                            Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    when (connectionState) {
+                                        ConnectionState.CONNECTED -> PortaSuccess
+                                        ConnectionState.ERROR -> PortaError
+                                        ConnectionState.RECONNECTING -> PortaWarning
+                                        else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                                    }
+                                )
                         )
-                        // Workspace / conversation subtitle
-                        if (workspaceName != null || conversationTitle != null) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                if (workspaceName != null) {
-                                    Icon(
-                                        Icons.Default.Folder,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(11.dp),
-                                        tint = PortaTertiary
-                                    )
-                                    Text(
-                                        workspaceName,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = PortaTertiary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                if (workspaceName != null && conversationTitle != null) {
-                                    Text("›", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))
-                                }
-                                if (conversationTitle != null) {
-                                    Text(
-                                        conversationTitle,
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f, fill = false)
-                                    )
-                                }
+                        Column(modifier = Modifier.weight(1f)) {
+                            // Primary: workspace or fallback
+                            Text(
+                                workspaceName ?: "Porta",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 15.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            // Secondary: conversation title
+                            if (conversationTitle != null) {
+                                Text(
+                                    conversationTitle,
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
                         }
-                        // Connection status line
-                        Text(
-                            statusMessage,
-                            fontSize = 11.sp,
-                            color = when (connectionState) {
-                                ConnectionState.CONNECTED -> PortaSuccess
-                                ConnectionState.ERROR -> PortaError
-                                ConnectionState.RECONNECTING -> PortaWarning
-                                else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                            }
-                        )
                     }
                 },
                 actions = {
