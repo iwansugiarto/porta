@@ -96,7 +96,7 @@
                 android:resource="@xml/porta_widget_info" />
         </receiver>
 
-        <!-- Android Auto -->
+        <!-- Android Auto (disabled until Play Store approval)
         <service
             android:name=".auto.PortaCarAppService"
             android:exported="true"
@@ -114,6 +114,7 @@
         <meta-data
             android:name="androidx.car.app.minCarApiLevel"
             android:value="1" />
+        -->
 
     </application>
 

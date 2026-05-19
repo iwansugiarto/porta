@@ -1,16 +1,25 @@
 package id.infinia.porta.ui.components
 
+import android.graphics.BitmapFactory
+import android.util.Base64
+import android.util.Log
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.ClickableText
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.FontFamily
@@ -20,6 +29,11 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import id.infinia.porta.ui.theme.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
 /**
  * Lightweight Compose markdown renderer.
@@ -30,6 +44,7 @@ import id.infinia.porta.ui.theme.*
  * - Headers (# ## ###)
  * - Lists (- / * / numbered)
  * - Links [text](url) → rendered as underlined text
+ * - Images ![alt](url) → rendered inline (base64 data: URI or network URL)
  * - Horizontal rules (---)
  *
  * This is intentionally simpler than a full CommonMark parser to keep
@@ -138,6 +153,9 @@ fun MarkdownText(
                         )
                     }
                 }
+                is MdBlock.ImageBlock -> {
+                    MarkdownImageBlock(url = block.url, alt = block.alt)
+                }
                 is MdBlock.HorizontalRule -> {
                     Spacer(Modifier.height(4.dp))
                     Box(
@@ -153,6 +171,161 @@ fun MarkdownText(
     }
 }
 
+// ── Image rendering ──
+
+/**
+ * Renders a markdown image block.
+ *
+ * Supports:
+ * - data:image/png;base64,... (inline base64 from Antigravity screenshots)
+ * - https://... (network images)
+ * - file:///... (ignored for security, shows placeholder)
+ */
+@Composable
+private fun MarkdownImageBlock(url: String, alt: String) {
+    when {
+        // Base64 data URI — decode inline
+        url.startsWith("data:image/") -> {
+            val base64Data = url.substringAfter("base64,", "")
+            if (base64Data.isNotEmpty()) {
+                val bitmap = remember(base64Data.hashCode()) {
+                    try {
+                        val bytes = Base64.decode(base64Data, Base64.DEFAULT)
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    } catch (e: Exception) {
+                        Log.w("MarkdownText", "Failed to decode base64 image: ${e.message}")
+                        null
+                    }
+                }
+                if (bitmap != null) {
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = alt.ifBlank { "Image" },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp)),
+                        contentScale = ContentScale.FillWidth
+                    )
+                    if (alt.isNotBlank()) {
+                        Text(
+                            alt,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                } else {
+                    ImagePlaceholder(alt.ifBlank { "Failed to decode image" })
+                }
+            } else {
+                ImagePlaceholder(alt.ifBlank { "Invalid image data" })
+            }
+        }
+
+        // Network URL — download and display
+        url.startsWith("http://") || url.startsWith("https://") -> {
+            NetworkImage(url = url, alt = alt)
+        }
+
+        // file:/// or other unsupported schemes — show placeholder
+        else -> {
+            ImagePlaceholder(alt.ifBlank { "Image: ${url.substringAfterLast("/")}" })
+        }
+    }
+}
+
+/**
+ * Downloads and displays a network image.
+ */
+@Composable
+private fun NetworkImage(url: String, alt: String) {
+    var bitmap by remember(url) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var isLoading by remember(url) { mutableStateOf(true) }
+    var error by remember(url) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(url) {
+        isLoading = true
+        error = null
+        try {
+            val bytes = withContext(Dispatchers.IO) {
+                val client = OkHttpClient.Builder()
+                    .connectTimeout(10, TimeUnit.SECONDS)
+                    .readTimeout(15, TimeUnit.SECONDS)
+                    .build()
+                val request = Request.Builder().url(url).build()
+                val response = client.newCall(request).execute()
+                if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
+                response.body?.bytes() ?: throw Exception("Empty response")
+            }
+            bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            if (bitmap == null) error = "Cannot decode image"
+        } catch (e: Exception) {
+            Log.w("MarkdownText", "Failed to load network image: ${e.message}")
+            error = e.message?.take(60)
+        } finally {
+            isLoading = false
+        }
+    }
+
+    when {
+        isLoading -> {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(120.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(24.dp),
+                    strokeWidth = 2.dp,
+                    color = PortaTertiary
+                )
+            }
+        }
+        bitmap != null -> {
+            Image(
+                bitmap = bitmap!!.asImageBitmap(),
+                contentDescription = alt.ifBlank { "Image" },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp)),
+                contentScale = ContentScale.FillWidth
+            )
+            if (alt.isNotBlank()) {
+                Text(
+                    alt,
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+        }
+        else -> {
+            ImagePlaceholder(error ?: alt.ifBlank { "Failed to load image" })
+        }
+    }
+}
+
+@Composable
+private fun ImagePlaceholder(text: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text,
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+        )
+    }
+}
+
 // ── Block parsing ──
 
 private sealed class MdBlock {
@@ -160,8 +333,12 @@ private sealed class MdBlock {
     data class Heading(val level: Int, val text: String) : MdBlock()
     data class CodeBlock(val code: String, val language: String = "") : MdBlock()
     data class ListItem(val bullet: String, val text: String) : MdBlock()
+    data class ImageBlock(val alt: String, val url: String) : MdBlock()
     data object HorizontalRule : MdBlock()
 }
+
+/** Regex for markdown image syntax: ![alt text](url) */
+private val IMAGE_REGEX = Regex("""^!\[([^\]]*)\]\(([^)]+)\)\s*$""")
 
 private fun parseBlocks(lines: List<String>): List<MdBlock> {
     val blocks = mutableListOf<MdBlock>()
@@ -181,6 +358,17 @@ private fun parseBlocks(lines: List<String>): List<MdBlock> {
             }
             blocks.add(MdBlock.CodeBlock(codeLines.joinToString("\n"), lang))
             i++ // skip closing ```
+            continue
+        }
+
+        // Image: ![alt](url) — must be checked before paragraph to avoid swallowing
+        val imageMatch = IMAGE_REGEX.find(line.trim())
+        if (imageMatch != null) {
+            blocks.add(MdBlock.ImageBlock(
+                alt = imageMatch.groupValues[1],
+                url = imageMatch.groupValues[2]
+            ))
+            i++
             continue
         }
 
@@ -233,7 +421,8 @@ private fun parseBlocks(lines: List<String>): List<MdBlock> {
             !lines[i].trimStart().startsWith("#") &&
             !lines[i].trim().matches(Regex("^-{3,}$")) &&
             !Regex("^\\s*[-*+]\\s+").containsMatchIn(lines[i]) &&
-            !Regex("^\\s*\\d+[.)\\s]+").containsMatchIn(lines[i])
+            !Regex("^\\s*\\d+[.)\\s]+").containsMatchIn(lines[i]) &&
+            IMAGE_REGEX.find(lines[i].trim()) == null  // Don't swallow image lines into paragraphs
         ) {
             paraLines.add(lines[i])
             i++
@@ -301,6 +490,25 @@ private fun parseInline(text: String): AnnotatedString {
                     }
                     i = end + 1
                     continue
+                }
+            }
+
+            // Inline image ![alt](url) — render as [alt] text placeholder in inline context
+            if (text[i] == '!' && i + 1 < text.length && text[i + 1] == '[') {
+                val closeBracket = text.indexOf(']', i + 2)
+                if (closeBracket > 0 && closeBracket + 1 < text.length && text[closeBracket + 1] == '(') {
+                    val closeParen = text.indexOf(')', closeBracket + 2)
+                    if (closeParen > 0) {
+                        val altText = text.substring(i + 2, closeBracket)
+                        withStyle(SpanStyle(
+                            color = PortaTertiary,
+                            fontStyle = FontStyle.Italic
+                        )) {
+                            append("[${altText.ifBlank { "image" }}]")
+                        }
+                        i = closeParen + 1
+                        continue
+                    }
                 }
             }
 
