@@ -678,6 +678,8 @@ private fun InfoCard(message: ChatMessage) {
         "folder" -> Icons.Default.Folder
         "list" -> Icons.AutoMirrored.Filled.ViewList
         "file-search" -> Icons.Default.FindInPage
+        "image" -> Icons.Default.Image
+        "info" -> Icons.Default.Info
         else -> Icons.Default.Info
     }
     Row(

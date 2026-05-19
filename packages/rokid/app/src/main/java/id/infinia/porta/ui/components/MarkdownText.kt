@@ -5,6 +5,7 @@ import android.util.Base64
 import android.util.Log
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -17,6 +18,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -25,7 +28,9 @@ import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import id.infinia.porta.ui.theme.*
@@ -39,12 +44,14 @@ import java.util.concurrent.TimeUnit
  * Lightweight Compose markdown renderer.
  *
  * Handles the most common markdown elements without external dependencies:
- * - **Bold**, *italic*, `inline code`
+ * - **Bold**, *italic*, `inline code`, ~~strikethrough~~
  * - Code blocks (``` fenced)
  * - Headers (# ## ###)
  * - Lists (- / * / numbered)
  * - Links [text](url) → rendered as underlined text
  * - Images ![alt](url) → rendered inline (base64 data: URI or network URL)
+ * - Tables (| col | col |)
+ * - Blockquotes (> text)
  * - Horizontal rules (---)
  *
  * This is intentionally simpler than a full CommonMark parser to keep
@@ -153,6 +160,12 @@ fun MarkdownText(
                         )
                     }
                 }
+                is MdBlock.Table -> {
+                    MarkdownTable(table = block)
+                }
+                is MdBlock.Blockquote -> {
+                    MarkdownBlockquote(text = block.text)
+                }
                 is MdBlock.ImageBlock -> {
                     MarkdownImageBlock(url = block.url, alt = block.alt)
                 }
@@ -167,6 +180,153 @@ fun MarkdownText(
                     Spacer(Modifier.height(4.dp))
                 }
             }
+        }
+    }
+}
+
+// ── Table rendering ──
+
+@Composable
+private fun MarkdownTable(table: MdBlock.Table) {
+    val borderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+    val headerBg = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+    val textColor = MaterialTheme.colorScheme.onSurface
+    val colCount = table.headers.size
+
+    // Compute column weights: equal distribution
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .clip(RoundedCornerShape(6.dp))
+            .border(1.dp, borderColor, RoundedCornerShape(6.dp))
+    ) {
+        Column {
+            // Header row
+            Row(
+                modifier = Modifier
+                    .background(headerBg)
+                    .fillMaxWidth()
+            ) {
+                table.headers.forEachIndexed { i, header ->
+                    val borderMod = if (i < colCount - 1) {
+                        Modifier.drawBehind {
+                            drawLine(
+                                color = borderColor,
+                                start = Offset(size.width, 0f),
+                                end = Offset(size.width, size.height),
+                                strokeWidth = 1.dp.toPx()
+                            )
+                        }
+                    } else Modifier
+                    Box(
+                        modifier = Modifier
+                            .widthIn(min = 60.dp, max = 200.dp)
+                            .then(borderMod)
+                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = header.trim(),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = textColor,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+            // Separator
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(borderColor)
+            )
+            // Data rows
+            table.rows.forEachIndexed { rowIdx, row ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            if (rowIdx % 2 == 0) Color.Transparent
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                        )
+                ) {
+                    for (i in 0 until colCount) {
+                        val cell = row.getOrElse(i) { "" }
+                        val borderMod = if (i < colCount - 1) {
+                            Modifier.drawBehind {
+                                drawLine(
+                                    color = borderColor,
+                                    start = Offset(size.width, 0f),
+                                    end = Offset(size.width, size.height),
+                                    strokeWidth = 1.dp.toPx()
+                                )
+                            }
+                        } else Modifier
+                        Box(
+                            modifier = Modifier
+                                .widthIn(min = 60.dp, max = 200.dp)
+                                .then(borderMod)
+                                .padding(horizontal = 8.dp, vertical = 5.dp)
+                        ) {
+                            Text(
+                                text = cell.trim(),
+                                fontSize = 12.sp,
+                                color = textColor.copy(alpha = 0.85f),
+                                lineHeight = 16.sp,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+                // Row separator
+                if (rowIdx < table.rows.size - 1) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(0.5.dp)
+                            .background(borderColor.copy(alpha = 0.5f))
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ── Blockquote rendering ──
+
+@Composable
+private fun MarkdownBlockquote(text: String) {
+    val borderColor = PortaTertiary
+    val bgColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+    val textColor = MaterialTheme.colorScheme.onSurface
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(4.dp))
+            .background(bgColor)
+    ) {
+        // Left accent border
+        Box(
+            modifier = Modifier
+                .width(3.dp)
+                .fillMaxHeight()
+                .background(borderColor)
+        )
+        // Quote content — render inline markdown inside
+        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+            val annotated = parseInline(text)
+            Text(
+                text = annotated,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                fontStyle = FontStyle.Italic,
+                color = textColor.copy(alpha = 0.8f)
+            )
         }
     }
 }
@@ -334,11 +494,27 @@ private sealed class MdBlock {
     data class CodeBlock(val code: String, val language: String = "") : MdBlock()
     data class ListItem(val bullet: String, val text: String) : MdBlock()
     data class ImageBlock(val alt: String, val url: String) : MdBlock()
+    data class Table(val headers: List<String>, val alignments: List<String>, val rows: List<List<String>>) : MdBlock()
+    data class Blockquote(val text: String) : MdBlock()
     data object HorizontalRule : MdBlock()
 }
 
 /** Regex for markdown image syntax: ![alt text](url) */
 private val IMAGE_REGEX = Regex("""^!\[([^\]]*)\]\(([^)]+)\)\s*$""")
+
+/** Regex for table row: | cell | cell | ... | */
+private val TABLE_ROW_REGEX = Regex("""^\|(.+)\|$""")
+
+/** Regex for table separator: |---|---|...| or |:---|:---:|---:| */
+private val TABLE_SEP_REGEX = Regex("""^\|[\s:]*-{2,}[\s:]*(\|[\s:]*-{2,}[\s:]*)*\|$""")
+
+/** Regex for blockquote: > text */
+private val BLOCKQUOTE_REGEX = Regex("""^>\s?(.*)$""")
+
+private fun parseTableRow(line: String): List<String> {
+    return line.trim().removePrefix("|").removeSuffix("|").split("|")
+        .map { it.trim() }
+}
 
 private fun parseBlocks(lines: List<String>): List<MdBlock> {
     val blocks = mutableListOf<MdBlock>()
@@ -358,6 +534,45 @@ private fun parseBlocks(lines: List<String>): List<MdBlock> {
             }
             blocks.add(MdBlock.CodeBlock(codeLines.joinToString("\n"), lang))
             i++ // skip closing ```
+            continue
+        }
+
+        // Table: requires header row + separator row + at least one data row
+        if (TABLE_ROW_REGEX.matches(line.trim()) && i + 1 < lines.size &&
+            TABLE_SEP_REGEX.matches(lines[i + 1].trim())) {
+            val headers = parseTableRow(line)
+            val sepLine = lines[i + 1].trim()
+            val alignments = sepLine.removePrefix("|").removeSuffix("|").split("|").map { cell ->
+                val trimmed = cell.trim()
+                when {
+                    trimmed.startsWith(":") && trimmed.endsWith(":") -> "center"
+                    trimmed.endsWith(":") -> "right"
+                    else -> "left"
+                }
+            }
+            i += 2 // skip header + separator
+            val rows = mutableListOf<List<String>>()
+            while (i < lines.size && TABLE_ROW_REGEX.matches(lines[i].trim())) {
+                rows.add(parseTableRow(lines[i]))
+                i++
+            }
+            blocks.add(MdBlock.Table(headers, alignments, rows))
+            continue
+        }
+
+        // Blockquote: > text (collect consecutive > lines)
+        val bqMatch = BLOCKQUOTE_REGEX.find(line)
+        if (bqMatch != null) {
+            val bqLines = mutableListOf(bqMatch.groupValues[1])
+            i++
+            while (i < lines.size) {
+                val nextBq = BLOCKQUOTE_REGEX.find(lines[i])
+                if (nextBq != null) {
+                    bqLines.add(nextBq.groupValues[1])
+                    i++
+                } else break
+            }
+            blocks.add(MdBlock.Blockquote(bqLines.joinToString("\n")))
             continue
         }
 
@@ -422,7 +637,9 @@ private fun parseBlocks(lines: List<String>): List<MdBlock> {
             !lines[i].trim().matches(Regex("^-{3,}$")) &&
             !Regex("^\\s*[-*+]\\s+").containsMatchIn(lines[i]) &&
             !Regex("^\\s*\\d+[.)\\s]+").containsMatchIn(lines[i]) &&
-            IMAGE_REGEX.find(lines[i].trim()) == null  // Don't swallow image lines into paragraphs
+            IMAGE_REGEX.find(lines[i].trim()) == null &&
+            BLOCKQUOTE_REGEX.find(lines[i]) == null &&
+            !TABLE_ROW_REGEX.matches(lines[i].trim())
         ) {
             paraLines.add(lines[i])
             i++
@@ -433,7 +650,7 @@ private fun parseBlocks(lines: List<String>): List<MdBlock> {
     return blocks
 }
 
-// ── Inline parsing (bold, italic, code, links) ──
+// ── Inline parsing (bold, italic, code, strikethrough, links) ──
 
 private fun parseInline(text: String): AnnotatedString {
     return buildAnnotatedString {
@@ -447,6 +664,18 @@ private fun parseInline(text: String): AnnotatedString {
                         append(text.substring(i + 3, end))
                     }
                     i = end + 3
+                    continue
+                }
+            }
+
+            // Strikethrough ~~text~~
+            if (i + 1 < text.length && text.substring(i, i + 2) == "~~") {
+                val end = text.indexOf("~~", i + 2)
+                if (end > 0) {
+                    withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) {
+                        append(text.substring(i + 2, end))
+                    }
+                    i = end + 2
                     continue
                 }
             }

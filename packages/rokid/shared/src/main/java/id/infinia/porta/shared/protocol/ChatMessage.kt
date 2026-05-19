@@ -279,6 +279,98 @@ fun stepsToMessages(steps: List<JsonObject>): List<ChatMessage> {
                     icon = "search"
                 ))
             }
+
+            // ── Generate Image ──
+            "CORTEX_STEP_TYPE_GENERATE_IMAGE" -> {
+                val gi = step.getAsJsonObject("generateImage") ?: continue
+                val prompt = gi.get("prompt")?.asString ?: "image"
+                val name = gi.get("imageName")?.asString ?: ""
+                messages.add(ChatMessage(
+                    role = "system",
+                    content = "Generated image: **$name**\n_\"${prompt.take(80)}${if (prompt.length > 80) "…" else ""}\"_",
+                    stepIndex = i,
+                    type = type,
+                    icon = "image",
+                    step = step
+                ))
+            }
+
+            // ── Web Search ──
+            "CORTEX_STEP_TYPE_SEARCH_WEB" -> {
+                val sw = step.getAsJsonObject("searchWeb") ?: continue
+                val query = sw.get("query")?.asString ?: ""
+                messages.add(ChatMessage(
+                    role = "system",
+                    content = "Searched web: **\"$query\"**",
+                    stepIndex = i,
+                    type = type,
+                    icon = "search"
+                ))
+            }
+
+            // ── Read URL Content ──
+            "CORTEX_STEP_TYPE_READ_URL_CONTENT" -> {
+                val ruc = step.getAsJsonObject("readUrlContent") ?: continue
+                val url = ruc.get("url")?.asString ?: ""
+                val domain = try {
+                    java.net.URI(url).host ?: url.take(30)
+                } catch (_: Exception) { url.take(30) }
+                messages.add(ChatMessage(
+                    role = "system",
+                    content = "Fetched **$domain**",
+                    stepIndex = i,
+                    type = type,
+                    icon = "eye"
+                ))
+            }
+
+            // ── Browser Subagent ──
+            "CORTEX_STEP_TYPE_BROWSER_SUBAGENT" -> {
+                val bs = step.getAsJsonObject("browserSubagent") ?: continue
+                val taskName = bs.get("taskName")?.asString ?: "Browser task"
+                messages.add(ChatMessage(
+                    role = "system",
+                    content = "Browser: **$taskName**",
+                    stepIndex = i,
+                    type = type,
+                    icon = "eye"
+                ))
+            }
+
+            // ── Semantic Search ──
+            "CORTEX_STEP_TYPE_SEMANTIC_SEARCH" -> {
+                val ss = step.getAsJsonObject("semanticSearch") ?: continue
+                val query = ss.get("query")?.asString ?: ""
+                val results = ss.getAsJsonArray("results")?.size() ?: 0
+                messages.add(ChatMessage(
+                    role = "system",
+                    content = "Semantic search `$query` — $results result${if (results != 1) "s" else ""}",
+                    stepIndex = i,
+                    type = type,
+                    icon = "search"
+                ))
+            }
+
+            // ── Catch-all for unhandled tool types ──
+            else -> {
+                // Show unknown step types as compact info cards
+                val toolName = step.getAsJsonObject("metadata")
+                    ?.getAsJsonObject("toolCall")?.get("name")?.asString
+                val toolAction = step.getAsJsonObject("metadata")
+                    ?.getAsJsonObject("toolCall")?.get("toolAction")?.asString
+                val toolSummary = step.getAsJsonObject("metadata")
+                    ?.getAsJsonObject("toolCall")?.get("toolSummary")?.asString
+                val label = toolAction ?: toolSummary ?: toolName
+                if (label != null) {
+                    messages.add(ChatMessage(
+                        role = "system",
+                        content = label,
+                        stepIndex = i,
+                        type = type,
+                        icon = "info"
+                    ))
+                }
+            }
         }
     }
 

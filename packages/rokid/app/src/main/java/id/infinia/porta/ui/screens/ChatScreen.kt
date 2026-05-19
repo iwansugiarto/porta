@@ -31,6 +31,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -106,6 +108,8 @@ fun ChatScreen(
     }
 
     var inputText by remember { mutableStateOf("") }
+    var inputExpanded by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
     val listState = rememberLazyListState()
 
     // Model selector expanded state
@@ -686,7 +690,7 @@ fun ChatScreen(
                                     fontSize = 14.sp
                                 )
                             },
-                            maxLines = 4,
+                            maxLines = if (inputExpanded) 12 else 4,
                             readOnly = isListening,
                             textStyle = LocalTextStyle.current.copy(fontSize = 14.sp),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
@@ -694,6 +698,7 @@ fun ChatScreen(
                                 onSend = {
                                     val hasContent = inputText.isNotBlank() || attachments.isNotEmpty()
                                     if (hasContent) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                         val media = attachments.map {
                                             mapOf("mimeType" to it.mimeType, "inlineData" to it.base64)
                                         }.ifEmpty { null }
@@ -702,11 +707,29 @@ fun ChatScreen(
                                             media = media
                                         )
                                         inputText = ""
+                                        inputExpanded = false
                                         attachments.clear()
                                     }
                                 }
                             ),
                             shape = RoundedCornerShape(20.dp),
+                            trailingIcon = {
+                                // Expand/collapse toggle for input field
+                                if (displayText.length > 80 || inputExpanded) {
+                                    IconButton(
+                                        onClick = { inputExpanded = !inputExpanded },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            if (inputExpanded) Icons.Default.UnfoldLess
+                                            else Icons.Default.UnfoldMore,
+                                            if (inputExpanded) "Collapse" else "Expand",
+                                            modifier = Modifier.size(16.dp),
+                                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                        )
+                                    }
+                                }
+                            },
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = PortaPrimary,
                                 unfocusedBorderColor = MaterialTheme.colorScheme.surfaceVariant,
@@ -731,6 +754,7 @@ fun ChatScreen(
                             FilledIconButton(
                                 onClick = {
                                     if (hasContent) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                         val media = attachments.map {
                                             mapOf("mimeType" to it.mimeType, "inlineData" to it.base64)
                                         }.ifEmpty { null }
@@ -739,6 +763,7 @@ fun ChatScreen(
                                             media = media
                                         )
                                         inputText = ""
+                                        inputExpanded = false
                                         attachments.clear()
                                     }
                                 },

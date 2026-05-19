@@ -97,7 +97,10 @@ class MainActivity : ComponentActivity() {
                     "chat" -> ChatScreen(
                         viewModel = viewModel,
                         onNavigateToSettings = { screen = "settings" },
-                        onNavigateToConversations = { screen = "home" },
+                        onNavigateToConversations = {
+                            viewModel.loadConversations() // Refresh workspace data
+                            screen = "home"
+                        },
                         sharedContent = sharedContent,
                         onSharedContentConsumed = { _sharedContent.value = null }
                     )

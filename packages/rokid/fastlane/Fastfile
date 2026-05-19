@@ -196,6 +196,41 @@ platform :android do
     UI.success "✅ Deployed to Play Store internal track"
   end
 
+  desc "Bump version → build AAB → deploy to Play Store internal track → git tag"
+  lane :internal do |options|
+    # 1. Bump version
+    version = bump_version(type: options[:bump] || "patch")
+    version_name = version[:version_name]
+    version_code = version[:version_code]
+
+    # 2. Build signed AAB
+    build_aab
+
+    # 3. Deploy to internal track
+    supply(
+      track: "internal",
+      aab: File.join(PROJECT_ROOT, "app/build/outputs/bundle/release/app-release.aab"),
+      skip_upload_apk: true,
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+
+    # 4. Git commit + tag
+    tag = "internal/v#{version_name}-#{version_code}"
+    git_add(path: BUILD_GRADLE)
+    git_commit(
+      path: BUILD_GRADLE,
+      message: "chore(rokid): internal release v#{version_name} (#{version_code})"
+    )
+    add_git_tag(tag: tag)
+
+    UI.success "🚀 Internal v#{version_name} (#{version_code}) published!"
+    UI.message ""
+    UI.message "  Tag:  #{tag}"
+    UI.message "  Push with: git push && git push origin #{tag}"
+  end
+
   desc "Promote internal to alpha"
   lane :promote_alpha do
     supply(

@@ -424,8 +424,10 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     fun disconnect() {
         portaClient.disconnectWebSocket()
         _steps.value = emptyList()
+        _rawSteps.value = emptyList()
         _latestResponse.value = ""
         _currentConversationId.value = null
+        stepCount = 0
     }
 
     // ── Conversations ──
@@ -446,11 +448,17 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun selectConversation(cascadeId: String) {
+        // Disconnect old WS first to prevent stale steps bleeding through
+        portaClient.disconnectWebSocket()
+
+        // Clear all conversation-specific state
         _currentConversationId.value = cascadeId
         _steps.value = emptyList()
         _rawSteps.value = emptyList()
         _latestResponse.value = ""
         stepCount = 0
+
+        // Connect to new conversation
         portaClient.connectWebSocket(cascadeId)
     }
 
