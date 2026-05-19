@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.animation.core.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -24,6 +25,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.gson.JsonObject
+import id.infinia.porta.ui.UiUtils
 import id.infinia.porta.ui.theme.*
 import id.infinia.porta.viewmodel.BridgeViewModel
 
@@ -54,22 +56,7 @@ private fun workspaceColor(name: String): Color {
     return workspaceColors[hash % workspaceColors.size]
 }
 
-private fun relativeTime(iso: String?): String {
-    if (iso == null) return ""
-    return try {
-        val diff = System.currentTimeMillis() -
-                java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US)
-                    .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
-                    .parse(iso.take(19))!!.time
-        val mins = diff / 60_000
-        when {
-            mins < 1 -> "just now"
-            mins < 60 -> "${mins}m ago"
-            mins < 1440 -> "${mins / 60}h ago"
-            else -> "${mins / 1440}d ago"
-        }
-    } catch (_: Exception) { "" }
-}
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -106,18 +93,33 @@ fun HomeScreen(
                             fontWeight = FontWeight.Bold,
                             fontSize = 22.sp
                         )
-                        // Connection indicator
+                        // Animated connection indicator
                         val indicatorColor = when (connectionState) {
                             id.infinia.porta.shared.protocol.ConnectionState.CONNECTED -> PortaSuccess
                             id.infinia.porta.shared.protocol.ConnectionState.CONNECTING,
                             id.infinia.porta.shared.protocol.ConnectionState.RECONNECTING -> PortaWarning
                             else -> PortaError
                         }
+                        val isConnecting = connectionState == id.infinia.porta.shared.protocol.ConnectionState.CONNECTING ||
+                            connectionState == id.infinia.porta.shared.protocol.ConnectionState.RECONNECTING
+                        val pulseAlpha = if (isConnecting) {
+                            val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+                            val alpha by infiniteTransition.animateFloat(
+                                initialValue = 0.3f,
+                                targetValue = 1f,
+                                animationSpec = infiniteRepeatable(
+                                    animation = tween(800, easing = FastOutSlowInEasing),
+                                    repeatMode = RepeatMode.Reverse
+                                ),
+                                label = "pulseAlpha"
+                            )
+                            alpha
+                        } else 1f
                         Box(
                             Modifier
                                 .size(8.dp)
                                 .clip(CircleShape)
-                                .background(indicatorColor)
+                                .background(indicatorColor.copy(alpha = pulseAlpha))
                         )
                     }
                 },
@@ -203,6 +205,34 @@ fun HomeScreen(
                     Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 80.dp) // room for FAB
                 ) {
+                    // ── Greeting header ──
+                    item(key = "greeting") {
+                        val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+                        val greeting = when {
+                            hour < 12 -> "Good Morning"
+                            hour < 17 -> "Good Afternoon"
+                            else -> "Good Evening"
+                        }
+                        val totalConvos = conversations.size
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp)
+                        ) {
+                            Text(
+                                greeting,
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                "$totalConvos conversations across ${workspaces.size} workspaces",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                            )
+                        }
+                    }
+
                     // ── Recent conversations carousel ──
                     if (recentConvos.isNotEmpty()) {
                         item(key = "recent-header") {
@@ -363,7 +393,7 @@ private fun RecentConvoCard(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Text(
-                    relativeTime(lastModified),
+                    UiUtils.relativeTime(lastModified),
                     fontSize = 10.sp,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
                 )

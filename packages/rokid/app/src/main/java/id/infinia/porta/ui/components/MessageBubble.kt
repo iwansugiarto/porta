@@ -8,6 +8,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
@@ -239,10 +241,18 @@ private fun AssistantBubble(message: ChatMessage, onRevert: ((Int) -> Unit)? = n
 private fun ThinkingBlock(thinking: String, duration: String?) {
     var expanded by remember { mutableStateOf(false) }
 
-    val durationLabel = duration?.let {
-        val match = Regex("([\\d.]+)s").find(it)
-        match?.groupValues?.get(1)?.toFloatOrNull()?.let { secs ->
-            String.format("%.1fs", secs)
+    val durationLabel = duration?.let { d ->
+        // Try to parse "Xs" format, or "Xms", or plain number
+        val secMatch = Regex("([\\d.]+)\\s*s").find(d)
+        val msMatch = Regex("([\\d.]+)\\s*ms").find(d)
+        when {
+            msMatch != null -> msMatch.groupValues[1].toFloatOrNull()?.let {
+                String.format("%.1fs", it / 1000f)
+            }
+            secMatch != null -> secMatch.groupValues[1].toFloatOrNull()?.let {
+                String.format("%.1fs", it)
+            }
+            else -> d.toFloatOrNull()?.let { String.format("%.1fs", it) }
         }
     } ?: ""
 
@@ -443,17 +453,23 @@ private fun CommandCard(
                 }
             }
 
-            // Expanded output
+            // Expanded output (max height with scroll for very long outputs)
             if (expanded && output.isNotEmpty()) {
                 Spacer(Modifier.height(6.dp))
+                val scrollState = rememberScrollState()
+                val displayOutput = if (output.length > 8000) {
+                    output.take(8000) + "\n…(truncated, ${output.length} chars total)"
+                } else output
                 Text(
-                    output,
+                    displayOutput,
                     fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     lineHeight = 15.sp,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                     modifier = Modifier
                         .fillMaxWidth()
+                        .heightIn(max = 300.dp)
+                        .verticalScroll(scrollState)
                         .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(6.dp))
                         .padding(8.dp)
                 )

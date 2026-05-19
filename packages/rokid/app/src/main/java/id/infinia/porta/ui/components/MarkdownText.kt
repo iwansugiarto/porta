@@ -6,12 +6,16 @@ import android.util.Log
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.ClickableText
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -22,7 +26,10 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.FontFamily
@@ -39,6 +46,12 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
+
+/** Shared HTTP client for loading network images — avoids per-image thread pool leak. */
+private val imageHttpClient = OkHttpClient.Builder()
+    .connectTimeout(10, TimeUnit.SECONDS)
+    .readTimeout(15, TimeUnit.SECONDS)
+    .build()
 
 /**
  * Lightweight Compose markdown renderer.
@@ -83,18 +96,14 @@ fun MarkdownText(
         for (block in blocks) {
             when (block) {
                 is MdBlock.Paragraph -> {
-                    val annotated = parseInline(block.text)
-                    ClickableText(
+                    val annotated = parseInlineLinked(block.text, safeOpenUri)
+                    Text(
                         text = annotated,
                         style = TextStyle(
                             fontSize = 14.sp,
                             lineHeight = 20.sp,
                             color = textColor
-                        ),
-                        onClick = { offset ->
-                            annotated.getStringAnnotations("URL", offset, offset)
-                                .firstOrNull()?.let { safeOpenUri(it.item) }
-                        }
+                        )
                     )
                 }
                 is MdBlock.Heading -> {
@@ -105,36 +114,70 @@ fun MarkdownText(
                         else -> 14.sp to FontWeight.Medium
                     }
                     Spacer(Modifier.height(4.dp))
-                    val annotated = parseInline(block.text)
-                    ClickableText(
+                    val annotated = parseInlineLinked(block.text, safeOpenUri)
+                    Text(
                         text = annotated,
                         style = TextStyle(
                             fontSize = size,
                             fontWeight = weight,
                             lineHeight = (size.value + 6).sp,
                             color = textColor
-                        ),
-                        onClick = { offset ->
-                            annotated.getStringAnnotations("URL", offset, offset)
-                                .firstOrNull()?.let { safeOpenUri(it.item) }
-                        }
+                        )
                     )
                 }
                 is MdBlock.CodeBlock -> {
+                    val clipboardManager = LocalClipboardManager.current
+                    val haptic = LocalHapticFeedback.current
+                    var copied by remember { mutableStateOf(false) }
+
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(6.dp))
-                            .padding(8.dp)
-                            .horizontalScroll(rememberScrollState())
                     ) {
-                        Text(
-                            text = block.code,
-                            fontSize = 12.sp,
-                            fontFamily = FontFamily.Monospace,
-                            lineHeight = 16.sp,
-                            color = textColor.copy(alpha = 0.85f)
-                        )
+                        // Code content with horizontal scroll
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(end = 32.dp) // Reserve space for copy button
+                                .padding(8.dp)
+                                .horizontalScroll(rememberScrollState())
+                        ) {
+                            Text(
+                                text = block.code,
+                                fontSize = 12.sp,
+                                fontFamily = FontFamily.Monospace,
+                                lineHeight = 16.sp,
+                                color = textColor.copy(alpha = 0.85f)
+                            )
+                        }
+                        // Copy button in top-right corner
+                        IconButton(
+                            onClick = {
+                                clipboardManager.setText(AnnotatedString(block.code))
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                copied = true
+                            },
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .size(28.dp)
+                                .padding(4.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.ContentCopy,
+                                contentDescription = "Copy code",
+                                modifier = Modifier.size(14.dp),
+                                tint = if (copied) PortaSuccess else textColor.copy(alpha = 0.3f)
+                            )
+                        }
+                    }
+
+                    // Reset copied state after a delay
+                    LaunchedEffect(copied) {
+                        if (copied) {
+                            kotlinx.coroutines.delay(2000)
+                            copied = false
+                        }
                     }
                 }
                 is MdBlock.ListItem -> {
@@ -145,18 +188,14 @@ fun MarkdownText(
                             color = PortaTertiary,
                             modifier = Modifier.width(20.dp)
                         )
-                        val annotated = parseInline(block.text)
-                        ClickableText(
+                        val annotated = parseInlineLinked(block.text, safeOpenUri)
+                        Text(
                             text = annotated,
                             style = TextStyle(
                                 fontSize = 14.sp,
                                 lineHeight = 20.sp,
                                 color = textColor
-                            ),
-                            onClick = { offset ->
-                                annotated.getStringAnnotations("URL", offset, offset)
-                                    .firstOrNull()?.let { safeOpenUri(it.item) }
-                            }
+                            )
                         )
                     }
                 }
@@ -408,12 +447,8 @@ private fun NetworkImage(url: String, alt: String) {
         error = null
         try {
             val bytes = withContext(Dispatchers.IO) {
-                val client = OkHttpClient.Builder()
-                    .connectTimeout(10, TimeUnit.SECONDS)
-                    .readTimeout(15, TimeUnit.SECONDS)
-                    .build()
                 val request = Request.Builder().url(url).build()
-                val response = client.newCall(request).execute()
+                val response = imageHttpClient.newCall(request).execute()
                 if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
                 response.body?.bytes() ?: throw Exception("Empty response")
             }
@@ -511,6 +546,18 @@ private val TABLE_SEP_REGEX = Regex("""^\|[\s:]*-{2,}[\s:]*(\|[\s:]*-{2,}[\s:]*)
 /** Regex for blockquote: > text */
 private val BLOCKQUOTE_REGEX = Regex("""^>\s?(.*)$""")
 
+/** Regex for heading: # text, ## text, etc. */
+private val HEADING_REGEX = Regex("""^(#{1,4})\s+(.+)""")
+
+/** Regex for horizontal rule: --- or *** or ___ */
+private val HR_REGEX = Regex("""^-{3,}$|^\*{3,}$|^_{3,}$""")
+
+/** Regex for unordered list: - text, * text, + text */
+private val UL_REGEX = Regex("""^\s*[-*+]\s+(.+)""")
+
+/** Regex for ordered list: 1. text, 2) text */
+private val OL_REGEX = Regex("""^\s*(\d+)[.)\s]+(.+)""")
+
 private fun parseTableRow(line: String): List<String> {
     return line.trim().removePrefix("|").removeSuffix("|").split("|")
         .map { it.trim() }
@@ -588,7 +635,7 @@ private fun parseBlocks(lines: List<String>): List<MdBlock> {
         }
 
         // Heading
-        val headingMatch = Regex("^(#{1,4})\\s+(.+)").find(line)
+        val headingMatch = HEADING_REGEX.find(line)
         if (headingMatch != null) {
             blocks.add(MdBlock.Heading(
                 headingMatch.groupValues[1].length,
@@ -599,14 +646,14 @@ private fun parseBlocks(lines: List<String>): List<MdBlock> {
         }
 
         // Horizontal rule
-        if (line.trim().matches(Regex("^-{3,}$|^\\*{3,}$|^_{3,}$"))) {
+        if (HR_REGEX.matches(line.trim())) {
             blocks.add(MdBlock.HorizontalRule)
             i++
             continue
         }
 
         // Unordered list
-        val ulMatch = Regex("^\\s*[-*+]\\s+(.+)").find(line)
+        val ulMatch = UL_REGEX.find(line)
         if (ulMatch != null) {
             blocks.add(MdBlock.ListItem("•", ulMatch.groupValues[1]))
             i++
@@ -614,7 +661,7 @@ private fun parseBlocks(lines: List<String>): List<MdBlock> {
         }
 
         // Ordered list
-        val olMatch = Regex("^\\s*(\\d+)[.)\\s]+(.+)").find(line)
+        val olMatch = OL_REGEX.find(line)
         if (olMatch != null) {
             blocks.add(MdBlock.ListItem("${olMatch.groupValues[1]}.", olMatch.groupValues[2]))
             i++
@@ -634,9 +681,9 @@ private fun parseBlocks(lines: List<String>): List<MdBlock> {
             lines[i].isNotBlank() &&
             !lines[i].trimStart().startsWith("```") &&
             !lines[i].trimStart().startsWith("#") &&
-            !lines[i].trim().matches(Regex("^-{3,}$")) &&
-            !Regex("^\\s*[-*+]\\s+").containsMatchIn(lines[i]) &&
-            !Regex("^\\s*\\d+[.)\\s]+").containsMatchIn(lines[i]) &&
+            !HR_REGEX.matches(lines[i].trim()) &&
+            !UL_REGEX.containsMatchIn(lines[i]) &&
+            !OL_REGEX.containsMatchIn(lines[i]) &&
             IMAGE_REGEX.find(lines[i].trim()) == null &&
             BLOCKQUOTE_REGEX.find(lines[i]) == null &&
             !TABLE_ROW_REGEX.matches(lines[i].trim())
@@ -757,6 +804,131 @@ private fun parseInline(text: String): AnnotatedString {
                             append(linkText)
                         }
                         pop()
+                        i = closeParen + 1
+                        continue
+                    }
+                }
+            }
+
+            // Regular character
+            append(text[i])
+            i++
+        }
+    }
+}
+
+/**
+ * Variant of parseInline that makes links clickable using LinkAnnotation.
+ * Used with standard Text() instead of deprecated ClickableText().
+ */
+private fun parseInlineLinked(text: String, onLinkClick: (String) -> Unit): AnnotatedString {
+    return buildAnnotatedString {
+        var i = 0
+        while (i < text.length) {
+            // Bold + italic ***text***
+            if (i + 2 < text.length && text.substring(i, i + 3) == "***") {
+                val end = text.indexOf("***", i + 3)
+                if (end > 0) {
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic)) {
+                        append(text.substring(i + 3, end))
+                    }
+                    i = end + 3
+                    continue
+                }
+            }
+
+            // Strikethrough ~~text~~
+            if (i + 1 < text.length && text.substring(i, i + 2) == "~~") {
+                val end = text.indexOf("~~", i + 2)
+                if (end > 0) {
+                    withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) {
+                        append(text.substring(i + 2, end))
+                    }
+                    i = end + 2
+                    continue
+                }
+            }
+
+            // Bold **text** or __text__
+            if (i + 1 < text.length && (text.substring(i, i + 2) == "**" || text.substring(i, i + 2) == "__")) {
+                val marker = text.substring(i, i + 2)
+                val end = text.indexOf(marker, i + 2)
+                if (end > 0) {
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                        append(text.substring(i + 2, end))
+                    }
+                    i = end + 2
+                    continue
+                }
+            }
+
+            // Italic *text* or _text_
+            if (text[i] == '*' || text[i] == '_') {
+                val marker = text[i]
+                val end = text.indexOf(marker, i + 1)
+                if (end > 0 && end > i + 1) {
+                    withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
+                        append(text.substring(i + 1, end))
+                    }
+                    i = end + 1
+                    continue
+                }
+            }
+
+            // Inline code `text`
+            if (text[i] == '`') {
+                val end = text.indexOf('`', i + 1)
+                if (end > 0) {
+                    withStyle(SpanStyle(
+                        fontFamily = FontFamily.Monospace,
+                        background = Color(0x1AFFFFFF),
+                        fontSize = 13.sp
+                    )) {
+                        append(text.substring(i + 1, end))
+                    }
+                    i = end + 1
+                    continue
+                }
+            }
+
+            // Inline image ![alt](url)
+            if (text[i] == '!' && i + 1 < text.length && text[i + 1] == '[') {
+                val closeBracket = text.indexOf(']', i + 2)
+                if (closeBracket > 0 && closeBracket + 1 < text.length && text[closeBracket + 1] == '(') {
+                    val closeParen = text.indexOf(')', closeBracket + 2)
+                    if (closeParen > 0) {
+                        val altText = text.substring(i + 2, closeBracket)
+                        withStyle(SpanStyle(
+                            color = PortaTertiary,
+                            fontStyle = FontStyle.Italic
+                        )) {
+                            append("[${altText.ifBlank { "image" }}]")
+                        }
+                        i = closeParen + 1
+                        continue
+                    }
+                }
+            }
+
+            // Link [text](url) — use LinkAnnotation for clickable links
+            if (text[i] == '[') {
+                val closeBracket = text.indexOf(']', i + 1)
+                if (closeBracket > 0 && closeBracket + 1 < text.length && text[closeBracket + 1] == '(') {
+                    val closeParen = text.indexOf(')', closeBracket + 2)
+                    if (closeParen > 0) {
+                        val linkText = text.substring(i + 1, closeBracket)
+                        val linkUrl = text.substring(closeBracket + 2, closeParen)
+                        val link = LinkAnnotation.Clickable(tag = "URL") {
+                            onLinkClick(linkUrl)
+                        }
+                        withLink(link) {
+                            withStyle(SpanStyle(
+                                color = PortaTertiary,
+                                textDecoration = TextDecoration.Underline
+                            )) {
+                                append(linkText)
+                            }
+                        }
                         i = closeParen + 1
                         continue
                     }

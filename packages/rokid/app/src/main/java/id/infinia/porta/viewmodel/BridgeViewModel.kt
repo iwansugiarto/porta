@@ -1,9 +1,11 @@
 package id.infinia.porta.viewmodel
 
+import id.infinia.porta.ui.UiUtils
 import id.infinia.porta.ui.theme.ThemeMode
 
 import android.app.Application
 import android.content.Context
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
@@ -154,7 +156,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     val workspaceGroups: StateFlow<List<WorkspaceInfo>> = _conversations.map { convos ->
         val groups = mutableMapOf<String, MutableList<Pair<String, JsonObject>>>()
         for ((id, summary) in convos) {
-            val wsName = extractWorkspaceName(summary)
+            val wsName = UiUtils.extractWorkspaceName(summary)
             groups.getOrPut(wsName) { mutableListOf() }.add(id to summary)
         }
         groups.entries.map { (name, items) ->
@@ -185,17 +187,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
             .map { it.key to it.value }
     }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
-    /** Extract workspace display name from conversation summary JSON. */
-    private fun extractWorkspaceName(summary: JsonObject): String {
-        val workspaces = summary.getAsJsonArray("workspaces")
-        if (workspaces == null || workspaces.size() == 0) return "Others"
-        val ws = workspaces[0].asJsonObject
-        val repo = ws.getAsJsonObject("repository")?.get("computedName")?.asString
-        if (repo != null) return repo.substringAfterLast("/")
-        val uri = ws.get("workspaceFolderAbsoluteUri")?.asString
-        if (uri != null) return uri.substringAfterLast("/")
-        return "Others"
-    }
+
 
     // ── Steps (agent output) ──
 
@@ -450,6 +442,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     fun selectConversation(cascadeId: String) {
         // Disconnect old WS first to prevent stale steps bleeding through
         portaClient.disconnectWebSocket()
+        portaClient.resetRunningState()
 
         // Clear all conversation-specific state
         _currentConversationId.value = cascadeId
@@ -902,7 +895,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                     viewModelScope.launch {
                         kotlinx.coroutines.delay(1500)
                         if (_steps.value.isEmpty() && stepCount > 0) {
-                            println("[BridgeVM] Steps not received after Ready, retrying sync(0)...")
+                            Log.d("BridgeVM", "Steps not received after Ready, retrying sync(0)...")
                             portaClient.syncOffset(0)
                         }
                     }
@@ -910,6 +903,13 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             is PortaMessage.Steps -> {
+                // Guard: discard stale packets from a previous conversation
+                val expectedId = _currentConversationId.value
+                val incomingId = portaClient.currentCascadeId
+                if (expectedId != null && incomingId != null && expectedId != incomingId) {
+                    return // Stale packet from old conversation
+                }
+
                 val newSteps = message.steps.mapIndexed { i, json ->
                     AgentStep.fromJson(message.offset + i, json)
                 }

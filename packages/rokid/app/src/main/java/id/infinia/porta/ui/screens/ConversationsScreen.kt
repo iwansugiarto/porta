@@ -22,6 +22,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.gson.JsonObject
+import id.infinia.porta.ui.UiUtils
 import id.infinia.porta.ui.components.ConversationListSkeleton
 import id.infinia.porta.ui.theme.*
 import id.infinia.porta.viewmodel.BridgeViewModel
@@ -43,33 +44,7 @@ data class WorkspaceGroup(
     val hasRunning: Boolean
 )
 
-private fun extractWorkspaceName(summary: JsonObject): String {
-    val workspaces = summary.getAsJsonArray("workspaces")
-    if (workspaces == null || workspaces.size() == 0) return "Others"
-    val ws = workspaces[0].asJsonObject
-    val repo = ws.getAsJsonObject("repository")?.get("computedName")?.asString
-    if (repo != null) return repo.substringAfterLast("/")
-    val uri = ws.get("workspaceFolderAbsoluteUri")?.asString
-    if (uri != null) return uri.substringAfterLast("/")
-    return "Others"
-}
 
-private fun relativeTime(iso: String?): String {
-    if (iso == null) return ""
-    return try {
-        val diff = System.currentTimeMillis() -
-                java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US)
-                    .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
-                    .parse(iso.take(19))!!.time
-        val mins = diff / 60_000
-        when {
-            mins < 1 -> "just now"
-            mins < 60 -> "${mins}m ago"
-            mins < 1440 -> "${mins / 60}h ago"
-            else -> "${mins / 1440}d ago"
-        }
-    } catch (_: Exception) { "" }
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -87,7 +62,7 @@ fun ConversationsScreen(
     val groups = remember(conversations, workspaceFilter) {
         val map = mutableMapOf<String, MutableList<Pair<String, JsonObject>>>()
         for ((id, summary) in conversations) {
-            val name = extractWorkspaceName(summary)
+            val name = UiUtils.extractWorkspaceName(summary)
             // If workspace filter is set, only include matching workspace
             if (workspaceFilter != null && name != workspaceFilter) continue
             map.getOrPut(name) { mutableListOf() }.add(id to summary)
@@ -378,7 +353,7 @@ fun ConversationsScreen(
                                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                                             ) {
                                                 Text(
-                                                    relativeTime(lastModified),
+                                                    UiUtils.relativeTime(lastModified),
                                                     fontSize = 11.sp,
                                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
                                                 )

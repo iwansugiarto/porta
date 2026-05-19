@@ -3,6 +3,7 @@ package id.infinia.porta.data
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import id.infinia.porta.shared.protocol.ConnectionState
+import android.util.Log
 import id.infinia.porta.shared.protocol.PortaMessage
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -63,10 +64,17 @@ class PortaClient(
     // ── Internal state ──
 
     private var webSocket: WebSocket? = null
-    private var currentCascadeId: String? = null
+    private var _currentCascadeId: String? = null
+    val currentCascadeId: String? get() = _currentCascadeId
+
+    /** Reset the agent running state (used when switching conversations). */
+    fun resetRunningState() {
+        _agentRunning.value = false
+    }
     private var reconnectJob: Job? = null
     private var reconnectAttempt = 0
     private val maxReconnectDelay = 10_000L // 10 seconds max
+    private val maxReconnectAttempts = 20
 
     // ── Configuration ──
 
@@ -93,16 +101,18 @@ class PortaClient(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        if (!response.isSuccessful) {
-            throw PortaApiException("Failed to fetch conversations: ${response.code}")
-        }
+        response.use { resp ->
+            if (!resp.isSuccessful) {
+                throw PortaApiException("Failed to fetch conversations: ${resp.code}")
+            }
 
-        val body = response.body?.string() ?: "{}"
-        val json = gson.fromJson(body, JsonObject::class.java)
-        val summaries = json.getAsJsonObject("trajectorySummaries") ?: JsonObject()
+            val body = resp.body?.string() ?: "{}"
+            val json = gson.fromJson(body, JsonObject::class.java)
+            val summaries = json.getAsJsonObject("trajectorySummaries") ?: JsonObject()
 
-        summaries.entrySet().associate { (key, value) ->
-            key to value.asJsonObject
+            summaries.entrySet().associate { (key, value) ->
+                key to value.asJsonObject
+            }
         }
     }
 
@@ -119,12 +129,14 @@ class PortaClient(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        if (!response.isSuccessful) {
-            throw PortaApiException("Failed to fetch workspaces: ${response.code}")
-        }
+        response.use { resp ->
+            if (!resp.isSuccessful) {
+                throw PortaApiException("Failed to fetch workspaces: ${resp.code}")
+            }
 
-        val body = response.body?.string() ?: "{}"
-        gson.fromJson(body, JsonObject::class.java)
+            val body = resp.body?.string() ?: "{}"
+            gson.fromJson(body, JsonObject::class.java)
+        }
     }
 
     /**
@@ -164,12 +176,14 @@ class PortaClient(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        if (!response.isSuccessful) {
-            throw PortaApiException("Failed to send message: ${response.code}")
-        }
+        response.use { resp ->
+            if (!resp.isSuccessful) {
+                throw PortaApiException("Failed to send message: ${resp.code}")
+            }
 
-        val body = response.body?.string() ?: "{}"
-        gson.fromJson(body, JsonObject::class.java)
+            val body = resp.body?.string() ?: "{}"
+            gson.fromJson(body, JsonObject::class.java)
+        }
     }
 
     /**
@@ -200,14 +214,16 @@ class PortaClient(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        if (!response.isSuccessful) {
-            throw PortaApiException("Failed to create conversation: ${response.code}")
-        }
+        response.use { resp ->
+            if (!resp.isSuccessful) {
+                throw PortaApiException("Failed to create conversation: ${resp.code}")
+            }
 
-        val body = response.body?.string() ?: "{}"
-        val json = gson.fromJson(body, JsonObject::class.java)
-        json.get("cascadeId")?.asString
-            ?: throw PortaApiException("No cascadeId in response")
+            val body = resp.body?.string() ?: "{}"
+            val json = gson.fromJson(body, JsonObject::class.java)
+            json.get("cascadeId")?.asString
+                ?: throw PortaApiException("No cascadeId in response")
+        }
     }
 
     /**
@@ -240,8 +256,10 @@ class PortaClient(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        if (!response.isSuccessful) {
-            throw PortaApiException("Failed to handle command action: ${response.code}")
+        response.use { resp ->
+            if (!resp.isSuccessful) {
+                throw PortaApiException("Failed to handle command action: ${resp.code}")
+            }
         }
     }
 
@@ -277,8 +295,10 @@ class PortaClient(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        if (!response.isSuccessful) {
-            throw PortaApiException("Failed to handle file permission: ${response.code}")
+        response.use { resp ->
+            if (!resp.isSuccessful) {
+                throw PortaApiException("Failed to handle file permission: ${resp.code}")
+            }
         }
     }
 
@@ -298,8 +318,10 @@ class PortaClient(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        if (!response.isSuccessful) {
-            throw PortaApiException("Failed to stop conversation: ${response.code}")
+        response.use { resp ->
+            if (!resp.isSuccessful) {
+                throw PortaApiException("Failed to stop conversation: ${resp.code}")
+            }
         }
     }
 
@@ -319,8 +341,10 @@ class PortaClient(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        if (!response.isSuccessful) {
-            throw PortaApiException("Failed to delete conversation: ${response.code}")
+        response.use { resp ->
+            if (!resp.isSuccessful) {
+                throw PortaApiException("Failed to delete conversation: ${resp.code}")
+            }
         }
     }
 
@@ -340,12 +364,14 @@ class PortaClient(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        if (!response.isSuccessful) {
-            throw PortaApiException("Failed to fetch models: ${response.code}")
-        }
+        response.use { resp ->
+            if (!resp.isSuccessful) {
+                throw PortaApiException("Failed to fetch models: ${resp.code}")
+            }
 
-        val body = response.body?.string() ?: "{}"
-        gson.fromJson(body, JsonObject::class.java)
+            val body = resp.body?.string() ?: "{}"
+            gson.fromJson(body, JsonObject::class.java)
+        }
     }
 
     /**
@@ -376,8 +402,10 @@ class PortaClient(
             .build()
 
         val response = httpClient.newCall(request).execute()
-        if (!response.isSuccessful) {
-            throw PortaApiException("Failed to revert: ${response.code}")
+        response.use { resp ->
+            if (!resp.isSuccessful) {
+                throw PortaApiException("Failed to revert: ${resp.code}")
+            }
         }
     }
 
@@ -388,7 +416,7 @@ class PortaClient(
      */
     fun connectWebSocket(cascadeId: String) {
         disconnectWebSocket()
-        currentCascadeId = cascadeId
+        _currentCascadeId = cascadeId
         reconnectAttempt = 0
         doConnect(cascadeId)
     }
@@ -401,7 +429,7 @@ class PortaClient(
         reconnectJob = null
         webSocket?.close(1000, "Client disconnect")
         webSocket = null
-        currentCascadeId = null
+        _currentCascadeId = null
         _connectionState.value = ConnectionState.DISCONNECTED
         _agentRunning.value = false
     }
@@ -412,7 +440,7 @@ class PortaClient(
      */
     fun syncOffset(fromOffset: Int) {
         val json = """{"type":"sync","fromOffset":$fromOffset}"""
-        println("[PortaClient] Sending sync: $json")
+        Log.d("PortaClient", "Sending sync: $json")
         sendWsMessage(json)
     }
 
@@ -422,7 +450,7 @@ class PortaClient(
      */
     fun refresh() {
         val json = """{"type":"refresh"}"""
-        println("[PortaClient] Sending refresh: $json")
+        Log.d("PortaClient", "Sending refresh: $json")
         sendWsMessage(json)
     }
 
@@ -459,7 +487,7 @@ class PortaClient(
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 _connectionState.value = ConnectionState.CONNECTED
                 reconnectAttempt = 0
-                println("[PortaClient] WebSocket connected to $cascadeId")
+                Log.d("PortaClient", "WebSocket connected to $cascadeId")
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -481,12 +509,12 @@ class PortaClient(
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                println("[PortaClient] WebSocket closed: $code $reason")
+                Log.d("PortaClient", "WebSocket closed: $code $reason")
                 handleDisconnect()
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                println("[PortaClient] WebSocket failure: ${t.message}")
+                Log.w("PortaClient", "WebSocket failure: ${t.message}")
                 scope.launch {
                     _error.emit("Connection failed: ${t.message}")
                 }
@@ -499,7 +527,17 @@ class PortaClient(
         webSocket = null
         _agentRunning.value = false
 
-        val cascadeId = currentCascadeId ?: return
+        val cascadeId = _currentCascadeId ?: return
+
+        // Give up after max attempts — set ERROR state
+        if (reconnectAttempt >= maxReconnectAttempts) {
+            Log.w("PortaClient", "Max reconnect attempts ($maxReconnectAttempts) reached, giving up")
+            _connectionState.value = ConnectionState.DISCONNECTED
+            scope.launch {
+                _error.emit("Connection lost after $maxReconnectAttempts attempts. Tap to reconnect.")
+            }
+            return
+        }
 
         // Schedule reconnect with fast exponential backoff
         reconnectAttempt++
@@ -512,8 +550,8 @@ class PortaClient(
         reconnectJob?.cancel()
         reconnectJob = scope.launch {
             delay(delay)
-            if (isActive && currentCascadeId == cascadeId) {
-                println("[PortaClient] Reconnecting (attempt $reconnectAttempt)...")
+            if (isActive && _currentCascadeId == cascadeId) {
+                Log.d("PortaClient", "Reconnecting (attempt $reconnectAttempt/$maxReconnectAttempts)...")
                 doConnect(cascadeId)
             }
         }

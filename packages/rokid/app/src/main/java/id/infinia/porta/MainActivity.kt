@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -57,6 +58,11 @@ class MainActivity : ComponentActivity() {
         // Handle shortcut action
         val shortcutAction = intent?.getStringExtra("shortcut_action")
 
+        // Handle notification tap → open specific conversation
+        val notificationCascadeId = intent?.getStringExtra(
+            id.infinia.porta.service.NotificationService.EXTRA_CASCADE_ID
+        )
+
         setContent {
             val viewModel: BridgeViewModel = viewModel()
             val themeMode by viewModel.themeMode.collectAsState()
@@ -74,8 +80,18 @@ class MainActivity : ComponentActivity() {
             }
 
             PortaRokidTheme(themeMode = themeMode) {
-                var screen by remember { mutableStateOf("home") }
+                // Start on chat screen if launched from notification with cascade ID
+                var screen by remember {
+                    mutableStateOf(if (notificationCascadeId != null) "chat" else "home")
+                }
                 var workspaceFilter by remember { mutableStateOf<String?>(null) }
+
+                // Navigate to the notified conversation
+                LaunchedEffect(notificationCascadeId) {
+                    if (notificationCascadeId != null) {
+                        viewModel.selectConversation(notificationCascadeId)
+                    }
+                }
 
                 when (screen) {
                     "home" -> HomeScreen(
@@ -94,42 +110,63 @@ class MainActivity : ComponentActivity() {
                             screen = "chat"
                         }
                     )
-                    "chat" -> ChatScreen(
-                        viewModel = viewModel,
-                        onNavigateToSettings = { screen = "settings" },
-                        onNavigateToConversations = {
-                            viewModel.loadConversations() // Refresh workspace data
+                    "chat" -> {
+                        BackHandler {
+                            viewModel.loadConversations()
                             screen = "home"
-                        },
-                        sharedContent = sharedContent,
-                        onSharedContentConsumed = { _sharedContent.value = null }
-                    )
-                    "settings" -> SettingsScreen(
-                        viewModel = viewModel,
-                        onBack = { screen = "home" },
-                        onNavigateToAbout = { screen = "about" },
-                        onNavigateToGlasses = { screen = "glasses" }
-                    )
-                    "conversations" -> ConversationsScreen(
-                        viewModel = viewModel,
-                        onBack = {
+                        }
+                        ChatScreen(
+                            viewModel = viewModel,
+                            onNavigateToSettings = { screen = "settings" },
+                            onNavigateToConversations = {
+                                viewModel.loadConversations()
+                                screen = "home"
+                            },
+                            sharedContent = sharedContent,
+                            onSharedContentConsumed = { _sharedContent.value = null }
+                        )
+                    }
+                    "settings" -> {
+                        BackHandler { screen = "home" }
+                        SettingsScreen(
+                            viewModel = viewModel,
+                            onBack = { screen = "home" },
+                            onNavigateToAbout = { screen = "about" },
+                            onNavigateToGlasses = { screen = "glasses" }
+                        )
+                    }
+                    "conversations" -> {
+                        BackHandler {
                             workspaceFilter = null
                             screen = "home"
-                        },
-                        onSelectConversation = { id ->
-                            viewModel.selectConversation(id)
-                            screen = "chat"
-                        },
-                        workspaceFilter = workspaceFilter
-                    )
-                    "about" -> AboutScreen(
-                        viewModel = viewModel,
-                        onBack = { screen = "settings" }
-                    )
-                    "glasses" -> GlassesScreen(
-                        viewModel = viewModel,
-                        onBack = { screen = "settings" }
-                    )
+                        }
+                        ConversationsScreen(
+                            viewModel = viewModel,
+                            onBack = {
+                                workspaceFilter = null
+                                screen = "home"
+                            },
+                            onSelectConversation = { id ->
+                                viewModel.selectConversation(id)
+                                screen = "chat"
+                            },
+                            workspaceFilter = workspaceFilter
+                        )
+                    }
+                    "about" -> {
+                        BackHandler { screen = "settings" }
+                        AboutScreen(
+                            viewModel = viewModel,
+                            onBack = { screen = "settings" }
+                        )
+                    }
+                    "glasses" -> {
+                        BackHandler { screen = "settings" }
+                        GlassesScreen(
+                            viewModel = viewModel,
+                            onBack = { screen = "settings" }
+                        )
+                    }
                 }
             }
         }

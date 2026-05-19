@@ -5,6 +5,7 @@ import android.net.Uri
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -14,6 +15,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -177,6 +180,16 @@ fun ChatScreen(
     // Auto-scroll to bottom when new messages arrive
     LaunchedEffect(chatMessages.size) {
         if (chatMessages.isNotEmpty()) {
+            listState.scrollToItem(chatMessages.size - 1)
+        }
+    }
+
+    // Scroll to bottom when switching conversations
+    LaunchedEffect(currentConversationId) {
+        if (currentConversationId != null) {
+            snapshotFlow { chatMessages.size }
+                .filter { it > 0 }
+                .first()
             listState.scrollToItem(chatMessages.size - 1)
         }
     }
@@ -536,8 +549,8 @@ fun ChatScreen(
                                         .background(MaterialTheme.colorScheme.surfaceVariant)
                                 ) {
                                     if (att.mimeType.startsWith("image/")) {
-                                        val bytes = Base64.decode(att.base64, Base64.NO_WRAP)
                                         val bmp = remember(att.base64) {
+                                            val bytes = Base64.decode(att.base64, Base64.NO_WRAP)
                                             BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                                         }
                                         if (bmp != null) {
@@ -803,8 +816,119 @@ fun ChatScreen(
                 return@Column
             }
 
+            // ── Connection status banner ──
+            AnimatedVisibility(
+                visible = connectionState == ConnectionState.RECONNECTING ||
+                    connectionState == ConnectionState.DISCONNECTED ||
+                    connectionState == ConnectionState.ERROR,
+                enter = slideInVertically() + fadeIn(),
+                exit = slideOutVertically() + fadeOut()
+            ) {
+                val (bannerColor, bannerText, bannerIcon) = when (connectionState) {
+                    ConnectionState.RECONNECTING -> Triple(
+                        PortaWarning.copy(alpha = 0.15f),
+                        "Reconnecting...",
+                        Icons.Default.Sync
+                    )
+                    ConnectionState.ERROR -> Triple(
+                        PortaError.copy(alpha = 0.15f),
+                        "Connection error",
+                        Icons.Default.ErrorOutline
+                    )
+                    else -> Triple(
+                        PortaError.copy(alpha = 0.1f),
+                        "Disconnected",
+                        Icons.Default.CloudOff
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(bannerColor)
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (connectionState == ConnectionState.RECONNECTING) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                            color = PortaWarning
+                        )
+                    } else {
+                        Icon(
+                            bannerIcon, null,
+                            modifier = Modifier.size(14.dp),
+                            tint = if (connectionState == ConnectionState.ERROR) PortaError else PortaWarning
+                        )
+                    }
+                    Text(
+                        bannerText,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                }
+            }
+
             // Chat messages with scroll-to-bottom FAB
             Box(modifier = Modifier.fillMaxSize()) {
+                if (chatMessages.isEmpty() && !agentRunning) {
+                    // Empty state with suggestion chips
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.padding(horizontal = 32.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.ChatBubbleOutline,
+                                contentDescription = null,
+                                modifier = Modifier.size(48.dp),
+                                tint = PortaPrimary.copy(alpha = 0.3f)
+                            )
+                            Text(
+                                "Start the conversation below",
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            // Suggestion chips
+                            val suggestions = listOf(
+                                "🔍 Explain this codebase" to "Explain the structure and architecture of this codebase",
+                                "🐛 Find bugs" to "Audit the code for potential bugs and issues",
+                                "✨ Add a feature" to "I want to add a new feature: ",
+                                "🧪 Write tests" to "Write comprehensive tests for the main components"
+                            )
+                            suggestions.chunked(2).forEach { row ->
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    row.forEach { (label, prompt) ->
+                                        SuggestionChip(
+                                            onClick = {
+                                                inputText = prompt
+                                            },
+                                            label = {
+                                                Text(label, fontSize = 12.sp, maxLines = 1)
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                            shape = RoundedCornerShape(20.dp),
+                                            colors = SuggestionChipDefaults.suggestionChipColors(
+                                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
@@ -814,23 +938,34 @@ fun ChatScreen(
                     contentPadding = PaddingValues(vertical = 12.dp)
                 ) {
                     items(chatMessages, key = { "${it.stepIndex}-${it.role}" }) { message ->
-                        MessageBubble(
-                            message = message,
-                            onApproveCommand = { trajectoryId, stepIndex ->
-                                viewModel.approveCommandByTrajectory(trajectoryId, stepIndex)
-                            },
-                            onRejectCommand = { trajectoryId, stepIndex ->
-                                viewModel.rejectCommandByTrajectory(trajectoryId, stepIndex)
-                            },
-                            onApprovePermission = { trajectoryId, stepIndex, allow, scope ->
-                                viewModel.handleFilePermissionByTrajectory(
-                                    trajectoryId, stepIndex, allow, scope
+                        Box(
+                            modifier = Modifier.animateItem(
+                                fadeInSpec = tween(300),
+                                fadeOutSpec = tween(200),
+                                placementSpec = spring(
+                                    stiffness = Spring.StiffnessMediumLow,
+                                    dampingRatio = Spring.DampingRatioLowBouncy
                                 )
-                            },
-                            onRevert = { stepIndex ->
-                                viewModel.revertToStep(stepIndex)
-                            }
-                        )
+                            )
+                        ) {
+                            MessageBubble(
+                                message = message,
+                                onApproveCommand = { trajectoryId, stepIndex ->
+                                    viewModel.approveCommandByTrajectory(trajectoryId, stepIndex)
+                                },
+                                onRejectCommand = { trajectoryId, stepIndex ->
+                                    viewModel.rejectCommandByTrajectory(trajectoryId, stepIndex)
+                                },
+                                onApprovePermission = { trajectoryId, stepIndex, allow, scope ->
+                                    viewModel.handleFilePermissionByTrajectory(
+                                        trajectoryId, stepIndex, allow, scope
+                                    )
+                                },
+                                onRevert = { stepIndex ->
+                                    viewModel.revertToStep(stepIndex)
+                                }
+                            )
+                        }
                     }
 
                     // Typing indicator when agent is running
@@ -866,6 +1001,12 @@ fun ChatScreen(
                                             .background(PortaPrimary.copy(alpha = 0.6f))
                                     )
                                 }
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "Antigravity is thinking…",
+                                    fontSize = 12.sp,
+                                    color = PortaPrimary.copy(alpha = 0.5f)
+                                )
                             }
                         }
                     }
