@@ -89,6 +89,7 @@ export interface TrajectoryStep {
   viewCodeItem?: ViewCodeItemData;
   listDirectory?: ListDirectoryData;
   find?: FindData;
+  invokeSubagent?: InvokeSubagentData;
   /** File permission request can appear on any tool step */
   filePermissionRequest?: FilePermissionRequest;
 }
@@ -173,6 +174,19 @@ export interface ListDirectoryData {
 export interface FindData {
   pattern?: string;
   results?: unknown[];
+}
+
+export interface SubagentInfo {
+  typeName?: string;
+  role?: string;
+  prompt?: string;
+  conversationId?: string;
+}
+
+export interface InvokeSubagentData {
+  subagents?: SubagentInfo[];
+  toolAction?: string;
+  toolSummary?: string;
 }
 
 export interface CodeActionData {

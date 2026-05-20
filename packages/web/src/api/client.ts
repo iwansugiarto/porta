@@ -231,6 +231,23 @@ export const api = {
       }),
     }),
 
+  answerQuestion: (
+    cascadeId: string,
+    trajectoryId: string,
+    stepIndex: number,
+    selectedOptions: number[],
+    writeInText?: string,
+  ) =>
+    request(`/api/conversations/${cascadeId}/answer-question`, {
+      method: "POST",
+      body: JSON.stringify({
+        trajectoryId,
+        stepIndex,
+        selectedOptions,
+        ...(writeInText ? { writeInText } : {}),
+      }),
+    }),
+
   revert: (cascadeId: string, stepIndex: number, model?: string) =>
     request(`/api/conversations/${cascadeId}/revert`, {
       method: "POST",

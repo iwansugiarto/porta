@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -415,6 +416,7 @@ private fun SystemCard(
         "CORTEX_STEP_TYPE_CODE_ACTION" -> CodeActionCard(message)
         "CORTEX_STEP_TYPE_FILE_PERMISSION" -> FilePermissionCard(message, onApprovePermission)
         "ASK_QUESTION" -> QuestionCard(message, onAnswerQuestion)
+        "CORTEX_STEP_TYPE_INVOKE_SUBAGENT" -> SubagentCard(message)
         else -> InfoCard(message)
     }
 }
@@ -803,6 +805,9 @@ private fun InfoCard(message: ChatMessage) {
         "file-search" -> Icons.Default.FindInPage
         "image" -> Icons.Default.Image
         "info" -> Icons.Default.Info
+        "agents" -> Icons.Default.People
+        "message" -> Icons.AutoMirrored.Filled.Chat
+        "clock" -> Icons.Default.Schedule
         else -> Icons.Default.Info
     }
     Row(
@@ -1043,6 +1048,140 @@ private fun QuestionCard(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
+                }
+            }
+        }
+    }
+}
+
+// ── Subagent Card ──
+
+@Composable
+private fun SubagentCard(message: ChatMessage) {
+    val step = message.step ?: return
+    val invokeData = step.getAsJsonObject("invokeSubagent") ?: return
+
+    val subagentsArr = invokeData.getAsJsonArray("Subagents")
+        ?: invokeData.getAsJsonArray("subagents")
+    val count = subagentsArr?.size() ?: 0
+
+    data class SubagentInfo(val typeName: String, val role: String)
+    val subagents = mutableListOf<SubagentInfo>()
+    subagentsArr?.forEach { sa ->
+        val obj = sa.asJsonObject ?: return@forEach
+        val type = obj.get("TypeName")?.asString
+            ?: obj.get("typeName")?.asString ?: "agent"
+        val role = obj.get("Role")?.asString
+            ?: obj.get("role")?.asString ?: "Subagent"
+        subagents.add(SubagentInfo(type, role))
+    }
+
+    val status = step.get("status")?.asString
+    val isRunning = status == "CORTEX_STEP_STATUS_RUNNING" ||
+        status == "CORTEX_STEP_STATUS_PENDING"
+    val isDone = status == "CORTEX_STEP_STATUS_COMPLETE"
+
+    var expanded by remember { mutableStateOf(false) }
+
+    val accentPurple = Color(0xFFA78BFA)
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isDone) PortaSuccess.copy(alpha = 0.06f)
+            else accentPurple.copy(alpha = 0.08f)
+        )
+    ) {
+        Column {
+            // Header
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { if (subagents.isNotEmpty()) expanded = !expanded }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Agent icon
+                Text("🤖", fontSize = 13.sp)
+
+                // Status indicator
+                if (isRunning) {
+                    // Compact text spinner indicator
+                    Text(
+                        "⟳",
+                        fontSize = 12.sp,
+                        color = accentPurple,
+                        modifier = Modifier.padding(end = 2.dp)
+                    )
+                } else if (isDone) {
+                    Text(
+                        "✓",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = PortaSuccess,
+                        modifier = Modifier.padding(end = 2.dp)
+                    )
+                }
+
+                Text(
+                    "Launched $count subagent${if (count != 1) "s" else ""}",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    modifier = Modifier.weight(1f)
+                )
+
+                if (subagents.isNotEmpty()) {
+                    Text(
+                        if (expanded) "▴" else "▾",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                    )
+                }
+            }
+
+            // Expanded role list
+            if (expanded && subagents.isNotEmpty()) {
+                Column(
+                    modifier = Modifier.padding(
+                        start = 32.dp, end = 12.dp, bottom = 10.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    subagents.forEach { sa ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            // Type badge
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = accentPurple
+                            ) {
+                                Text(
+                                    sa.typeName.uppercase(),
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White,
+                                    modifier = Modifier.padding(
+                                        horizontal = 6.dp, vertical = 1.dp
+                                    )
+                                )
+                            }
+                            // Role
+                            Text(
+                                sa.role,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface.copy(
+                                    alpha = 0.8f
+                                ),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 }
             }
         }

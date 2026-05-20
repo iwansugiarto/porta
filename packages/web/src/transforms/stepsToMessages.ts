@@ -22,6 +22,23 @@ export function stepsToMessages(steps: TrajectoryStep[]): ChatMessage[] {
       continue;
     }
 
+    // Ask-question interaction: agent is waiting for user to answer
+    const reqInteraction = (step as any).requestedInteraction;
+    if (
+      reqInteraction &&
+      (reqInteraction.askQuestion || reqInteraction.AskQuestion) &&
+      step.status === "CORTEX_STEP_STATUS_WAITING"
+    ) {
+      messages.push({
+        role: "system",
+        content: "",
+        stepIndex: i,
+        type: "ASK_QUESTION",
+        step,
+      });
+      continue;
+    }
+
     if (type === "CORTEX_STEP_TYPE_USER_INPUT" && step.userInput?.items) {
       const texts = step.userInput.items
         .filter((item) => item.text?.trim())
@@ -189,6 +206,126 @@ export function stepsToMessages(steps: TrajectoryStep[]): ChatMessage[] {
         stepIndex: i,
         type,
         icon: "search",
+      });
+
+    // ── Subagent Invocation ──
+    } else if (type === "CORTEX_STEP_TYPE_INVOKE_SUBAGENT" && step.invokeSubagent) {
+      messages.push({
+        role: "system",
+        content: "",
+        stepIndex: i,
+        type,
+        step,
+      });
+
+    // ── Define Subagent ──
+    } else if (type === "CORTEX_STEP_TYPE_DEFINE_SUBAGENT") {
+      const toolAction = (step as any).defineSubagent?.toolAction ?? "Defined subagent";
+      messages.push({
+        role: "system",
+        content: toolAction,
+        stepIndex: i,
+        type,
+        icon: "agents",
+      });
+
+    // ── Send Message (inter-agent) ──
+    } else if (type === "CORTEX_STEP_TYPE_SEND_MESSAGE") {
+      messages.push({
+        role: "system",
+        content: "💬 Sent message to subagent",
+        stepIndex: i,
+        type,
+        icon: "message",
+      });
+
+    // ── Manage Subagents ──
+    } else if (type === "CORTEX_STEP_TYPE_MANAGE_SUBAGENTS") {
+      messages.push({
+        role: "system",
+        content: "Managed subagents",
+        stepIndex: i,
+        type,
+        icon: "agents",
+      });
+
+    // ── Schedule ──
+    } else if (type === "CORTEX_STEP_TYPE_SCHEDULE") {
+      messages.push({
+        role: "system",
+        content: "⏱ Set timer/schedule",
+        stepIndex: i,
+        type,
+        icon: "clock",
+      });
+
+    // ── Search Web ──
+    } else if (type === "CORTEX_STEP_TYPE_SEARCH_WEB") {
+      const query = (step as any).searchWeb?.query ?? "";
+      messages.push({
+        role: "system",
+        content: `Searched web: **"${query}"**`,
+        stepIndex: i,
+        type,
+        icon: "search",
+      });
+
+    // ── Read URL Content ──
+    } else if (type === "CORTEX_STEP_TYPE_READ_URL_CONTENT") {
+      const url = (step as any).readUrlContent?.url ?? "";
+      let domain = url;
+      try { domain = new URL(url).hostname; } catch {}
+      messages.push({
+        role: "system",
+        content: `Fetched **${domain}**`,
+        stepIndex: i,
+        type,
+        icon: "eye",
+      });
+
+    // ── Generate Image ──
+    } else if (type === "CORTEX_STEP_TYPE_GENERATE_IMAGE") {
+      const name = (step as any).generateImage?.imageName ?? "image";
+      messages.push({
+        role: "system",
+        content: `Generated image: **${name}**`,
+        stepIndex: i,
+        type,
+        icon: "image",
+      });
+
+    // ── Semantic Search ──
+    } else if (type === "CORTEX_STEP_TYPE_SEMANTIC_SEARCH") {
+      const query = (step as any).semanticSearch?.query ?? "";
+      const count = (step as any).semanticSearch?.results?.length ?? 0;
+      messages.push({
+        role: "system",
+        content: `Semantic search \`${query}\` — ${count} result${count !== 1 ? "s" : ""}`,
+        stepIndex: i,
+        type,
+        icon: "search",
+      });
+
+    // ── Browser Subagent ──
+    } else if (type === "CORTEX_STEP_TYPE_BROWSER_SUBAGENT") {
+      const taskName = (step as any).browserSubagent?.taskName ?? "Browser task";
+      messages.push({
+        role: "system",
+        content: `Browser: **${taskName}**`,
+        stepIndex: i,
+        type,
+        icon: "eye",
+      });
+
+    // ── MCP Tool ──
+    } else if (type === "CORTEX_STEP_TYPE_MCP_TOOL") {
+      const toolName = (step as any).mcpTool?.toolName ?? "MCP tool";
+      messages.push({
+        role: "system",
+        content: `MCP: **${toolName}**`,
+        stepIndex: i,
+        type,
+        icon: "info",
       });
     }
   }

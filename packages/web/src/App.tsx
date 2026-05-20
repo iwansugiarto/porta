@@ -343,6 +343,32 @@ function ChatView({ onLogout }: { onLogout?: () => void }) {
     [activeId, refresh, triggerSoftRefresh],
   );
 
+  // ── Answer question (respond to ask_question interactions) ──
+  const handleAnswerQuestion = useCallback(
+    async (
+      trajectoryId: string,
+      stepIndex: number,
+      selectedOptions: number[],
+      writeInText?: string,
+    ) => {
+      if (!activeId) return;
+      try {
+        await api.answerQuestion(
+          activeId,
+          trajectoryId,
+          stepIndex,
+          selectedOptions,
+          writeInText,
+        );
+        triggerSoftRefresh();
+        refresh();
+      } catch (err) {
+        console.error("Failed to answer question:", err);
+      }
+    },
+    [activeId, refresh, triggerSoftRefresh],
+  );
+
   // ── Navigate helpers ──
   const handleNew = useCallback(() => {
     navigate(`/${projectSlug ?? "unknown"}`);
@@ -451,6 +477,7 @@ function ChatView({ onLogout }: { onLogout?: () => void }) {
             onRevert={handleRevert}
             onFilePermission={handleFilePermission}
             onCommandAction={handleCommandAction}
+            onAnswerQuestion={handleAnswerQuestion}
             onConfirmOptimistic={confirmOptimisticMessages}
             optimisticMessages={optimisticMessages}
             refreshKey={stepsRefreshKey}

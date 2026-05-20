@@ -22,6 +22,8 @@ import { MarkdownContent } from "./MarkdownContent";
 import {
   CommandCard,
   CodeActionCard,
+  SubagentCard,
+  QuestionCard,
   FilePermissionCard,
   getFilePermissionRequest,
 } from "./StepCards";
@@ -38,6 +40,7 @@ import {
   IconEye,
   IconMessageCircle,
   IconAlertTriangle,
+  IconZap,
 } from "./Icons";
 import type { ChatMessage } from "../types";
 
@@ -65,6 +68,12 @@ interface Props {
     trajectoryId: string,
     stepIndex: number,
     approved: boolean,
+  ) => Promise<void>;
+  onAnswerQuestion?: (
+    trajectoryId: string,
+    stepIndex: number,
+    selectedOptions: number[],
+    writeInText?: string,
   ) => Promise<void>;
   onConfirmOptimistic?: (ids: string[]) => void;
   optimisticMessages?: ChatMessage[];
@@ -128,6 +137,15 @@ function MsgIcon({ name }: { name?: string }) {
       return <IconList size={s} />;
     case "alert":
       return <IconAlertTriangle size={s} />;
+    case "agents":
+    case "message":
+      return <IconMessageCircle size={s} />;
+    case "clock":
+      return <IconZap size={s} />;
+    case "image":
+      return <IconFile size={s} />;
+    case "info":
+      return <IconFileSearch size={s} />;
     default:
       return null;
   }
@@ -137,6 +155,7 @@ function SystemMessage({
   msg,
   onFilePermission,
   onCommandAction,
+  onAnswerQuestion,
 }: {
   msg: ChatMessage;
   onFilePermission: (
@@ -150,6 +169,12 @@ function SystemMessage({
     trajectoryId: string,
     stepIndex: number,
     approved: boolean,
+  ) => Promise<void>;
+  onAnswerQuestion?: (
+    trajectoryId: string,
+    stepIndex: number,
+    selectedOptions: number[],
+    writeInText?: string,
   ) => Promise<void>;
 }) {
   const renderedContent = useMemo(
@@ -184,6 +209,20 @@ function SystemMessage({
       return (
         <div className="message system">
           <CodeActionCard step={msg.step} />
+        </div>
+      );
+    }
+    if (msg.type === "CORTEX_STEP_TYPE_INVOKE_SUBAGENT") {
+      return (
+        <div className="message system">
+          <SubagentCard step={msg.step} />
+        </div>
+      );
+    }
+    if (msg.type === "ASK_QUESTION") {
+      return (
+        <div className="message system">
+          <QuestionCard step={msg.step} onAnswerQuestion={onAnswerQuestion} />
         </div>
       );
     }
@@ -414,6 +453,7 @@ export function ChatPanel({
   onRevert,
   onFilePermission,
   onCommandAction,
+  onAnswerQuestion,
   onConfirmOptimistic,
   optimisticMessages = [],
   refreshKey = 0,
@@ -752,6 +792,7 @@ export function ChatPanel({
                 msg={msg}
                 onFilePermission={onFilePermission}
                 onCommandAction={onCommandAction}
+                onAnswerQuestion={onAnswerQuestion}
               />
             );
           }
