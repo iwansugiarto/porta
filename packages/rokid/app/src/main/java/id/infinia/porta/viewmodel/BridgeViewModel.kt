@@ -690,6 +690,11 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                             cascadeId, info.trajectoryId, info.stepIndex, true
                         )
                     }
+                    ApprovalType.QUESTION -> {
+                        portaClient.handleCommandAction(
+                            cascadeId, info.trajectoryId, info.stepIndex, true
+                        )
+                    }
                     ApprovalType.OTHER -> {
                         portaClient.handleCommandAction(
                             cascadeId, info.trajectoryId, info.stepIndex, true
@@ -717,6 +722,11 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                     }
                     ApprovalType.PERMISSION -> {
                         portaClient.handleFilePermission(
+                            cascadeId, info.trajectoryId, info.stepIndex, false
+                        )
+                    }
+                    ApprovalType.QUESTION -> {
+                        portaClient.handleCommandAction(
                             cascadeId, info.trajectoryId, info.stepIndex, false
                         )
                     }
@@ -1018,6 +1028,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                                 when (it.type) {
                                     ApprovalType.COMMAND -> "Command: ${step.commandInfo?.commandLine ?: "execute command"}"
                                     ApprovalType.PERMISSION -> "File permission request"
+                                    ApprovalType.QUESTION -> "Agent has a question"
                                     ApprovalType.OTHER -> "Action requires approval"
                                 }
                             }
