@@ -63,27 +63,28 @@ class PortaWidget : GlanceAppWidget() {
                     }
                     .build()
 
-                val response = httpClient.newCall(request).execute()
-                if (!response.isSuccessful) return@withContext WidgetData(connected = false)
+                httpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@withContext WidgetData(connected = false)
 
-                val body = response.body?.string() ?: "{}"
-                val json = Gson().fromJson(body, JsonObject::class.java)
-                val summaries = json.getAsJsonObject("trajectorySummaries") ?: JsonObject()
+                    val body = response.body?.string() ?: "{}"
+                    val json = Gson().fromJson(body, JsonObject::class.java)
+                    val summaries = json.getAsJsonObject("trajectorySummaries") ?: JsonObject()
 
-                val total = summaries.size()
-                val running = summaries.entrySet().count { (_, v) ->
-                    v.asJsonObject?.get("status")?.asString == "CASCADE_RUN_STATUS_RUNNING"
+                    val total = summaries.size()
+                    val running = summaries.entrySet().count { (_, v) ->
+                        v.asJsonObject?.get("status")?.asString == "CASCADE_RUN_STATUS_RUNNING"
+                    }
+                    val latest = summaries.entrySet()
+                        .maxByOrNull { it.value.asJsonObject?.get("lastModifiedTime")?.asString ?: "" }
+                        ?.let { it.value.asJsonObject?.get("summary")?.asString }
+
+                    WidgetData(
+                        connected = true,
+                        totalConversations = total,
+                        runningCount = running,
+                        latestTitle = latest
+                    )
                 }
-                val latest = summaries.entrySet()
-                    .maxByOrNull { it.value.asJsonObject?.get("lastModifiedTime")?.asString ?: "" }
-                    ?.let { it.value.asJsonObject?.get("summary")?.asString }
-
-                WidgetData(
-                    connected = true,
-                    totalConversations = total,
-                    runningCount = running,
-                    latestTitle = latest
-                )
             } catch (_: Exception) {
                 WidgetData(connected = false)
             }

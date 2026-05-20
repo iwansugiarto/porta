@@ -1,7 +1,9 @@
 package id.infinia.porta.ui.screens
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -58,7 +60,7 @@ private fun workspaceColor(name: String): Color {
 
 
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
     viewModel: BridgeViewModel,
@@ -317,7 +319,8 @@ fun HomeScreen(
                         ) {
                             WorkspaceTile(
                                 workspace = ws,
-                                onClick = { onNavigateToWorkspace(ws.name) }
+                                onClick = { onNavigateToWorkspace(ws.name) },
+                                onNewConversation = onNewConversation
                             )
                         }
                     }
@@ -419,12 +422,15 @@ private fun RecentConvoCard(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun WorkspaceTile(
     workspace: BridgeViewModel.WorkspaceInfo,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onNewConversation: () -> Unit = {}
 ) {
     val color = workspaceColor(workspace.name)
     val initial = workspace.name.first().uppercaseChar()
+    var showMenu by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier
@@ -435,76 +441,104 @@ private fun WorkspaceTile(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )
     ) {
-        Row(
-            modifier = Modifier
-                .clickable(onClick = onClick)
-                .padding(16.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            // Letter avatar
-            Box(
+        Box {
+            Row(
                 modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(
-                        Brush.linearGradient(
-                            listOf(color, color.copy(alpha = 0.7f))
-                        )
-                    ),
-                contentAlignment = Alignment.Center
+                    .combinedClickable(
+                        onClick = onClick,
+                        onLongClick = { showMenu = true }
+                    )
+                    .padding(16.dp)
+                    .fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Text(
-                    initial.toString(),
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-            }
-
-            // Name + stats
-            Column(Modifier.weight(1f)) {
-                Text(
-                    workspace.name,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                // Letter avatar
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(color, color.copy(alpha = 0.7f))
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        "${workspace.totalCount} conversations",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        initial.toString(),
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
                     )
-                    if (workspace.activeCount > 0) {
+                }
+
+                // Name + stats
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        workspace.name,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
-                            "· ${workspace.activeCount} active",
+                            "${workspace.totalCount} conversations",
                             fontSize = 12.sp,
-                            color = PortaSuccess,
-                            fontWeight = FontWeight.Medium
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                         )
+                        if (workspace.activeCount > 0) {
+                            Text(
+                                "· ${workspace.activeCount} active",
+                                fontSize = 12.sp,
+                                color = PortaSuccess,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                     }
+                }
+
+                // Active indicator
+                if (workspace.activeCount > 0) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = PortaTertiary
+                    )
+                } else {
+                    Icon(
+                        Icons.Default.ChevronRight, null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                    )
                 }
             }
 
-            // Active indicator
-            if (workspace.activeCount > 0) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(16.dp),
-                    strokeWidth = 2.dp,
-                    color = PortaTertiary
+            // Long-press quick actions
+            DropdownMenu(
+                expanded = showMenu,
+                onDismissRequest = { showMenu = false }
+            ) {
+                DropdownMenuItem(
+                    text = { Text("New Conversation") },
+                    onClick = {
+                        showMenu = false
+                        onNewConversation()
+                    },
+                    leadingIcon = { Icon(Icons.Default.Add, null, modifier = Modifier.size(20.dp)) }
                 )
-            } else {
-                Icon(
-                    Icons.Default.ChevronRight, null,
-                    modifier = Modifier.size(20.dp),
-                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                DropdownMenuItem(
+                    text = { Text("View All") },
+                    onClick = {
+                        showMenu = false
+                        onClick()
+                    },
+                    leadingIcon = { Icon(Icons.Default.List, null, modifier = Modifier.size(20.dp)) }
                 )
             }
         }

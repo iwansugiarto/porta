@@ -101,22 +101,41 @@ class MainActivity : ComponentActivity() {
                 }
 
                 when (screen) {
-                    "home" -> HomeScreen(
-                        viewModel = viewModel,
-                        onNavigateToSettings = { screen = "settings" },
-                        onNavigateToWorkspace = { wsName ->
-                            workspaceFilter = wsName
-                            screen = "conversations"
-                        },
-                        onSelectConversation = { id ->
-                            viewModel.selectConversation(id)
-                            screen = "chat"
-                        },
-                        onNewConversation = {
-                            viewModel.createNewConversation()
-                            screen = "chat"
+                    "home" -> {
+                        var backPressedOnce by remember { mutableStateOf(false) }
+                        BackHandler {
+                            if (backPressedOnce) {
+                                finish()
+                            } else {
+                                backPressedOnce = true
+                                android.widget.Toast.makeText(
+                                    this@MainActivity,
+                                    "Press back again to exit",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                                // Reset after 2 seconds
+                                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                                    { backPressedOnce = false }, 2000
+                                )
+                            }
                         }
-                    )
+                        HomeScreen(
+                            viewModel = viewModel,
+                            onNavigateToSettings = { screen = "settings" },
+                            onNavigateToWorkspace = { wsName ->
+                                workspaceFilter = wsName
+                                screen = "conversations"
+                            },
+                            onSelectConversation = { id ->
+                                viewModel.selectConversation(id)
+                                screen = "chat"
+                            },
+                            onNewConversation = {
+                                viewModel.createNewConversation()
+                                screen = "chat"
+                            }
+                        )
+                    }
                     "chat" -> {
                         BackHandler {
                             viewModel.loadConversations()

@@ -34,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.graphics.asImageBitmap
@@ -241,12 +242,24 @@ fun ChatScreen(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            // Secondary: conversation title
-                            if (conversationTitle != null) {
+                            // Secondary: connection status or conversation title
+                            val subtitleText = when (connectionState) {
+                                ConnectionState.CONNECTED -> conversationTitle
+                                ConnectionState.CONNECTING -> "Connecting…"
+                                ConnectionState.RECONNECTING -> "Reconnecting…"
+                                ConnectionState.DISCONNECTED -> "Disconnected"
+                                ConnectionState.ERROR -> "Connection error"
+                            }
+                            val subtitleColor = when (connectionState) {
+                                ConnectionState.CONNECTED -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                ConnectionState.ERROR -> PortaError.copy(alpha = 0.7f)
+                                else -> PortaWarning.copy(alpha = 0.7f)
+                            }
+                            if (subtitleText != null) {
                                 Text(
-                                    conversationTitle,
+                                    subtitleText,
                                     fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                                    color = subtitleColor,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -885,7 +898,7 @@ fun ChatScreen(
             // Chat messages with scroll-to-bottom FAB
             Box(modifier = Modifier.fillMaxSize()) {
                 if (chatMessages.isEmpty() && !agentRunning) {
-                    // Empty state with suggestion chips
+                    // Empty state with branded illustration + suggestion chips
                     Box(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
@@ -895,16 +908,39 @@ fun ChatScreen(
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                             modifier = Modifier.padding(horizontal = 32.dp)
                         ) {
-                            Icon(
-                                Icons.Default.ChatBubbleOutline,
-                                contentDescription = null,
-                                modifier = Modifier.size(48.dp),
-                                tint = PortaPrimary.copy(alpha = 0.3f)
+                            // Branded gradient circle with icon
+                            Box(
+                                modifier = Modifier
+                                    .size(80.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(
+                                                PortaPrimary.copy(alpha = 0.15f),
+                                                PortaSecondary.copy(alpha = 0.10f)
+                                            )
+                                        )
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(36.dp),
+                                    tint = PortaPrimary.copy(alpha = 0.6f)
+                                )
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "Ready to assist",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                             )
                             Text(
-                                "Start the conversation below",
-                                fontSize = 14.sp,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                "Type a message or pick a suggestion below",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
                             )
                             Spacer(Modifier.height(4.dp))
                             // Suggestion chips
