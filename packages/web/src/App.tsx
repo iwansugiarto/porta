@@ -231,7 +231,15 @@ function ChatView({ onLogout }: { onLogout?: () => void }) {
   const { settings, updateSettings } = useClientSettings();
 
   const activeConv = conversations.find((c) => c.id === activeId);
-  const isRunning = activeConv?.summary.status === "CASCADE_RUN_STATUS_RUNNING";
+  const polledRunning = activeConv?.summary.status === "CASCADE_RUN_STATUS_RUNNING";
+  // Real-time running state from WebSocket — instant, no 15s delay
+  const [wsRunning, setWsRunning] = useState(false);
+  const isRunning = wsRunning || polledRunning;
+
+  // Reset wsRunning when switching conversations
+  useEffect(() => {
+    setWsRunning(false);
+  }, [activeId]);
   const connected = !!health && health.languageServers.length > 0;
 
   const {
@@ -450,6 +458,7 @@ function ChatView({ onLogout }: { onLogout?: () => void }) {
             totalStepCount={activeConv?.summary.stepCount}
             isConversationRunning={isRunning}
             onSidebarRefresh={refresh}
+            onWsRunningChange={setWsRunning}
           />
         ) : (
           <div

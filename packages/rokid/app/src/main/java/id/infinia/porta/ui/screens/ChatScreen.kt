@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import id.infinia.porta.SharedContent
 import id.infinia.porta.shared.protocol.*
+import id.infinia.porta.ui.UiUtils
 import id.infinia.porta.ui.components.MessageBubble
 import id.infinia.porta.ui.theme.*
 import id.infinia.porta.viewmodel.BridgeViewModel
@@ -108,7 +109,7 @@ fun ChatScreen(
         }
     }
     val conversationTitle = remember(activeConvoSummary) {
-        activeConvoSummary?.get("summary")?.asString
+        activeConvoSummary?.let { UiUtils.displayTitle(it) }
     }
 
     var inputText by remember { mutableStateOf("") }

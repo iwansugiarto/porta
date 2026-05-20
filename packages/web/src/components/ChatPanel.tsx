@@ -62,6 +62,8 @@ interface Props {
   isConversationRunning?: boolean;
   /** Called when the WS reports the agent went idle — triggers sidebar refresh. */
   onSidebarRefresh?: () => void;
+  /** Bubbles instant WS-driven running state up to parent (for Stop button). */
+  onWsRunningChange?: (running: boolean) => void;
 }
 
 /** Collapsible thinking/reasoning block */
@@ -389,6 +391,7 @@ export function ChatPanel({
   totalStepCount,
   isConversationRunning = false,
   onSidebarRefresh,
+  onWsRunningChange,
 }: Props) {
   const {
     steps: rawSteps,
@@ -405,6 +408,13 @@ export function ChatPanel({
     onSidebarRefresh,
     isConversationRunning,
   );
+
+  // Bubble wsRunning up to parent for instant Stop button
+  const onWsRunningChangeRef = useRef(onWsRunningChange);
+  onWsRunningChangeRef.current = onWsRunningChange;
+  useEffect(() => {
+    onWsRunningChangeRef.current?.(wsRunning);
+  }, [wsRunning]);
 
   // Soft re-fetch when refreshKey changes (e.g. after send)
   const prevKeyRef = useRef(refreshKey);

@@ -32,17 +32,16 @@ import id.infinia.porta.ui.theme.*
 import id.infinia.porta.viewmodel.BridgeViewModel
 
 /**
- * Home screen — workspace tiles + recent conversations carousel.
+ * Home screen — conversation timeline with recent carousel.
  *
  * Navigation:
- * - Tap workspace tile → ConversationsScreen (filtered)
- * - Tap recent card → ChatScreen (direct)
+ * - Tap conversation → ChatScreen (direct)
  * - FAB → new conversation
  * - Settings icon → SettingsScreen
  */
 
-// Auto-assigned workspace colors based on name hash
-private val workspaceColors = listOf(
+// Auto-assigned conversation colors based on title hash
+private val conversationColors = listOf(
     Color(0xFF6366F1), // Indigo
     Color(0xFF8B5CF6), // Violet
     Color(0xFF06B6D4), // Cyan
@@ -53,11 +52,18 @@ private val workspaceColors = listOf(
     Color(0xFFF97316), // Orange
 )
 
-private fun workspaceColor(name: String): Color {
-    val hash = name.hashCode().and(0x7FFFFFFF)
-    return workspaceColors[hash % workspaceColors.size]
+private fun titleColor(title: String): Color {
+    val hash = title.hashCode().and(0x7FFFFFFF)
+    return conversationColors[hash % conversationColors.size]
 }
 
+// Section header icons
+private val sectionIcons = mapOf(
+    "Today" to Icons.Default.Today,
+    "Yesterday" to Icons.Default.History,
+    "This Week" to Icons.Default.DateRange,
+    "Earlier" to Icons.Default.Schedule,
+)
 
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -69,8 +75,9 @@ fun HomeScreen(
     onSelectConversation: (String) -> Unit,
     onNewConversation: () -> Unit
 ) {
-    val workspaces by viewModel.workspaceGroups.collectAsState()
+    val timeGroups by viewModel.timeGroupedConversations.collectAsState()
     val recentConvos by viewModel.recentConversations.collectAsState()
+    val visibleCount by viewModel.visibleConversationCount.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val conversations by viewModel.conversations.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
@@ -174,7 +181,7 @@ fun HomeScreen(
                         )
                     }
                 }
-            } else if (conversations.isEmpty()) {
+            } else if (visibleCount == 0 && !isLoading) {
                 // Empty state
                 Box(
                     Modifier.fillMaxSize(),
@@ -185,18 +192,18 @@ fun HomeScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Icon(
-                            Icons.Default.Workspaces, null,
+                            Icons.Default.ChatBubbleOutline, null,
                             modifier = Modifier.size(64.dp),
                             tint = PortaPrimary.copy(alpha = 0.3f)
                         )
                         Text(
-                            "No workspaces yet",
+                            "No conversations yet",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                         )
                         Text(
-                            "Start a conversation from your desktop to see it here",
+                            "Start a conversation from Antigravity to see it here",
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
                         )
@@ -215,7 +222,6 @@ fun HomeScreen(
                             hour < 17 -> "Good Afternoon"
                             else -> "Good Evening"
                         }
-                        val totalConvos = conversations.size
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -228,7 +234,7 @@ fun HomeScreen(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                "$totalConvos conversations across ${workspaces.size} workspaces",
+                                "$visibleCount conversations",
                                 fontSize = 13.sp,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                             )
@@ -246,7 +252,7 @@ fun HomeScreen(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 Icon(
-                                    Icons.Default.Schedule, null,
+                                    Icons.Default.Bolt, null,
                                     modifier = Modifier.size(18.dp),
                                     tint = PortaTertiary
                                 )
@@ -277,51 +283,58 @@ fun HomeScreen(
                         }
                     }
 
-                    // ── Workspaces section ──
-                    item(key = "ws-header") {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.Folder, null,
-                                modifier = Modifier.size(18.dp),
-                                tint = PortaPrimary
-                            )
-                            Text(
-                                "Workspaces",
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Spacer(Modifier.weight(1f))
-                            Text(
-                                "${workspaces.size}",
-                                fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                            )
-                        }
-                    }
-
-                    items(workspaces, key = { it.name }) { ws ->
-                        Box(
-                            modifier = Modifier.animateItem(
-                                fadeInSpec = tween(300),
-                                fadeOutSpec = tween(200),
-                                placementSpec = spring(
-                                    stiffness = Spring.StiffnessMediumLow,
-                                    dampingRatio = Spring.DampingRatioLowBouncy
+                    // ── Time-grouped conversation timeline ──
+                    for (group in timeGroups) {
+                        // Section header
+                        item(key = "section-${group.label}") {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    sectionIcons[group.label] ?: Icons.Default.Schedule, null,
+                                    modifier = Modifier.size(18.dp),
+                                    tint = PortaPrimary
                                 )
-                            )
-                        ) {
-                            WorkspaceTile(
-                                workspace = ws,
-                                onClick = { onNavigateToWorkspace(ws.name) },
-                                onNewConversation = onNewConversation
-                            )
+                                Text(
+                                    group.label,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(Modifier.weight(1f))
+                                Text(
+                                    "${group.conversations.size}",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                )
+                            }
+                        }
+
+                        // Conversation rows
+                        items(
+                            group.conversations,
+                            key = { it.first }
+                        ) { (id, summary) ->
+                            Box(
+                                modifier = Modifier.animateItem(
+                                    fadeInSpec = tween(300),
+                                    fadeOutSpec = tween(200),
+                                    placementSpec = spring(
+                                        stiffness = Spring.StiffnessMediumLow,
+                                        dampingRatio = Spring.DampingRatioLowBouncy
+                                    )
+                                )
+                            ) {
+                                ConversationRow(
+                                    id = id,
+                                    summary = summary,
+                                    onClick = { onSelectConversation(id) }
+                                )
+                            }
                         }
                     }
                 }
@@ -330,28 +343,19 @@ fun HomeScreen(
     }
 }
 
+// ── Recent Conversation Carousel Card ──
+
 @Composable
 private fun RecentConvoCard(
     id: String,
     summary: JsonObject,
     onClick: () -> Unit
 ) {
-    val title = summary.get("summary")?.asString ?: id.take(8) + "…"
+    val title = UiUtils.displayTitle(summary)
     val lastModified = summary.get("lastModifiedTime")?.asString
     val isRunning = summary.get("status")?.asString == "CASCADE_RUN_STATUS_RUNNING"
     val stepCount = summary.get("stepCount")?.asInt ?: 0
-
-    // Extract workspace name for color
-    val wsName = run {
-        val workspaces = summary.getAsJsonArray("workspaces")
-        if (workspaces != null && workspaces.size() > 0) {
-            val ws = workspaces[0].asJsonObject
-            ws.getAsJsonObject("repository")?.get("computedName")?.asString?.substringAfterLast("/")
-                ?: ws.get("workspaceFolderAbsoluteUri")?.asString?.substringAfterLast("/")
-                ?: "Others"
-        } else "Others"
-    }
-    val color = workspaceColor(wsName)
+    val color = titleColor(title)
 
     Card(
         modifier = Modifier
@@ -367,7 +371,7 @@ private fun RecentConvoCard(
                 .clickable(onClick = onClick)
                 .padding(14.dp)
         ) {
-            // Top: workspace badge + status
+            // Top: color accent + status
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -378,14 +382,14 @@ private fun RecentConvoCard(
                         .clip(CircleShape)
                         .background(if (isRunning) PortaSuccess else color.copy(alpha = 0.5f))
                 )
-                Text(
-                    wsName,
-                    fontSize = 10.sp,
-                    color = color,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (isRunning) {
+                    Text(
+                        "Running",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = PortaSuccess
+                    )
+                }
             }
 
             Spacer(Modifier.height(6.dp))
@@ -397,6 +401,7 @@ private fun RecentConvoCard(
                 fontWeight = FontWeight.Medium,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
+                lineHeight = 17.sp,
                 color = MaterialTheme.colorScheme.onSurface
             )
 
@@ -411,136 +416,151 @@ private fun RecentConvoCard(
                     fontSize = 10.sp,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
                 )
-                Text(
-                    "· $stepCount steps",
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                )
+                if (stepCount > 0) {
+                    Text(
+                        "· $stepCount steps",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                    )
+                }
             }
         }
     }
 }
 
-@Composable
+// ── Conversation Row (timeline item) ──
+
 @OptIn(ExperimentalFoundationApi::class)
-private fun WorkspaceTile(
-    workspace: BridgeViewModel.WorkspaceInfo,
-    onClick: () -> Unit,
-    onNewConversation: () -> Unit = {}
+@Composable
+private fun ConversationRow(
+    id: String,
+    summary: JsonObject,
+    onClick: () -> Unit
 ) {
-    val color = workspaceColor(workspace.name)
-    val initial = workspace.name.first().uppercaseChar()
-    var showMenu by remember { mutableStateOf(false) }
+    val title = UiUtils.displayTitle(summary)
+    val isRunning = summary.get("status")?.asString == "CASCADE_RUN_STATUS_RUNNING"
+    val stepCount = summary.get("stepCount")?.asInt ?: 0
+    val lastModified = summary.get("lastModifiedTime")?.asString
+    val color = titleColor(title)
+    val initial = title.first().uppercaseChar()
+
+    // Extract workspace name if available (for subtle badge)
+    val wsName = UiUtils.extractWorkspaceName(summary).let {
+        if (it == "Others") null else it
+    }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
+            .padding(horizontal = 16.dp, vertical = 3.dp),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )
     ) {
-        Box {
-            Row(
+        Row(
+            modifier = Modifier
+                .clickable(onClick = onClick)
+                .padding(14.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Letter avatar
+            Box(
                 modifier = Modifier
-                    .combinedClickable(
-                        onClick = onClick,
-                        onLongClick = { showMenu = true }
-                    )
-                    .padding(16.dp)
-                    .fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(
+                        Brush.linearGradient(
+                            listOf(color, color.copy(alpha = 0.7f))
+                        )
+                    ),
+                contentAlignment = Alignment.Center
             ) {
-                // Letter avatar
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(
-                            Brush.linearGradient(
-                                listOf(color, color.copy(alpha = 0.7f))
-                            )
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
+                if (isRunning) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = Color.White
+                    )
+                } else {
                     Text(
                         initial.toString(),
-                        fontSize = 20.sp,
+                        fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White
                     )
                 }
+            }
 
-                // Name + stats
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        workspace.name,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+            // Title + metadata
+            Column(Modifier.weight(1f)) {
+                Text(
+                    title,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = 18.sp
+                )
+
+                Spacer(Modifier.height(2.dp))
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Running badge
+                    if (isRunning) {
                         Text(
-                            "${workspace.totalCount} conversations",
-                            fontSize = 12.sp,
+                            "● Running",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = PortaSuccess
+                        )
+                        Text("·", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))
+                    }
+
+                    // Step count
+                    if (stepCount > 0) {
+                        Text(
+                            "$stepCount steps",
+                            fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                         )
-                        if (workspace.activeCount > 0) {
-                            Text(
-                                "· ${workspace.activeCount} active",
-                                fontSize = 12.sp,
-                                color = PortaSuccess,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
+                        Text("·", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))
+                    }
+
+                    // Time
+                    Text(
+                        UiUtils.relativeTime(lastModified),
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                    )
+
+                    // Workspace badge (if available)
+                    if (wsName != null) {
+                        Text("·", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))
+                        Text(
+                            wsName,
+                            fontSize = 11.sp,
+                            color = PortaPrimary.copy(alpha = 0.7f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 100.dp)
+                        )
                     }
                 }
-
-                // Active indicator
-                if (workspace.activeCount > 0) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color = PortaTertiary
-                    )
-                } else {
-                    Icon(
-                        Icons.Default.ChevronRight, null,
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-                    )
-                }
             }
 
-            // Long-press quick actions
-            DropdownMenu(
-                expanded = showMenu,
-                onDismissRequest = { showMenu = false }
-            ) {
-                DropdownMenuItem(
-                    text = { Text("New Conversation") },
-                    onClick = {
-                        showMenu = false
-                        onNewConversation()
-                    },
-                    leadingIcon = { Icon(Icons.Default.Add, null, modifier = Modifier.size(20.dp)) }
-                )
-                DropdownMenuItem(
-                    text = { Text("View All") },
-                    onClick = {
-                        showMenu = false
-                        onClick()
-                    },
-                    leadingIcon = { Icon(Icons.Default.List, null, modifier = Modifier.size(20.dp)) }
-                )
-            }
+            // Chevron
+            Icon(
+                Icons.Default.ChevronRight, null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+            )
         }
     }
 }

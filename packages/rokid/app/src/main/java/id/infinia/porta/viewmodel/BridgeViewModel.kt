@@ -142,7 +142,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     private val _currentConversationId = MutableStateFlow<String?>(null)
     val currentConversationId: StateFlow<String?> = _currentConversationId.asStateFlow()
 
-    // ── Workspace grouping ──
+    // ── Workspace grouping (legacy — kept for workspace screen if needed) ──
 
     data class WorkspaceInfo(
         val name: String,
@@ -179,9 +179,43 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         )
     }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
-    /** Recent conversations across all workspaces (last 10). */
+    // ── Time-grouped conversation timeline ──
+
+    data class TimeGroup(
+        val label: String,
+        val conversations: List<Pair<String, JsonObject>>
+    )
+
+    /** Conversations grouped by time (Today, Yesterday, This Week, Earlier), filtered. */
+    val timeGroupedConversations: StateFlow<List<TimeGroup>> = _conversations.map { convos ->
+        val filtered = convos.entries
+            .filter { !UiUtils.isGhostConversation(it.value) }
+            .sortedByDescending { it.value.get("lastModifiedTime")?.asString ?: "" }
+            .map { it.key to it.value }
+
+        val groups = linkedMapOf<String, MutableList<Pair<String, JsonObject>>>()
+        for (entry in filtered) {
+            val time = entry.second.get("lastModifiedTime")?.asString
+            val group = UiUtils.timeGroup(time)
+            groups.getOrPut(group) { mutableListOf() }.add(entry)
+        }
+
+        // Maintain stable order: Today → Yesterday → This Week → Earlier
+        val order = listOf("Today", "Yesterday", "This Week", "Earlier")
+        order.mapNotNull { label ->
+            groups[label]?.let { TimeGroup(label, it) }
+        }
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    /** Visible conversation count (excluding ghosts). */
+    val visibleConversationCount: StateFlow<Int> = _conversations.map { convos ->
+        convos.values.count { !UiUtils.isGhostConversation(it) }
+    }.stateIn(viewModelScope, SharingStarted.Lazily, 0)
+
+    /** Recent conversations (last 10, excluding ghosts). */
     val recentConversations: StateFlow<List<Pair<String, JsonObject>>> = _conversations.map { convos ->
         convos.entries
+            .filter { !UiUtils.isGhostConversation(it.value) }
             .sortedByDescending { it.value.get("lastModifiedTime")?.asString ?: "" }
             .take(10)
             .map { it.key to it.value }

@@ -409,10 +409,13 @@ export function registerConversationRoutes(app: Hono): void {
         }
       }
 
+      // New Antigravity LS requires CortexTrajectorySource (enum).
+      // Default to 1 (CORTEX_TRAJECTORY_SOURCE_CHAT) for Porta clients.
       const data = await rpc.call(
         "StartCascade",
         {
           ...body,
+          source: body.source ?? 1,
           metadata,
           ...(workspaceUri ? { workspaceFolderAbsoluteUri: workspaceUri } : {}),
         },
