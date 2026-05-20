@@ -57,6 +57,19 @@ data class ChatMessage(
  * - FILE_PERMISSION → system card (allow/deny)
  * - COMMAND_STATUS → merged into parent command card
  * - SEND_COMMAND_INPUT → terminate notification
+ * - GENERATE_IMAGE → system info line
+ * - SEARCH_WEB → system info line
+ * - READ_URL_CONTENT → system info line
+ * - BROWSER_SUBAGENT → system info line
+ * - SEMANTIC_SEARCH → system info line
+ * - INVOKE_SUBAGENT → system card (subagent roles)
+ * - DEFINE_SUBAGENT → system info line
+ * - SEND_MESSAGE → system info line
+ * - MANAGE_SUBAGENTS → system info line
+ * - SCHEDULE → system info line
+ * - MCP_TOOL → system info line
+ * - LIST_RESOURCES → system info line
+ * - CODE_ACKNOWLEDGEMENT → silently skipped
  */
 fun stepsToMessages(steps: List<JsonObject>): List<ChatMessage> {
     val messages = mutableListOf<ChatMessage>()
@@ -364,6 +377,108 @@ fun stepsToMessages(steps: List<JsonObject>): List<ChatMessage> {
                     type = type,
                     icon = "search"
                 ))
+            }
+
+            // ── Invoke Subagent ──
+            "CORTEX_STEP_TYPE_INVOKE_SUBAGENT" -> {
+                val invokeData = step.getAsJsonObject("invokeSubagent")
+                val subagentsArray = invokeData?.getAsJsonArray("Subagents")
+                    ?: invokeData?.getAsJsonArray("subagents")
+                val count = subagentsArray?.size() ?: 0
+                val roles = mutableListOf<String>()
+                subagentsArray?.forEach { sa ->
+                    val role = sa.asJsonObject?.get("Role")?.asString
+                        ?: sa.asJsonObject?.get("role")?.asString
+                    if (role != null) roles.add(role)
+                }
+                val rolesText = if (roles.isNotEmpty()) {
+                    "\n" + roles.joinToString("\n") { "• $it" }
+                } else ""
+                messages.add(ChatMessage(
+                    role = "system",
+                    content = "🤖 Launched $count subagent${if (count != 1) "s" else ""}$rolesText",
+                    stepIndex = i,
+                    type = type,
+                    icon = "agents",
+                    step = step
+                ))
+            }
+
+            // ── Define Subagent ──
+            "CORTEX_STEP_TYPE_DEFINE_SUBAGENT" -> {
+                val ds = step.getAsJsonObject("defineSubagent")
+                val name = ds?.get("name")?.asString ?: "subagent"
+                messages.add(ChatMessage(
+                    role = "system",
+                    content = "Defined subagent: **$name**",
+                    stepIndex = i,
+                    type = type,
+                    icon = "agents"
+                ))
+            }
+
+            // ── Send Message (inter-agent) ──
+            "CORTEX_STEP_TYPE_SEND_MESSAGE" -> {
+                messages.add(ChatMessage(
+                    role = "system",
+                    content = "💬 Sent message to subagent",
+                    stepIndex = i,
+                    type = type,
+                    icon = "message"
+                ))
+            }
+
+            // ── Manage Subagents ──
+            "CORTEX_STEP_TYPE_MANAGE_SUBAGENTS" -> {
+                val action = step.getAsJsonObject("manageSubagents")
+                    ?.get("Action")?.asString ?: "manage"
+                messages.add(ChatMessage(
+                    role = "system",
+                    content = "Managed subagents ($action)",
+                    stepIndex = i,
+                    type = type,
+                    icon = "agents"
+                ))
+            }
+
+            // ── Schedule ──
+            "CORTEX_STEP_TYPE_SCHEDULE" -> {
+                messages.add(ChatMessage(
+                    role = "system",
+                    content = "⏱ Set timer/schedule",
+                    stepIndex = i,
+                    type = type,
+                    icon = "clock"
+                ))
+            }
+
+            // ── MCP Tool ──
+            "CORTEX_STEP_TYPE_MCP_TOOL" -> {
+                val toolName = step.getAsJsonObject("mcpTool")
+                    ?.get("toolName")?.asString ?: "MCP tool"
+                messages.add(ChatMessage(
+                    role = "system",
+                    content = "MCP: **$toolName**",
+                    stepIndex = i,
+                    type = type,
+                    icon = "info"
+                ))
+            }
+
+            // ── List Resources ──
+            "CORTEX_STEP_TYPE_LIST_RESOURCES" -> {
+                messages.add(ChatMessage(
+                    role = "system",
+                    content = "Listed MCP resources",
+                    stepIndex = i,
+                    type = type,
+                    icon = "folder"
+                ))
+            }
+
+            // ── Code Acknowledgement ──
+            "CORTEX_STEP_TYPE_CODE_ACKNOWLEDGEMENT" -> {
+                // Silently skip — this is an internal LS bookkeeping step
             }
 
             // ── Catch-all for unhandled tool types ──
