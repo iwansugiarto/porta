@@ -1,4 +1,5 @@
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -10,6 +11,7 @@ import {
 import { createPortal } from "react-dom";
 
 import { useStepsStream } from "../hooks/useStepsStream";
+import { useDraftAnnotations } from "../hooks/useDraftAnnotations";
 import { stepsToMessages } from "../transforms/stepsToMessages";
 import {
   isUnconfirmedOptimisticMessage,
@@ -39,6 +41,16 @@ import {
 } from "./Icons";
 import type { ChatMessage } from "../types";
 
+/** Check if a message content looks like a plan (implementation plan / review). */
+function isPlanMessage(msg: ChatMessage): boolean {
+  if (msg.role !== "assistant" || !msg.content) return false;
+  return (
+    msg.content.includes("## Proposed Changes") ||
+    msg.content.includes("## Open Questions") ||
+    msg.content.includes("## User Review Required")
+  );
+}
+
 interface Props {
   cascadeId: string;
   onRevert: (stepIndex: number, editText?: string) => void;
@@ -64,6 +76,8 @@ interface Props {
   onSidebarRefresh?: () => void;
   /** Bubbles instant WS-driven running state up to parent (for Stop button). */
   onWsRunningChange?: (running: boolean) => void;
+  /** Called when the user submits plan feedback as a formatted message string. */
+  onSendFeedback?: (feedback: string) => void;
 }
 
 /** Collapsible thinking/reasoning block */
@@ -260,6 +274,10 @@ interface MessageBubbleProps {
   isUnconfirmed: boolean;
   onRevert: (stepIndex: number, editText?: string) => void;
   onImageClick: (src: string) => void;
+  /** Annotation support for plan messages */
+  annotatable?: boolean;
+  annotations?: Record<number, string>;
+  onAnnotationChange?: (segmentIndex: number, text: string) => void;
 }
 
 const MessageBubble = memo(
@@ -269,6 +287,9 @@ const MessageBubble = memo(
     isUnconfirmed,
     onRevert,
     onImageClick,
+    annotatable = false,
+    annotations,
+    onAnnotationChange,
   }: MessageBubbleProps) {
     const renderedContent = useMemo(
       () => (msg.content ? renderMarkdown(msg.content) : ""),
@@ -289,7 +310,14 @@ const MessageBubble = memo(
           {msg.media && msg.media.length > 0 && (
             <MediaThumbs media={msg.media} onImageClick={onImageClick} />
           )}
-          {msg.content && <MarkdownContent html={renderedContent} />}
+          {msg.content && (
+            <MarkdownContent
+              html={renderedContent}
+              annotatable={annotatable}
+              annotations={annotations}
+              onAnnotationChange={onAnnotationChange}
+            />
+          )}
           {msg.content && (
             <div className="msg-actions">
               {msg.stepIndex >= 0 && (
@@ -323,7 +351,9 @@ const MessageBubble = memo(
     prev.msg.role === next.msg.role &&
     prev.msg.media === next.msg.media &&
     prev.isLocked === next.isLocked &&
-    prev.isUnconfirmed === next.isUnconfirmed,
+    prev.isUnconfirmed === next.isUnconfirmed &&
+    prev.annotatable === next.annotatable &&
+    prev.annotations === next.annotations,
 );
 
 /** Fullscreen image lightbox with swipe-down-to-dismiss */
@@ -392,6 +422,7 @@ export function ChatPanel({
   isConversationRunning = false,
   onSidebarRefresh,
   onWsRunningChange,
+  onSendFeedback,
 }: Props) {
   const {
     steps: rawSteps,
@@ -461,6 +492,78 @@ export function ChatPanel({
 
   const isLocked = wsRunning || hasUnconfirmedOptimistic;
   const showTyping = wsRunning || hasUnconfirmedOptimistic;
+
+  // ── Annotations for plan messages ──
+  // Find the last plan message to attach annotations to.
+  const lastPlanMsg = useMemo(
+    () => [...messages].reverse().find(isPlanMessage) ?? null,
+    [messages],
+  );
+  const planStepIndex = lastPlanMsg?.stepIndex ?? -1;
+
+  const { annotations, setAnnotation, clearAnnotations } =
+    useDraftAnnotations(cascadeId, planStepIndex);
+
+  const annotationCount = useMemo(
+    () => Object.values(annotations).filter((v) => v.trim()).length,
+    [annotations],
+  );
+
+  /** Build structured markdown feedback from annotations + plan content */
+  const handleSubmitFeedback = useCallback(() => {
+    if (!onSendFeedback || annotationCount === 0 || !lastPlanMsg) return;
+
+    // Parse the plan HTML into segment excerpts for context
+    const renderedHtml = renderMarkdown(lastPlanMsg.content);
+    // Simple text extraction: strip HTML tags, split by double-newline for rough segments
+    const stripHtml = (h: string) =>
+      h
+        .replace(/<[^>]*>/g, "")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'");
+
+    // Split the raw content into rough blocks to match segment indices
+    const preRegex = /<pre[^>]*>[\s\S]*?<\/pre>/gi;
+    const segments: string[] = [];
+    let lastIdx = 0;
+    let m: RegExpExecArray | null;
+    while ((m = preRegex.exec(renderedHtml)) !== null) {
+      if (m.index > lastIdx) {
+        const before = renderedHtml.slice(lastIdx, m.index).trim();
+        if (before) segments.push(stripHtml(before));
+      }
+      segments.push(stripHtml(m[0]));
+      lastIdx = m.index + m[0].length;
+    }
+    if (lastIdx < renderedHtml.length) {
+      const trailing = renderedHtml.slice(lastIdx).trim();
+      if (trailing) segments.push(stripHtml(trailing));
+    }
+
+    const parts: string[] = ["## Feedback on Implementation Plan\n"];
+    let blockNum = 1;
+    for (const [segIdxStr, comment] of Object.entries(annotations)) {
+      if (!comment.trim()) continue;
+      const segIdx = Number(segIdxStr);
+      // Get an excerpt of the original text (first 200 chars)
+      const excerpt = (segments[segIdx] ?? "[section]").trim();
+      const truncated =
+        excerpt.length > 200 ? excerpt.slice(0, 200) + "…" : excerpt;
+      parts.push(`### Block ${blockNum}`);
+      parts.push(
+        `> ${truncated.split("\n").join("\n> ")}`,
+      );
+      parts.push(`\n💬 ${comment.trim()}\n`);
+      parts.push(`---`);
+      blockNum++;
+    }
+
+    onSendFeedback(parts.join("\n"));
+    clearAnnotations();
+  }, [onSendFeedback, annotationCount, lastPlanMsg, annotations, clearAnnotations]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const didInitialScroll = useRef(false);
@@ -653,15 +756,33 @@ export function ChatPanel({
             );
           }
 
+          const isPlan = lastPlanMsg && msg === lastPlanMsg;
           return (
-            <MessageBubble
-              key={msg.optimisticId ?? `${msg.stepIndex}-${i}`}
-              msg={msg}
-              isLocked={isLocked}
-              isUnconfirmed={isUnconfirmedOptimisticMessage(msg)}
-              onRevert={onRevert}
-              onImageClick={setLightboxSrc}
-            />
+            <Fragment key={msg.optimisticId ?? `${msg.stepIndex}-${i}`}>
+              <MessageBubble
+                msg={msg}
+                isLocked={isLocked}
+                isUnconfirmed={isUnconfirmedOptimisticMessage(msg)}
+                onRevert={onRevert}
+                onImageClick={setLightboxSrc}
+                annotatable={!!isPlan}
+                annotations={isPlan ? annotations : undefined}
+                onAnnotationChange={isPlan ? setAnnotation : undefined}
+              />
+              {isPlan && annotationCount > 0 && (
+                <div className="annotation-submit-bar">
+                  <span className="annotation-count">
+                    {annotationCount} comment{annotationCount !== 1 ? "s" : ""}
+                  </span>
+                  <button
+                    className="annotation-submit-btn"
+                    onClick={handleSubmitFeedback}
+                  >
+                    Submit Feedback
+                  </button>
+                </div>
+              )}
+            </Fragment>
           );
         })}
         {showTyping && (

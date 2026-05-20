@@ -74,11 +74,15 @@ private val imageHttpClient = OkHttpClient.Builder()
 fun MarkdownText(
     markdown: String,
     modifier: Modifier = Modifier,
+    annotatable: Boolean = false,
+    annotations: Map<Int, String> = emptyMap(),
+    onAnnotationRequested: ((Int) -> Unit)? = null,
 ) {
     val lines = markdown.lines()
     val blocks = parseBlocks(lines)
     val uriHandler = LocalUriHandler.current
     val textColor = MaterialTheme.colorScheme.onSurface
+    val haptic = LocalHapticFeedback.current
 
     // Safe link opener — only handles http/https, ignores file:/// and other schemes
     val safeOpenUri: (String) -> Unit = { url ->
@@ -93,130 +97,172 @@ fun MarkdownText(
     }
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        for (block in blocks) {
-            when (block) {
-                is MdBlock.Paragraph -> {
-                    val annotated = parseInlineLinked(block.text, safeOpenUri)
-                    Text(
-                        text = annotated,
-                        style = TextStyle(
-                            fontSize = 14.sp,
-                            lineHeight = 20.sp,
-                            color = textColor
-                        )
+        for ((blockIdx, block) in blocks.withIndex()) {
+            // Wrap each block in an annotatable container if enabled
+            val hasAnnotation = annotatable && annotations.containsKey(blockIdx)
+            val annotationAccentColor = PortaPrimary
+            val blockModifier = if (annotatable) {
+                Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (hasAnnotation) {
+                            Modifier.drawBehind {
+                                drawLine(
+                                    color = annotationAccentColor,
+                                    start = Offset(0f, 0f),
+                                    end = Offset(0f, size.height),
+                                    strokeWidth = 3.dp.toPx()
+                                )
+                            }.padding(start = 6.dp)
+                        } else Modifier
                     )
-                }
-                is MdBlock.Heading -> {
-                    val (size, weight) = when (block.level) {
-                        1 -> 20.sp to FontWeight.Bold
-                        2 -> 17.sp to FontWeight.Bold
-                        3 -> 15.sp to FontWeight.SemiBold
-                        else -> 14.sp to FontWeight.Medium
+                    .clickable {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onAnnotationRequested?.invoke(blockIdx)
                     }
-                    Spacer(Modifier.height(4.dp))
-                    val annotated = parseInlineLinked(block.text, safeOpenUri)
-                    Text(
-                        text = annotated,
-                        style = TextStyle(
-                            fontSize = size,
-                            fontWeight = weight,
-                            lineHeight = (size.value + 6).sp,
-                            color = textColor
-                        )
-                    )
-                }
-                is MdBlock.CodeBlock -> {
-                    val clipboardManager = LocalClipboardManager.current
-                    val haptic = LocalHapticFeedback.current
-                    var copied by remember { mutableStateOf(false) }
+            } else {
+                Modifier.fillMaxWidth()
+            }
 
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(6.dp))
-                    ) {
-                        // Code content with horizontal scroll
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(end = 32.dp) // Reserve space for copy button
-                                .padding(8.dp)
-                                .horizontalScroll(rememberScrollState())
-                        ) {
+            Box(modifier = blockModifier) {
+                Column {
+                    when (block) {
+                        is MdBlock.Paragraph -> {
+                            val annotated = parseInlineLinked(block.text, safeOpenUri)
                             Text(
-                                text = block.code,
-                                fontSize = 12.sp,
-                                fontFamily = FontFamily.Monospace,
-                                lineHeight = 16.sp,
-                                color = textColor.copy(alpha = 0.85f)
+                                text = annotated,
+                                style = TextStyle(
+                                    fontSize = 14.sp,
+                                    lineHeight = 20.sp,
+                                    color = textColor
+                                )
                             )
                         }
-                        // Copy button in top-right corner
-                        IconButton(
-                            onClick = {
-                                clipboardManager.setText(AnnotatedString(block.code))
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                copied = true
-                            },
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .size(28.dp)
-                                .padding(4.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.ContentCopy,
-                                contentDescription = "Copy code",
-                                modifier = Modifier.size(14.dp),
-                                tint = if (copied) PortaSuccess else textColor.copy(alpha = 0.3f)
+                        is MdBlock.Heading -> {
+                            val (size, weight) = when (block.level) {
+                                1 -> 20.sp to FontWeight.Bold
+                                2 -> 17.sp to FontWeight.Bold
+                                3 -> 15.sp to FontWeight.SemiBold
+                                else -> 14.sp to FontWeight.Medium
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            val annotated = parseInlineLinked(block.text, safeOpenUri)
+                            Text(
+                                text = annotated,
+                                style = TextStyle(
+                                    fontSize = size,
+                                    fontWeight = weight,
+                                    lineHeight = (size.value + 6).sp,
+                                    color = textColor
+                                )
                             )
+                        }
+                        is MdBlock.CodeBlock -> {
+                            val clipboardManager = LocalClipboardManager.current
+                            val hapticFb = LocalHapticFeedback.current
+                            var copied by remember { mutableStateOf(false) }
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(6.dp))
+                            ) {
+                                // Code content with horizontal scroll
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(end = 32.dp) // Reserve space for copy button
+                                        .padding(8.dp)
+                                        .horizontalScroll(rememberScrollState())
+                                ) {
+                                    Text(
+                                        text = block.code,
+                                        fontSize = 12.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        lineHeight = 16.sp,
+                                        color = textColor.copy(alpha = 0.85f)
+                                    )
+                                }
+                                // Copy button in top-right corner
+                                IconButton(
+                                    onClick = {
+                                        clipboardManager.setText(AnnotatedString(block.code))
+                                        hapticFb.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        copied = true
+                                    },
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .size(28.dp)
+                                        .padding(4.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.ContentCopy,
+                                        contentDescription = "Copy code",
+                                        modifier = Modifier.size(14.dp),
+                                        tint = if (copied) PortaSuccess else textColor.copy(alpha = 0.3f)
+                                    )
+                                }
+                            }
+
+                            // Reset copied state after a delay
+                            LaunchedEffect(copied) {
+                                if (copied) {
+                                    kotlinx.coroutines.delay(2000)
+                                    copied = false
+                                }
+                            }
+                        }
+                        is MdBlock.ListItem -> {
+                            Row(modifier = Modifier.padding(start = 8.dp)) {
+                                Text(
+                                    text = block.bullet,
+                                    fontSize = 14.sp,
+                                    color = PortaTertiary,
+                                    modifier = Modifier.width(20.dp)
+                                )
+                                val annotated = parseInlineLinked(block.text, safeOpenUri)
+                                Text(
+                                    text = annotated,
+                                    style = TextStyle(
+                                        fontSize = 14.sp,
+                                        lineHeight = 20.sp,
+                                        color = textColor
+                                    )
+                                )
+                            }
+                        }
+                        is MdBlock.Table -> {
+                            MarkdownTable(table = block)
+                        }
+                        is MdBlock.Blockquote -> {
+                            MarkdownBlockquote(text = block.text)
+                        }
+                        is MdBlock.ImageBlock -> {
+                            MarkdownImageBlock(url = block.url, alt = block.alt)
+                        }
+                        is MdBlock.HorizontalRule -> {
+                            Spacer(Modifier.height(4.dp))
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(1.dp)
+                                    .background(textColor.copy(alpha = 0.1f))
+                            )
+                            Spacer(Modifier.height(4.dp))
                         }
                     }
 
-                    // Reset copied state after a delay
-                    LaunchedEffect(copied) {
-                        if (copied) {
-                            kotlinx.coroutines.delay(2000)
-                            copied = false
-                        }
-                    }
-                }
-                is MdBlock.ListItem -> {
-                    Row(modifier = Modifier.padding(start = 8.dp)) {
+                    // Annotation indicator
+                    if (hasAnnotation) {
                         Text(
-                            text = block.bullet,
-                            fontSize = 14.sp,
-                            color = PortaTertiary,
-                            modifier = Modifier.width(20.dp)
-                        )
-                        val annotated = parseInlineLinked(block.text, safeOpenUri)
-                        Text(
-                            text = annotated,
-                            style = TextStyle(
-                                fontSize = 14.sp,
-                                lineHeight = 20.sp,
-                                color = textColor
-                            )
+                            "💬 ${annotations[blockIdx]}",
+                            fontSize = 10.sp,
+                            color = PortaPrimary.copy(alpha = 0.7f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 2.dp)
                         )
                     }
-                }
-                is MdBlock.Table -> {
-                    MarkdownTable(table = block)
-                }
-                is MdBlock.Blockquote -> {
-                    MarkdownBlockquote(text = block.text)
-                }
-                is MdBlock.ImageBlock -> {
-                    MarkdownImageBlock(url = block.url, alt = block.alt)
-                }
-                is MdBlock.HorizontalRule -> {
-                    Spacer(Modifier.height(4.dp))
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(1.dp)
-                            .background(textColor.copy(alpha = 0.1f))
-                    )
-                    Spacer(Modifier.height(4.dp))
                 }
             }
         }

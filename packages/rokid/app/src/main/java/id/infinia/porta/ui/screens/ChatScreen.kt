@@ -1011,6 +1011,14 @@ fun ChatScreen(
                                 },
                                 onRevert = { stepIndex ->
                                     viewModel.revertToStep(stepIndex)
+                                },
+                                onAnswerQuestion = { trajectoryId, stepIndex, selectedOptions, writeInText ->
+                                    viewModel.answerQuestionByTrajectory(
+                                        trajectoryId, stepIndex, selectedOptions, writeInText
+                                    )
+                                },
+                                onSendFeedback = { feedbackText ->
+                                    viewModel.sendMessage(feedbackText)
                                 }
                             )
                         }

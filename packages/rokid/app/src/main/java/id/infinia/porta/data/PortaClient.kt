@@ -409,6 +409,45 @@ class PortaClient(
         }
     }
 
+    /**
+     * Answer a question from an ask_question interaction.
+     *
+     * POST /api/conversations/{id}/answer-question
+     */
+    suspend fun answerQuestion(
+        cascadeId: String,
+        trajectoryId: String,
+        stepIndex: Int,
+        selectedOptions: List<Int>,
+        writeInText: String? = null
+    ) = withContext(Dispatchers.IO) {
+        val url = buildHttpUrl("/api/conversations/$cascadeId/answer-question")
+
+        val payload = JsonObject().apply {
+            addProperty("trajectoryId", trajectoryId)
+            addProperty("stepIndex", stepIndex)
+            add("selectedOptions", gson.toJsonTree(selectedOptions))
+            writeInText?.let { addProperty("writeInText", it) }
+        }
+
+        val requestBody = payload.toString()
+            .toRequestBody("application/json".toMediaType())
+
+        val request = Request.Builder()
+            .url(url)
+            .post(requestBody)
+            .apply { addAuthHeader(this) }
+            .addHeader("X-Porta-Request", "1")
+            .build()
+
+        val response = httpClient.newCall(request).execute()
+        response.use { resp ->
+            if (!resp.isSuccessful) {
+                throw PortaApiException("Failed to answer question: ${resp.code}")
+            }
+        }
+    }
+
     // ── WebSocket connection ──
 
     /**

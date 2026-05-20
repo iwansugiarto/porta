@@ -650,4 +650,60 @@ export function registerConversationRoutes(app: Hono): void {
       return handleRPCError(c, err);
     }
   });
+
+  // ── Answer Question (respond to ask_question interactions) ──
+
+  app.post("/api/conversations/:id/answer-question", async (c) => {
+    const id = c.req.param("id");
+    try {
+      const body = await c.req.json();
+      const { trajectoryId, stepIndex, selectedOptions, writeInText } = body;
+
+      if (!trajectoryId || stepIndex === undefined) {
+        return c.json(
+          {
+            error:
+              "Missing required fields: trajectoryId, stepIndex",
+          },
+          400,
+        );
+      }
+
+      // Build the response: selected option indices + optional write-in
+      const answerItems: unknown[] = [];
+      if (Array.isArray(selectedOptions)) {
+        for (const idx of selectedOptions) {
+          answerItems.push({ optionIndex: Number(idx) });
+        }
+      }
+      if (typeof writeInText === "string" && writeInText.trim().length > 0) {
+        answerItems.push({ writeIn: writeInText.trim() });
+      }
+
+      // Use HandleCascadeUserInteraction with askQuestionAnswer field.
+      // This mirrors the commandAction/permission pattern.
+      const data = await rpcForConversation(
+        "HandleCascadeUserInteraction",
+        id,
+        {
+          cascadeId: id,
+          interaction: {
+            trajectoryId,
+            stepIndex: Number(stepIndex),
+            askQuestionAnswer: {
+              selectedOptions: selectedOptions?.map(Number) ?? [],
+              writeIn: writeInText?.trim() ?? "",
+            },
+          },
+        },
+      );
+
+      // Question answer unblocks the agent — wake WS polling
+      conversationSignals.emit("activate", id);
+
+      return c.json(data);
+    } catch (err) {
+      return handleRPCError(c, err);
+    }
+  });
 }

@@ -459,6 +459,7 @@ function ChatView({ onLogout }: { onLogout?: () => void }) {
             isConversationRunning={isRunning}
             onSidebarRefresh={refresh}
             onWsRunningChange={setWsRunning}
+            onSendFeedback={(feedback) => handleSend(feedback, null)}
           />
         ) : (
           <div

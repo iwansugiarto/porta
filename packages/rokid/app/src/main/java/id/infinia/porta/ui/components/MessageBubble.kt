@@ -34,8 +34,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.google.gson.JsonObject
 import id.infinia.porta.shared.protocol.ChatMessage
+import id.infinia.porta.shared.protocol.QuestionInfo
+import id.infinia.porta.shared.protocol.QuestionOption
 import id.infinia.porta.ui.theme.*
 
 /**
@@ -52,11 +55,13 @@ fun MessageBubble(
     onRejectCommand: ((String, Int) -> Unit)? = null,
     onApprovePermission: ((String, Int, Boolean, Int) -> Unit)? = null,
     onRevert: ((Int) -> Unit)? = null,
+    onAnswerQuestion: ((String, Int, List<Int>, String?) -> Unit)? = null,
+    onSendFeedback: ((String) -> Unit)? = null,
 ) {
     when (message.role) {
         "user" -> UserBubble(message)
-        "assistant" -> AssistantBubble(message, onRevert)
-        "system" -> SystemCard(message, onApproveCommand, onRejectCommand, onApprovePermission)
+        "assistant" -> AssistantBubble(message, onRevert, onSendFeedback)
+        "system" -> SystemCard(message, onApproveCommand, onRejectCommand, onApprovePermission, onAnswerQuestion)
     }
 }
 
@@ -149,11 +154,26 @@ private fun UserBubble(message: ChatMessage) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AssistantBubble(message: ChatMessage, onRevert: ((Int) -> Unit)? = null) {
+private fun AssistantBubble(
+    message: ChatMessage,
+    onRevert: ((Int) -> Unit)? = null,
+    onSendFeedback: ((String) -> Unit)? = null,
+) {
     val clipboardManager = LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
     var showMenu by remember { mutableStateOf(false) }
     var showCopied by remember { mutableStateOf(false) }
+
+    // ── Plan annotation state ──
+    val isPlan = remember(message.content) {
+        message.content.contains("## Proposed Changes") ||
+        message.content.contains("## Open Questions") ||
+        message.content.contains("## User Review Required")
+    }
+    val annotations = remember { mutableStateMapOf<Int, String>() }
+    var showAnnotationDialog by remember { mutableStateOf(false) }
+    var annotationBlockIndex by remember { mutableIntStateOf(-1) }
+    var annotationDraft by remember { mutableStateOf("") }
 
     Box {
         Column(
@@ -185,7 +205,36 @@ private fun AssistantBubble(message: ChatMessage, onRevert: ((Int) -> Unit)? = n
                 ) {
                     MarkdownText(
                         markdown = message.content,
-                        modifier = Modifier.padding(4.dp)
+                        modifier = Modifier.padding(4.dp),
+                        annotatable = isPlan,
+                        annotations = annotations,
+                        onAnnotationRequested = { blockIndex ->
+                            annotationBlockIndex = blockIndex
+                            annotationDraft = annotations[blockIndex] ?: ""
+                            showAnnotationDialog = true
+                        }
+                    )
+                }
+            }
+
+            // Submit Feedback bar for annotated plans
+            if (isPlan && annotations.isNotEmpty() && onSendFeedback != null) {
+                Spacer(Modifier.height(6.dp))
+                Button(
+                    onClick = {
+                        val feedback = buildAnnotationFeedback(annotations, message.content)
+                        onSendFeedback(feedback)
+                        annotations.clear()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = PortaPrimary),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Icon(Icons.Default.RateReview, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "Submit Feedback (${annotations.size} comment${if (annotations.size != 1) "s" else ""})",
+                        fontSize = 12.sp
                     )
                 }
             }
@@ -230,6 +279,62 @@ private fun AssistantBubble(message: ChatMessage, onRevert: ((Int) -> Unit)? = n
                         showMenu = false
                     }
                 )
+            }
+        }
+    }
+
+    // ── Annotation Dialog ──
+    if (showAnnotationDialog) {
+        Dialog(onDismissRequest = { showAnnotationDialog = false }) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        "Add Comment",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = annotationDraft,
+                        onValueChange = { annotationDraft = it },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp),
+                        placeholder = { Text("Your feedback on this section…", fontSize = 13.sp) },
+                        textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp)
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
+                    ) {
+                        if (annotations.containsKey(annotationBlockIndex)) {
+                            TextButton(onClick = {
+                                annotations.remove(annotationBlockIndex)
+                                showAnnotationDialog = false
+                            }) {
+                                Text("Remove", fontSize = 12.sp, color = PortaError)
+                            }
+                        }
+                        TextButton(onClick = { showAnnotationDialog = false }) {
+                            Text("Cancel", fontSize = 12.sp)
+                        }
+                        Button(
+                            onClick = {
+                                if (annotationDraft.isNotBlank()) {
+                                    annotations[annotationBlockIndex] = annotationDraft
+                                }
+                                showAnnotationDialog = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = PortaPrimary)
+                        ) {
+                            Text("Save", fontSize = 12.sp)
+                        }
+                    }
+                }
             }
         }
     }
@@ -303,11 +408,13 @@ private fun SystemCard(
     onApproveCommand: ((String, Int) -> Unit)?,
     onRejectCommand: ((String, Int) -> Unit)?,
     onApprovePermission: ((String, Int, Boolean, Int) -> Unit)?,
+    onAnswerQuestion: ((String, Int, List<Int>, String?) -> Unit)?,
 ) {
     when (message.type) {
         "CORTEX_STEP_TYPE_RUN_COMMAND" -> CommandCard(message, onApproveCommand, onRejectCommand)
         "CORTEX_STEP_TYPE_CODE_ACTION" -> CodeActionCard(message)
         "CORTEX_STEP_TYPE_FILE_PERMISSION" -> FilePermissionCard(message, onApprovePermission)
+        "ASK_QUESTION" -> QuestionCard(message, onAnswerQuestion)
         else -> InfoCard(message)
     }
 }
@@ -721,4 +828,265 @@ private fun InfoCard(message: ChatMessage) {
             overflow = TextOverflow.Ellipsis
         )
     }
+}
+
+// ── Question Card ──
+
+@Composable
+private fun QuestionCard(
+    message: ChatMessage,
+    onAnswer: ((String, Int, List<Int>, String?) -> Unit)?,
+) {
+    val step = message.step ?: return
+    val interaction = step.getAsJsonObject("requestedInteraction") ?: return
+    val aq = interaction.getAsJsonObject("askQuestion")
+        ?: interaction.getAsJsonObject("AskQuestion")
+        ?: return
+
+    // Parse question data
+    val questionsArr = aq.getAsJsonArray("questions")
+    val firstQ = questionsArr?.firstOrNull()?.asJsonObject ?: aq
+    val questionText = firstQ.get("question")?.asString ?: "Select an option"
+    val isMultiSelect = firstQ.get("is_multi_select")?.asBoolean
+        ?: firstQ.get("isMultiSelect")?.asBoolean
+        ?: false
+    val optionsArr = firstQ.getAsJsonArray("options") ?: aq.getAsJsonArray("options")
+    val options = mutableListOf<String>()
+    optionsArr?.forEach { opt ->
+        val text = if (opt.isJsonPrimitive) opt.asString
+        else opt.asJsonObject?.get("text")?.asString ?: opt.toString()
+        options.add(text)
+    }
+
+    val trajectoryId = step.getAsJsonObject("metadata")
+        ?.getAsJsonObject("sourceTrajectoryStepInfo")
+        ?.get("trajectoryId")?.asString ?: ""
+    val stepIdx = step.getAsJsonObject("metadata")
+        ?.getAsJsonObject("sourceTrajectoryStepInfo")
+        ?.get("stepIndex")?.asInt ?: 0
+
+    var responded by remember { mutableStateOf(false) }
+    val selectedIndices = remember { mutableStateListOf<Int>() }
+    var writeInText by remember { mutableStateOf("") }
+    var submittedSummary by remember { mutableStateOf("") }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (!responded) PortaPrimary.copy(alpha = 0.08f)
+            else PortaSuccess.copy(alpha = 0.06f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            // Header
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text("❓", fontSize = 14.sp)
+                Text(
+                    "Question",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = PortaPrimary
+                )
+                if (isMultiSelect) {
+                    Text(
+                        "(select all that apply)",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(6.dp))
+
+            // Question text
+            Text(
+                questionText,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.9f)
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            if (!responded) {
+                // Options
+                options.forEachIndexed { idx, optionText ->
+                    val isSelected = idx in selectedIndices
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable {
+                                if (isMultiSelect) {
+                                    if (isSelected) selectedIndices.remove(idx)
+                                    else selectedIndices.add(idx)
+                                } else {
+                                    selectedIndices.clear()
+                                    selectedIndices.add(idx)
+                                }
+                            },
+                        color = if (isSelected) PortaPrimary.copy(alpha = 0.12f)
+                        else MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (isMultiSelect) {
+                                Checkbox(
+                                    checked = isSelected,
+                                    onCheckedChange = {
+                                        if (it) selectedIndices.add(idx)
+                                        else selectedIndices.remove(idx)
+                                    },
+                                    modifier = Modifier.size(18.dp),
+                                    colors = CheckboxDefaults.colors(
+                                        checkedColor = PortaPrimary,
+                                        uncheckedColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                    )
+                                )
+                            } else {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = {
+                                        selectedIndices.clear()
+                                        selectedIndices.add(idx)
+                                    },
+                                    modifier = Modifier.size(18.dp),
+                                    colors = RadioButtonDefaults.colors(
+                                        selectedColor = PortaPrimary,
+                                        unselectedColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                    )
+                                )
+                            }
+                            Text(
+                                optionText,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(
+                                    alpha = if (isSelected) 1f else 0.7f
+                                )
+                            )
+                        }
+                    }
+                }
+
+                // Write-in field
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = writeInText,
+                    onValueChange = { writeInText = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Write your own answer…", fontSize = 12.sp) },
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                    singleLine = false,
+                    maxLines = 3,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = PortaPrimary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
+                    )
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                // Submit / Skip buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            responded = true
+                            submittedSummary = "Skipped"
+                            onAnswer?.invoke(trajectoryId, stepIdx, emptyList(), null)
+                        },
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                    ) { Text("Skip", fontSize = 11.sp) }
+
+                    Button(
+                        onClick = {
+                            responded = true
+                            val selections = selectedIndices.sorted()
+                            val summary = selections.map { options.getOrElse(it) { "?" } }
+                                .joinToString(", ")
+                            submittedSummary = if (summary.isNotEmpty()) summary
+                            else writeInText.take(50).ifEmpty { "Submitted" }
+                            onAnswer?.invoke(
+                                trajectoryId, stepIdx,
+                                selections,
+                                writeInText.ifBlank { null }
+                            )
+                        },
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = PortaPrimary),
+                        enabled = selectedIndices.isNotEmpty() || writeInText.isNotBlank()
+                    ) { Text("Submit", fontSize = 11.sp) }
+                }
+            } else {
+                // Post-submit summary
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(Icons.Default.CheckCircle, null, Modifier.size(14.dp), tint = PortaSuccess)
+                    Text(
+                        submittedSummary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = PortaSuccess,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ── Annotation Helpers ──
+
+/**
+ * Build a structured markdown feedback message from annotations on a plan.
+ * Extracts the text surrounding each annotated block index for context.
+ */
+private fun buildAnnotationFeedback(
+    annotations: Map<Int, String>,
+    planMarkdown: String
+): String {
+    val lines = planMarkdown.lines()
+    // Split into blocks by blank lines (rough block segmentation)
+    val blocks = mutableListOf<String>()
+    val current = StringBuilder()
+    for (line in lines) {
+        if (line.isBlank() && current.isNotEmpty()) {
+            blocks.add(current.toString().trim())
+            current.clear()
+        } else {
+            current.appendLine(line)
+        }
+    }
+    if (current.isNotEmpty()) blocks.add(current.toString().trim())
+
+    val sb = StringBuilder()
+    sb.appendLine("## Feedback on Implementation Plan\n")
+
+    for ((blockIdx, comment) in annotations.toSortedMap()) {
+        val blockText = blocks.getOrNull(blockIdx) ?: "(section $blockIdx)"
+        // Take first 2 lines as excerpt
+        val excerpt = blockText.lines().take(2).joinToString("\n")
+        sb.appendLine("### Block ${blockIdx + 1}")
+        sb.appendLine("> ${excerpt.replace("\n", "\n> ")}")
+        sb.appendLine()
+        sb.appendLine("💬 $comment")
+        sb.appendLine()
+        sb.appendLine("---\n")
+    }
+
+    return sb.toString().trim()
 }

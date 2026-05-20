@@ -779,6 +779,26 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun answerQuestionByTrajectory(
+        trajectoryId: String,
+        stepIndex: Int,
+        selectedOptions: List<Int>,
+        writeInText: String? = null
+    ) {
+        val cascadeId = _currentConversationId.value ?: return
+        viewModelScope.launch {
+            try {
+                portaClient.answerQuestion(
+                    cascadeId, trajectoryId, stepIndex, selectedOptions, writeInText
+                )
+                notificationService.dismissApproval()
+                _statusMessage.value = "Answer submitted"
+            } catch (e: Exception) {
+                _statusMessage.value = "Answer failed: ${e.message}"
+            }
+        }
+    }
+
     // ── Voice ──
 
     fun startVoiceInput() {

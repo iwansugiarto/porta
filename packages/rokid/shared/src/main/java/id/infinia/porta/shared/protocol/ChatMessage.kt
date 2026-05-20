@@ -78,6 +78,21 @@ fun stepsToMessages(steps: List<JsonObject>): List<ChatMessage> {
             continue
         }
 
+        // ── Ask question interaction ──
+        val reqInteraction = step.getAsJsonObject("requestedInteraction")
+        val isAskQuestion = reqInteraction != null &&
+            (reqInteraction.has("askQuestion") || reqInteraction.has("AskQuestion"))
+        if (isAskQuestion && step.get("status")?.asString == "CORTEX_STEP_STATUS_WAITING") {
+            messages.add(ChatMessage(
+                role = "system",
+                content = "",
+                stepIndex = i,
+                type = "ASK_QUESTION",
+                step = step
+            ))
+            continue
+        }
+
         when (type) {
             // ── User message ──
             "CORTEX_STEP_TYPE_USER_INPUT" -> {

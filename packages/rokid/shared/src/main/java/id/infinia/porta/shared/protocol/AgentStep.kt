@@ -37,6 +37,9 @@ data class AgentStep(
     /** File operation details if this is a file step. */
     val fileInfo: FileInfo?,
 
+    /** Question details if this is an ask_question step. */
+    val questionInfo: QuestionInfo?,
+
     /** Raw step JSON for advanced inspection. */
     val raw: JsonObject
 ) {
@@ -97,6 +100,11 @@ data class AgentStep(
             // Parse file info
             val fileInfo = parseFileInfo(json)
 
+            // Parse question info
+            val questionInfo = if (needsApproval && requestedInteraction != null) {
+                parseQuestionInfo(requestedInteraction)
+            } else null
+
             return AgentStep(
                 index = index,
                 status = status,
@@ -107,6 +115,7 @@ data class AgentStep(
                 approvalInfo = approvalInfo,
                 commandInfo = commandInfo,
                 fileInfo = fileInfo,
+                questionInfo = questionInfo,
                 raw = json
             )
         }
@@ -122,6 +131,7 @@ data class AgentStep(
 
             val isCommand = interaction.has("runCommand") || interaction.has("RunCommand")
             val isPermission = interaction.has("permission") || interaction.has("Permission")
+            val isQuestion = interaction.has("askQuestion") || interaction.has("AskQuestion")
 
             return ApprovalInfo(
                 trajectoryId = trajectoryId,
@@ -129,6 +139,7 @@ data class AgentStep(
                 type = when {
                     isCommand -> ApprovalType.COMMAND
                     isPermission -> ApprovalType.PERMISSION
+                    isQuestion -> ApprovalType.QUESTION
                     else -> ApprovalType.OTHER
                 }
             )
@@ -152,6 +163,64 @@ data class AgentStep(
             }
             return null
         }
+
+        /**
+         * Parse question info from requestedInteraction.askQuestion.
+         */
+        private fun parseQuestionInfo(interaction: JsonObject): QuestionInfo? {
+            val aq = interaction.getAsJsonObject("askQuestion")
+                ?: interaction.getAsJsonObject("AskQuestion")
+                ?: return null
+
+            val question = aq.get("question")?.asString ?: ""
+            val isMultiSelect = aq.get("isMultiSelect")?.asBoolean
+                ?: aq.get("is_multi_select")?.asBoolean
+                ?: false
+
+            val options = mutableListOf<QuestionOption>()
+            val optionsArray = aq.getAsJsonArray("options")
+                ?: aq.getAsJsonArray("questions")?.firstOrNull()
+                    ?.asJsonObject?.getAsJsonArray("options")
+            if (optionsArray != null) {
+                for (opt in optionsArray) {
+                    val optText = if (opt.isJsonPrimitive) {
+                        opt.asString
+                    } else {
+                        opt.asJsonObject?.get("text")?.asString
+                            ?: opt.asJsonObject?.get("option")?.asString
+                            ?: opt.toString()
+                    }
+                    options.add(QuestionOption(text = optText))
+                }
+            }
+
+            // Also check for nested questions array (the ask_question tool format)
+            val questionsArray = aq.getAsJsonArray("questions")
+            if (questionsArray != null && questionsArray.size() > 0) {
+                val firstQ = questionsArray[0].asJsonObject
+                val qText = firstQ.get("question")?.asString ?: question
+                val qMulti = firstQ.get("is_multi_select")?.asBoolean ?: isMultiSelect
+                val qOptions = mutableListOf<QuestionOption>()
+                firstQ.getAsJsonArray("options")?.forEach { opt ->
+                    val optText = if (opt.isJsonPrimitive) opt.asString
+                    else opt.asJsonObject?.get("text")?.asString ?: opt.toString()
+                    qOptions.add(QuestionOption(text = optText))
+                }
+                if (qOptions.isNotEmpty() || qText.isNotBlank()) {
+                    return QuestionInfo(
+                        question = qText,
+                        options = qOptions,
+                        isMultiSelect = qMulti
+                    )
+                }
+            }
+
+            return QuestionInfo(
+                question = question,
+                options = options,
+                isMultiSelect = isMultiSelect
+            )
+        }
     }
 }
 
@@ -164,6 +233,7 @@ data class ApprovalInfo(
 enum class ApprovalType {
     COMMAND,
     PERMISSION,
+    QUESTION,
     OTHER
 }
 
@@ -176,4 +246,15 @@ data class CommandInfo(
 data class FileInfo(
     val path: String,
     val action: String
+)
+
+/** Question data from an ask_question interaction. */
+data class QuestionInfo(
+    val question: String,
+    val options: List<QuestionOption>,
+    val isMultiSelect: Boolean
+)
+
+data class QuestionOption(
+    val text: String
 )
