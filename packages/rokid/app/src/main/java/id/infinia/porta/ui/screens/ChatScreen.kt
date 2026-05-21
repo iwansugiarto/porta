@@ -181,10 +181,23 @@ fun ChatScreen(
     // Show partial voice transcription in the input field
     val displayText = if (isListening && partialVoice.isNotBlank()) partialVoice else inputText
 
-    // Auto-scroll to bottom when new messages arrive
+    // Track whether the user is near the bottom of the list (within 3 items)
+    val isNearBottom by remember {
+        derivedStateOf {
+            val layoutInfo = listState.layoutInfo
+            val totalItems = layoutInfo.totalItemsCount
+            if (totalItems == 0) true
+            else {
+                val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                lastVisibleIndex >= totalItems - 3
+            }
+        }
+    }
+
+    // Auto-scroll to bottom when new messages arrive — ONLY if user is near bottom
     LaunchedEffect(chatMessages.size) {
-        if (chatMessages.isNotEmpty()) {
-            listState.scrollToItem(chatMessages.size - 1)
+        if (chatMessages.isNotEmpty() && isNearBottom) {
+            listState.animateScrollToItem(chatMessages.size - 1)
         }
     }
 
