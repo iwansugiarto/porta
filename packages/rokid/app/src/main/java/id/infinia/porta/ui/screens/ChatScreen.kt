@@ -82,6 +82,8 @@ fun ChatScreen(
     val currentConversationId by viewModel.currentConversationId.collectAsState()
     val pendingApprovals by viewModel.pendingApprovals.collectAsState()
     val conversations by viewModel.conversations.collectAsState()
+    val childConversations by viewModel.childConversations.collectAsState()
+    val parentConversation by viewModel.parentConversation.collectAsState()
 
     val isListening by viewModel.isListening.collectAsState()
     val partialVoice by viewModel.voiceInput.partialResult.collectAsState()
@@ -893,6 +895,132 @@ fun ChatScreen(
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                     )
+                }
+            }
+
+            // ── Related Conversations banner ──
+            // Parent conversation link (when viewing a child/subagent)
+            parentConversation?.let { parent ->
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Color(0xFFA78BFA).copy(alpha = 0.10f),
+                    tonalElevation = 1.dp
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { viewModel.selectConversation(parent.cascadeId) }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("↩", fontSize = 14.sp)
+                        Text(
+                            "Spawned from:",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFFA78BFA)
+                        )
+                        Text(
+                            parent.summary,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(
+                            Icons.Default.ChevronRight,
+                            contentDescription = "Open parent",
+                            modifier = Modifier.size(16.dp),
+                            tint = Color(0xFFA78BFA).copy(alpha = 0.6f)
+                        )
+                    }
+                }
+            }
+
+            // Child conversations (subagents) strip
+            if (childConversations.isNotEmpty()) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Color(0xFFA78BFA).copy(alpha = 0.06f),
+                    tonalElevation = 1.dp
+                ) {
+                    Column(
+                        modifier = Modifier.padding(vertical = 6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text("🤖", fontSize = 12.sp)
+                            Text(
+                                "${childConversations.size} related conversation${if (childConversations.size != 1) "s" else ""}",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFA78BFA)
+                            )
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                                .padding(horizontal = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            childConversations.forEach { child ->
+                                val isRunning = child.status == "CASCADE_RUN_STATUS_RUNNING"
+                                Surface(
+                                    modifier = Modifier.clickable {
+                                        viewModel.selectConversation(child.cascadeId)
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (isRunning) Color(0xFFA78BFA).copy(alpha = 0.12f)
+                                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+                                    border = if (isRunning) androidx.compose.foundation.BorderStroke(
+                                        1.dp, Color(0xFFA78BFA).copy(alpha = 0.3f)
+                                    ) else null
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(
+                                            horizontal = 10.dp, vertical = 6.dp
+                                        ),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        if (isRunning) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(6.dp)
+                                                    .clip(CircleShape)
+                                                    .background(PortaSuccess)
+                                            )
+                                        }
+                                        Text(
+                                            child.summary,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(
+                                                alpha = 0.8f
+                                            ),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.widthIn(max = 180.dp)
+                                        )
+                                        Text(
+                                            "${child.stepCount}",
+                                            fontSize = 9.sp,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(
+                                                alpha = 0.4f
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

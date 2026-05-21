@@ -364,3 +364,144 @@
   touch-action: none; /* Prevent browser scroll during swipe gesture */
   cursor: default;
 }
+
+/* ── Related Conversations Banner ── */
+
+.related-conversations-banner {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  animation: related-slide-in 0.25s ease-out;
+}
+
+@keyframes related-slide-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.related-conversations-banner.parent-banner {
+  background: rgb(167 139 250 / 0.08);
+}
+
+.related-conversations-banner.children-banner {
+  background: rgb(167 139 250 / 0.04);
+  padding: 6px 0;
+}
+
+.related-conv-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 14px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-primary);
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.related-conv-link:hover {
+  background: rgb(167 139 250 / 0.1);
+}
+
+.related-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.related-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #a78bfa;
+  flex-shrink: 0;
+}
+
+.related-title {
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.related-chevron {
+  font-size: 16px;
+  color: rgb(167 139 250 / 0.5);
+  flex-shrink: 0;
+}
+
+.related-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px 4px;
+}
+
+.related-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 0 12px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.related-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.related-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+.related-chip:hover {
+  background: rgb(167 139 250 / 0.1);
+  border-color: rgb(167 139 250 / 0.3);
+}
+
+.related-chip.running {
+  background: rgb(167 139 250 / 0.1);
+  border-color: rgb(167 139 250 / 0.25);
+}
+
+.related-running-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgb(var(--c-success));
+  flex-shrink: 0;
+  animation: running-pulse 1.5s infinite;
+}
+
+@keyframes running-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.related-chip-title {
+  font-weight: 500;
+  color: var(--text-primary);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.related-chip-steps {
+  font-size: 9px;
+  color: var(--text-tertiary);
+}

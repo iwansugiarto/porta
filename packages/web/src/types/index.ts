@@ -8,6 +8,18 @@ export interface ConversationSummary {
   workspaces: Workspace[];
   lastUserInputTime?: string;
   lastUserInputStepIndex?: number;
+  /** Child conversations detected as subagent spawns (enriched by proxy). */
+  childConversations?: {
+    cascadeId: string;
+    summary: string;
+    stepCount: number;
+    status: string;
+  }[];
+  /** Parent conversation if this is a child/subagent (enriched by proxy). */
+  parentConversation?: {
+    cascadeId: string;
+    summary: string;
+  };
 }
 
 export interface MediaAttachment {
@@ -253,3 +265,18 @@ export interface ClientSettings {
   /** Planner type used when the user hasn't explicitly picked one per-message. */
   defaultPlannerType: "conversational" | "planning";
 }
+
+// ── Projects ──
+
+export type ProjectStatus = "Blocked" | "In Progress" | "Idle";
+
+export interface Project {
+  id: string;
+  title: string;
+  status: ProjectStatus;
+  lastUpdated: string; // ISO string
+  hasIndicator?: boolean; // blue status dot
+  timeBadge?: string; // e.g. "18h", "22h", "2d"
+  isActive?: boolean;
+}
+

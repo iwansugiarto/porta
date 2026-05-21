@@ -471,23 +471,67 @@ function ChatView({ onLogout }: { onLogout?: () => void }) {
             onBack={() => navigate(`/${projectSlug ?? "unknown"}`)}
           />
         ) : activeId ? (
-          <ChatPanel
-            key={activeId}
-            cascadeId={activeId}
-            onRevert={handleRevert}
-            onFilePermission={handleFilePermission}
-            onCommandAction={handleCommandAction}
-            onAnswerQuestion={handleAnswerQuestion}
-            onConfirmOptimistic={confirmOptimisticMessages}
-            optimisticMessages={optimisticMessages}
-            refreshKey={stepsRefreshKey}
-            hardRefreshKey={hardRefreshKey}
-            totalStepCount={activeConv?.summary.stepCount}
-            isConversationRunning={isRunning}
-            onSidebarRefresh={refresh}
-            onWsRunningChange={setWsRunning}
-            onSendFeedback={(feedback) => handleSend(feedback, null)}
-          />
+          <>
+            {/* Related conversations banner (parent/child linking) */}
+            {activeConv?.summary.parentConversation && (
+              <div className="related-conversations-banner parent-banner">
+                <button
+                  className="related-conv-link"
+                  onClick={() => {
+                    const parentId = activeConv.summary.parentConversation!.cascadeId;
+                    navigate(`/${projectSlug ?? "unknown"}/${parentId}`);
+                  }}
+                >
+                  <span className="related-icon">↩</span>
+                  <span className="related-label">Spawned from:</span>
+                  <span className="related-title">{activeConv.summary.parentConversation.summary}</span>
+                  <span className="related-chevron">›</span>
+                </button>
+              </div>
+            )}
+            {activeConv?.summary.childConversations && activeConv.summary.childConversations.length > 0 && (
+              <div className="related-conversations-banner children-banner">
+                <div className="related-header">
+                  <span className="related-icon">🤖</span>
+                  <span className="related-label">
+                    {activeConv.summary.childConversations.length} related conversation{activeConv.summary.childConversations.length !== 1 ? "s" : ""}
+                  </span>
+                </div>
+                <div className="related-chips">
+                  {activeConv.summary.childConversations.map((child) => (
+                    <button
+                      key={child.cascadeId}
+                      className={`related-chip ${child.status === "CASCADE_RUN_STATUS_RUNNING" ? "running" : ""}`}
+                      onClick={() => navigate(`/${projectSlug ?? "unknown"}/${child.cascadeId}`)}
+                    >
+                      {child.status === "CASCADE_RUN_STATUS_RUNNING" && (
+                        <span className="related-running-dot" />
+                      )}
+                      <span className="related-chip-title">{child.summary}</span>
+                      <span className="related-chip-steps">{child.stepCount}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <ChatPanel
+              key={activeId}
+              cascadeId={activeId}
+              onRevert={handleRevert}
+              onFilePermission={handleFilePermission}
+              onCommandAction={handleCommandAction}
+              onAnswerQuestion={handleAnswerQuestion}
+              onConfirmOptimistic={confirmOptimisticMessages}
+              optimisticMessages={optimisticMessages}
+              refreshKey={stepsRefreshKey}
+              hardRefreshKey={hardRefreshKey}
+              totalStepCount={activeConv?.summary.stepCount}
+              isConversationRunning={isRunning}
+              onSidebarRefresh={refresh}
+              onWsRunningChange={setWsRunning}
+              onSendFeedback={(feedback) => handleSend(feedback, null)}
+            />
+          </>
         ) : (
           <div
             className="chat-area"

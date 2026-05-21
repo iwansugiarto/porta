@@ -219,6 +219,108 @@ export function registerConversationRoutes(app: Hono): void {
         warmUpDiskConversations(diskOnlyIds, instances);
       }
 
+      // ── Parent↔Child trajectory linking ──
+      // Detect conversations that were likely spawned as subagents of another.
+      // Heuristic: if conversation B was created while conversation A was actively
+      // running AND they share the same workspace — B is likely a child of A.
+      // We use a tight time window (child created within 5 min of parent's last
+      // user input) to avoid false positives from long-running conversations.
+      const CASCADE_TYPE = "CORTEX_TRAJECTORY_TYPE_CASCADE";
+      const relatedMap = new Map<string, string[]>(); // parentId -> childIds[]
+      const childOfMap = new Map<string, string>();   // childId -> parentId
+
+      // Extract workspace URI for matching
+      const getWsUri = (s: Record<string, unknown>) => {
+        const ws = s.workspaces as { workspaceFolderAbsoluteUri?: string }[] | undefined;
+        return ws?.[0]?.workspaceFolderAbsoluteUri ?? "";
+      };
+
+      const entries = Object.entries(merged)
+        .filter(([, s]) => (s.trajectoryType as string) === CASCADE_TYPE)
+        .map(([id, s]) => ({
+          id,
+          wsUri: getWsUri(s),
+          created: s.createdTime as string | undefined,
+          lastModified: s.lastModifiedTime as string | undefined,
+          lastUserInput: s.lastUserInputTime as string | undefined,
+          stepCount: (s.stepCount as number) ?? 0,
+          status: s.status as string,
+          summary: s.summary as string | undefined,
+        }))
+        .filter((e) => e.created);
+
+      // Sort by creation time ascending
+      entries.sort((a, b) => (a.created! < b.created! ? -1 : 1));
+
+      // 5 minute window for temporal proximity
+      const MAX_WINDOW_MS = 5 * 60 * 1000;
+      // Maximum parent duration to consider (24 hours — skip multi-day sessions)
+      const MAX_PARENT_DURATION_MS = 24 * 60 * 60 * 1000;
+
+      for (let i = 0; i < entries.length; i++) {
+        const parent = entries[i];
+        if (parent.stepCount < 10) continue; // Parent should be substantial
+
+        const parentCreated = new Date(parent.created!).getTime();
+        const parentLastMod = new Date(parent.lastModified!).getTime();
+        const parentDuration = parentLastMod - parentCreated;
+
+        // Skip very long-running conversations to avoid false positives
+        if (parentDuration > MAX_PARENT_DURATION_MS) continue;
+
+        // Use lastUserInput as the activity anchor when available, else lastModified
+        const parentAnchor = parent.lastUserInput
+          ? new Date(parent.lastUserInput).getTime()
+          : parentLastMod;
+
+        for (let j = i + 1; j < entries.length; j++) {
+          const child = entries[j];
+          if (childOfMap.has(child.id)) continue;
+
+          // Must share workspace (or both have no workspace)
+          if (parent.wsUri !== child.wsUri) continue;
+
+          // Child must have fewer steps than parent
+          if (child.stepCount >= parent.stepCount) continue;
+
+          const childCreated = new Date(child.created!).getTime();
+
+          // Child must be created during parent's active window
+          if (childCreated < parentCreated || childCreated > parentLastMod) continue;
+
+          // Tight temporal proximity: child created within MAX_WINDOW_MS of parent activity
+          const timeDelta = Math.abs(childCreated - parentAnchor);
+          if (timeDelta > MAX_WINDOW_MS) continue;
+
+          const children = relatedMap.get(parent.id) ?? [];
+          children.push(child.id);
+          relatedMap.set(parent.id, children);
+          childOfMap.set(child.id, parent.id);
+        }
+      }
+
+      // Inject childConversations / parentConversation into merged results
+      for (const [parentId, childIds] of relatedMap) {
+        const parentSummary = merged[parentId];
+        if (parentSummary) {
+          (parentSummary as any).childConversations = childIds.map((cid) => ({
+            cascadeId: cid,
+            summary: (merged[cid]?.summary as string) ?? cid.slice(0, 8),
+            stepCount: (merged[cid]?.stepCount as number) ?? 0,
+            status: merged[cid]?.status as string,
+          }));
+        }
+      }
+      for (const [childId, parentId] of childOfMap) {
+        const childSummary = merged[childId];
+        if (childSummary) {
+          (childSummary as any).parentConversation = {
+            cascadeId: parentId,
+            summary: (merged[parentId]?.summary as string) ?? parentId.slice(0, 8),
+          };
+        }
+      }
+
       // Filter for share sessions: only return conversations for the share's workspace
       const shareSession = getShareSession(c);
       if (shareSession) {

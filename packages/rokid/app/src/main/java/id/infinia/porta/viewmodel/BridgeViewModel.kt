@@ -263,6 +263,45 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
             .map { it.key to it.value }
     }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
+    /** Child conversations (subagents) of the currently selected conversation. */
+    data class RelatedConversation(
+        val cascadeId: String,
+        val summary: String,
+        val stepCount: Int,
+        val status: String
+    )
+
+    val childConversations: StateFlow<List<RelatedConversation>> = combine(
+        _currentConversationId, _conversations
+    ) { currentId, convos ->
+        if (currentId == null) return@combine emptyList()
+        val summary = convos[currentId] ?: return@combine emptyList()
+        val children = summary.getAsJsonArray("childConversations") ?: return@combine emptyList()
+        children.mapNotNull { child ->
+            val obj = child.asJsonObject ?: return@mapNotNull null
+            RelatedConversation(
+                cascadeId = obj.get("cascadeId")?.asString ?: return@mapNotNull null,
+                summary = obj.get("summary")?.asString ?: "Subagent",
+                stepCount = obj.get("stepCount")?.asInt ?: 0,
+                status = obj.get("status")?.asString ?: ""
+            )
+        }
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    /** Parent conversation if this is a child/subagent conversation. */
+    data class ParentConversation(val cascadeId: String, val summary: String)
+
+    val parentConversation: StateFlow<ParentConversation?> = combine(
+        _currentConversationId, _conversations
+    ) { currentId, convos ->
+        if (currentId == null) return@combine null
+        val summary = convos[currentId] ?: return@combine null
+        val parent = summary.getAsJsonObject("parentConversation") ?: return@combine null
+        ParentConversation(
+            cascadeId = parent.get("cascadeId")?.asString ?: return@combine null,
+            summary = parent.get("summary")?.asString ?: "Parent"
+        )
+    }.stateIn(viewModelScope, SharingStarted.Lazily, null)
 
 
     // ── Steps (agent output) ──
