@@ -83,6 +83,12 @@
             android:name=".service.QuickReplyReceiver"
             android:exported="false" />
 
+        <!-- Foreground service to keep WebSocket alive in background -->
+        <service
+            android:name=".service.PortaConnectionService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+
         <!-- Home screen widget -->
         <receiver
             android:name=".widget.PortaWidgetReceiver"

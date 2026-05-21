@@ -3,10 +3,16 @@ import { useParams } from "react-router-dom";
 import { IconChevronLeft, IconCheck } from "./Icons";
 import { api } from "../api/client";
 import { usePwaInstall } from "../hooks/usePwaInstall";
-import { useWorkspaces, slugFromUri } from "../hooks/useWorkspaces";
+import { useWorkspaces } from "../hooks/useWorkspaces";
 import { useConversations } from "../hooks/useConversations";
 import type { ClientSettings } from "../types";
 import type { PlannerType } from "./ChatInput";
+import {
+  isNotificationsSupported,
+  getNotificationPermission,
+  requestNotificationPermission,
+  triggerWebNotification,
+} from "../utils/notifications";
 
 /** Apply a theme by toggling a data attribute on the root element. */
 export function applyTheme(theme: string) {
@@ -59,13 +65,18 @@ export function SettingsPanel({ settings, onUpdate, onBack }: Props) {
   const [models, setModels] = useState<ModelConfig[]>([]);
   const [fetchError, setFetchError] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
+  const flashSaved = useCallback(() => {
+    setSavedFlash(true);
+    const timer = setTimeout(() => setSavedFlash(false), 1500);
+    return () => clearTimeout(timer);
+  }, []);
   const { canInstall, isInstalled, promptInstall } = usePwaInstall();
   const [health, setHealth] = useState<HealthData | null>(null);
 
   // Share links state
   const { projectSlug } = useParams<{ projectSlug: string }>();
   const { conversations } = useConversations(60_000);
-  const { workspaces, currentWorkspaceUri } = useWorkspaces(
+  const { currentWorkspaceUri } = useWorkspaces(
     conversations,
     projectSlug,
   );
@@ -83,6 +94,36 @@ export function SettingsPanel({ settings, onUpdate, onBack }: Props) {
   const [shareCreating, setShareCreating] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
+
+  // Notification states
+  const [notifySupported] = useState(() => isNotificationsSupported());
+  const [notifyPermission, setNotifyPermission] = useState(() => getNotificationPermission());
+  const [notifyEnabled, setNotifyEnabled] = useState(() => {
+    return localStorage.getItem("porta:notifications-enabled") === "true";
+  });
+
+  const handleToggleNotifications = useCallback(async () => {
+    if (!isNotificationsSupported()) return;
+
+    if (notifyPermission === "default") {
+      const result = await requestNotificationPermission();
+      setNotifyPermission(result);
+      if (result === "granted") {
+        localStorage.setItem("porta:notifications-enabled", "true");
+        setNotifyEnabled(true);
+        flashSaved();
+      } else {
+        localStorage.setItem("porta:notifications-enabled", "false");
+        setNotifyEnabled(false);
+        flashSaved();
+      }
+    } else {
+      const nextValue = !notifyEnabled;
+      localStorage.setItem("porta:notifications-enabled", String(nextValue));
+      setNotifyEnabled(nextValue);
+      flashSaved();
+    }
+  }, [notifyPermission, notifyEnabled, flashSaved]);
 
   const fetchModels = useCallback(async (retries = 3) => {
     for (let i = 0; i < retries; i++) {
@@ -106,12 +147,6 @@ export function SettingsPanel({ settings, onUpdate, onBack }: Props) {
     // Fetch share links
     api.listShares().then((data) => setShareLinks(data.shares)).catch(() => {});
   }, [fetchModels]);
-
-  const flashSaved = useCallback(() => {
-    setSavedFlash(true);
-    const timer = setTimeout(() => setSavedFlash(false), 1500);
-    return () => clearTimeout(timer);
-  }, []);
 
   const handleModelChange = useCallback(
     (modelId: string) => {
@@ -294,6 +329,60 @@ export function SettingsPanel({ settings, onUpdate, onBack }: Props) {
               <option value="system">System</option>
             </select>
           </div>
+        </div>
+
+        {/* ── Notifications ── */}
+        <div className="settings-section">
+          <h2 className="settings-section-title">Notifications</h2>
+          <div className="settings-row">
+            <div className="settings-row-info">
+              <span className="settings-row-label">Blocking Step Alerts</span>
+              <span className="settings-row-desc">
+                Get alerted when an agent needs your approval, has a question, or requires interaction.
+              </span>
+            </div>
+            {!notifySupported ? (
+              <span style={{ fontSize: 13, color: "var(--text-tertiary)" }}>
+                Not supported by browser
+              </span>
+            ) : notifyPermission === "denied" ? (
+              <span style={{ fontSize: 13, color: "var(--status-error)", fontWeight: 500 }}>
+                Blocked by browser — reset in browser settings
+              </span>
+            ) : (
+              <button
+                className={`settings-select ${notifyEnabled && notifyPermission === "granted" ? "active" : ""}`}
+                style={{ cursor: "pointer", textAlign: "center", minWidth: 100 }}
+                onClick={handleToggleNotifications}
+              >
+                {notifyPermission === "default"
+                  ? "Enable"
+                  : notifyEnabled
+                  ? "Enabled"
+                  : "Disabled"}
+              </button>
+            )}
+          </div>
+          {notifyEnabled && notifyPermission === "granted" && (
+            <div className="settings-row">
+              <div className="settings-row-info">
+                <span className="settings-row-label">Test Notification</span>
+                <span className="settings-row-desc">Send a test notification to verify delivery.</span>
+              </div>
+              <button
+                className="settings-select"
+                style={{ cursor: "pointer", textAlign: "center", minWidth: 100 }}
+                onClick={() => {
+                  triggerWebNotification("🔔 Test Notification", {
+                    body: "Notifications are working! You'll see alerts like this when an agent needs your input.",
+                    tag: "porta-test",
+                  });
+                }}
+              >
+                Send Test
+              </button>
+            </div>
+          )}
         </div>
 
         {/* ── Share Links ── */}

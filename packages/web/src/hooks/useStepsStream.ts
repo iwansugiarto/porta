@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, getAuthToken } from "../api/client";
 import type { TrajectoryStep } from "../types";
 import { useAppResume } from "./useAppResume";
+import { getNotificationPermission, triggerWebNotification } from "../utils/notifications";
 
 /** How many steps to fetch on initial load and each lazy-load page. */
 const PAGE_SIZE = 100;
@@ -51,6 +52,13 @@ export function useStepsStream(
   const [hasMore, setHasMore] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [wsRunning, setWsRunning] = useState(false);
+
+  const notifiedStepsRef = useRef<Set<string>>(new Set());
+  const lastCascadeIdRef = useRef(cascadeId);
+  if (lastCascadeIdRef.current !== cascadeId) {
+    lastCascadeIdRef.current = cascadeId;
+    notifiedStepsRef.current.clear();
+  }
 
   const mountedRef = useRef(true);
   const wsRef = useRef<WebSocket | null>(null);
@@ -470,6 +478,60 @@ export function useStepsStream(
       connectWs(syncFrom);
     })();
   }, [initialFetch, connectWs, clearReconnectTimer]);
+
+  // ── Web Notifications ──
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const enabled = localStorage.getItem("porta:notifications-enabled") === "true";
+    if (!enabled) return;
+
+    const permission = getNotificationPermission();
+    if (permission !== "granted") return;
+
+    const isBackgrounded = document.hidden || !document.hasFocus();
+    if (!isBackgrounded) return;
+
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      if (step.status === "CORTEX_STEP_STATUS_WAITING") {
+        const stepKey = `${cascadeId}-${step.clientMessageId || i}`;
+        if (!notifiedStepsRef.current.has(stepKey)) {
+          notifiedStepsRef.current.add(stepKey);
+
+          let title = "⚠️ Action Required";
+          let body = "The agent is waiting for your approval or input.";
+
+          if (step.type === "CORTEX_STEP_TYPE_RUN_COMMAND") {
+            const cmd = step.runCommand?.proposedCommandLine || step.runCommand?.commandLine || "a command";
+            title = "⚠️ Command Approval Needed";
+            body = `Approve: ${cmd}`;
+          } else if (step.type === "CORTEX_STEP_TYPE_ASK_QUESTION") {
+            const question = step.requestedInteraction?.askQuestion?.questions?.[0]?.question
+              || step.requestedInteraction?.AskQuestion?.questions?.[0]?.question
+              || "Agent needs your answer";
+            title = "❓ Question from Agent";
+            body = question.length > 120 ? question.substring(0, 117) + "..." : question;
+          } else if (step.filePermissionRequest) {
+            title = "🔒 Permission Request";
+            body = "Agent needs file access permission to proceed.";
+          } else if (step.requestedInteraction?.Mcp || step.requestedInteraction?.mcp) {
+            title = "🔧 MCP Tool Approval";
+            body = "Agent wants to use an MCP tool.";
+          } else if (step.requestedInteraction?.Deploy || step.requestedInteraction?.deploy) {
+            title = "🚀 Deployment Approval";
+            body = "Agent wants to deploy.";
+          }
+
+          triggerWebNotification(title, {
+            body,
+            tag: `porta-approval-${cascadeId}`,
+            requireInteraction: true,
+            data: { cascadeId, url: `/?c=${cascadeId}` },
+          });
+        }
+      }
+    }
+  }, [steps, cascadeId]);
 
   return {
     steps,

@@ -23,7 +23,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.gson.JsonObject
 import id.infinia.porta.ui.UiUtils
+import id.infinia.porta.data.Project
+import id.infinia.porta.data.ProjectStatus
 import id.infinia.porta.ui.components.ConversationListSkeleton
+import id.infinia.porta.ui.components.EditProjectDialog
 import id.infinia.porta.ui.theme.*
 import id.infinia.porta.viewmodel.BridgeViewModel
 import kotlinx.coroutines.launch
@@ -51,8 +54,10 @@ data class WorkspaceGroup(
 @Composable
 fun ConversationsScreen(
     viewModel: BridgeViewModel,
+    onOpenDrawer: () -> Unit,
     onBack: () -> Unit,
     onSelectConversation: (String) -> Unit,
+    onSelectProject: (Project) -> Unit,
     workspaceFilter: String? = null
 ) {
     val conversations by viewModel.conversations.collectAsState()
@@ -60,6 +65,9 @@ fun ConversationsScreen(
     val currentId by viewModel.currentConversationId.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+
+    val projects by viewModel.projects.collectAsState()
+    var editProjectTarget by remember { mutableStateOf<Project?>(null) }
 
     // Group conversations by workspace
     val groups = remember(conversations, workspaceFilter) {
@@ -91,9 +99,6 @@ fun ConversationsScreen(
             )
     }
 
-    // Delete confirmation dialog
-    // deleteTarget removed — using snackbar undo pattern instead
-
     // Search state
     var searchQuery by remember { mutableStateOf("") }
     var searchVisible by remember { mutableStateOf(false) }
@@ -112,13 +117,37 @@ fun ConversationsScreen(
         }
     }
 
+    val matchedProjects = remember(projects, searchQuery) {
+        if (searchQuery.isBlank()) emptyList()
+        else projects.filter { it.title.contains(searchQuery, ignoreCase = true) }
+    }
+    val matchedConversations = remember(conversations, searchQuery) {
+        if (searchQuery.isBlank()) emptyList()
+        else conversations.entries
+            .filter { !UiUtils.isGhostConversation(it.value) }
+            .filter { (_, summary) ->
+                val title = summary.get("summary")?.asString ?: ""
+                title.contains(searchQuery, ignoreCase = true)
+            }
+            .map { it.key to it.value }
+    }
+    val hasSearchMatches = remember(matchedProjects, matchedConversations) {
+        matchedProjects.isNotEmpty() || matchedConversations.isNotEmpty()
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(workspaceFilter ?: "Conversations") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                    if (workspaceFilter == null) {
+                        IconButton(onClick = onOpenDrawer) {
+                            Icon(Icons.Default.Menu, "Menu")
+                        }
+                    } else {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                        }
                     }
                 },
                 actions = {
@@ -158,7 +187,7 @@ fun ConversationsScreen(
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search conversations…", fontSize = 14.sp) },
+                    placeholder = { Text("Search conversations and projects…", fontSize = 14.sp) },
                     leadingIcon = { Icon(Icons.Default.Search, null, Modifier.size(18.dp)) },
                     trailingIcon = {
                         if (searchQuery.isNotEmpty()) {
@@ -180,221 +209,425 @@ fun ConversationsScreen(
             }
 
             Box(Modifier.fillMaxSize()) {
-            if (isLoading && conversations.isEmpty()) {
-                ConversationListSkeleton(Modifier.fillMaxSize())
-            } else if (filteredGroups.isEmpty() && searchQuery.isNotBlank()) {
-                Column(
-                    Modifier.align(Alignment.Center),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        Icons.Default.SearchOff, null,
-                        modifier = Modifier.size(48.dp),
-                        tint = PortaPrimary.copy(alpha = 0.3f)
-                    )
-                    Text(
-                        "No matches for \"$searchQuery\"",
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                    )
-                }
-            } else if (groups.isEmpty()) {
-                Column(
-                    Modifier.align(Alignment.Center),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Icon(
-                        Icons.Default.Forum, null,
-                        modifier = Modifier.size(48.dp),
-                        tint = PortaPrimary.copy(alpha = 0.3f)
-                    )
-                    Text(
-                        "No conversations yet",
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                    )
-                    FilledTonalButton(onClick = { viewModel.createNewConversation() }) {
-                        Icon(Icons.Default.Add, null, Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("New Conversation")
+                if (isLoading && conversations.isEmpty()) {
+                    ConversationListSkeleton(Modifier.fillMaxSize())
+                } else if (searchQuery.isNotBlank() && !hasSearchMatches) {
+                    Column(
+                        Modifier.align(Alignment.Center),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.SearchOff, null,
+                            modifier = Modifier.size(48.dp),
+                            tint = PortaPrimary.copy(alpha = 0.3f)
+                        )
+                        Text(
+                            "No matches for \"$searchQuery\"",
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        )
                     }
-                }
-            } else {
-                val isRefreshing = isLoading && conversations.isNotEmpty()
-                PullToRefreshBox(
-                    isRefreshing = isRefreshing,
-                    onRefresh = { viewModel.loadConversations() },
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                LazyColumn(
-                    Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    filteredGroups.forEach { group ->
-                        // Workspace header
-                        item(key = "header-${group.name}") {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 8.dp, bottom = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Folder, null,
-                                    modifier = Modifier.size(14.dp),
-                                    tint = PortaTertiary
-                                )
-                                Text(
-                                    group.name,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = PortaTertiary,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Text(
-                                    "${group.conversations.size}",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                                )
-                                if (group.hasRunning) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(12.dp),
-                                        strokeWidth = 1.5.dp,
-                                        color = PortaTertiary
-                                    )
-                                }
-                            }
+                } else if (groups.isEmpty()) {
+                    Column(
+                        Modifier.align(Alignment.Center),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Forum, null,
+                            modifier = Modifier.size(48.dp),
+                            tint = PortaPrimary.copy(alpha = 0.3f)
+                        )
+                        Text(
+                            "No conversations yet",
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        )
+                        FilledTonalButton(onClick = { viewModel.createNewConversation() }) {
+                            Icon(Icons.Default.Add, null, Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("New Conversation")
                         }
-
-                        // Conversation items
-                        items(
-                            group.conversations,
-                            key = { it.first }
-                        ) { (id, summary) ->
-                            val title = summary.get("summary")?.asString ?: id.take(8) + "…"
-                            val stepCount = summary.get("stepCount")?.asInt ?: 0
-                            val lastModified = summary.get("lastModifiedTime")?.asString
-                            val isRunning = summary.get("status")?.asString == "CASCADE_RUN_STATUS_RUNNING"
-                            val isActive = id == currentId
-
-                            val dismissState = rememberSwipeToDismissBoxState(
-                                confirmValueChange = { value ->
-                                    if (value == SwipeToDismissBoxValue.EndToStart) {
-                                        // Immediate delete with undo snackbar
-                                        scope.launch {
-                                            val result = snackbarHostState.showSnackbar(
-                                                message = "\"${title.take(30)}\" deleted",
-                                                actionLabel = "Undo",
-                                                duration = SnackbarDuration.Short
+                    }
+                } else {
+                    val isRefreshing = isLoading && conversations.isNotEmpty()
+                    PullToRefreshBox(
+                        isRefreshing = isRefreshing,
+                        onRefresh = { viewModel.loadConversations() },
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        LazyColumn(
+                            Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            if (searchQuery.isNotBlank()) {
+                                // --- PROJECTS MATCHED ---
+                                if (matchedProjects.isNotEmpty()) {
+                                    item(key = "search-projects-header") {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 8.dp, bottom = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                Icons.Default.FolderOpen, null,
+                                                modifier = Modifier.size(14.dp),
+                                                tint = PortaPrimary
                                             )
-                                            if (result != SnackbarResult.ActionPerformed) {
-                                                viewModel.deleteConversation(id)
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(
+                                                "Projects Matched",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = PortaPrimary,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                        }
+                                    }
+                                    items(matchedProjects, key = { "proj-${it.id}" }) { proj ->
+                                        Card(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            shape = RoundedCornerShape(10.dp),
+                                            colors = CardDefaults.cardColors(
+                                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                            )
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .clickable { onSelectProject(proj) }
+                                                    .padding(12.dp)
+                                                    .fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                val statusColor = when (proj.status) {
+                                                    ProjectStatus.BLOCKED -> PortaError
+                                                    ProjectStatus.IN_PROGRESS -> PortaWarning
+                                                    ProjectStatus.IDLE -> PortaSuccess
+                                                }
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(8.dp)
+                                                        .clip(CircleShape)
+                                                        .background(statusColor)
+                                                )
+                                                Spacer(Modifier.width(10.dp))
+                                                Column(Modifier.weight(1f)) {
+                                                    Text(
+                                                        proj.title,
+                                                        fontWeight = FontWeight.Medium,
+                                                        fontSize = 13.sp,
+                                                        maxLines = 2,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        color = MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    Row(
+                                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text(
+                                                            proj.status.value,
+                                                            fontSize = 11.sp,
+                                                            color = statusColor,
+                                                            fontWeight = FontWeight.SemiBold
+                                                        )
+                                                        if (proj.timeBadge != null) {
+                                                            Text(
+                                                                "· ${proj.timeBadge}",
+                                                                fontSize = 11.sp,
+                                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                                IconButton(onClick = { editProjectTarget = proj }) {
+                                                    Icon(
+                                                        Icons.Default.Settings,
+                                                        "Project Settings",
+                                                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
                                             }
                                         }
                                     }
-                                    false
                                 }
-                            )
 
-                            SwipeToDismissBox(
-                                state = dismissState,
-                                backgroundContent = {
-                                    Box(
-                                        Modifier
-                                            .fillMaxSize()
-                                            .background(
-                                                MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
-                                                RoundedCornerShape(10.dp)
-                                            )
-                                            .padding(end = 20.dp),
-                                        contentAlignment = Alignment.CenterEnd
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Delete,
-                                            "Delete",
-                                            tint = MaterialTheme.colorScheme.error
-                                        )
-                                    }
-                                },
-                                enableDismissFromStartToEnd = false,
-                                enableDismissFromEndToStart = true
-                            ) {
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(10.dp),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = when {
-                                            isActive -> PortaPrimary.copy(alpha = 0.12f)
-                                            else -> MaterialTheme.colorScheme.surfaceVariant
-                                        }
-                                    )
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .clickable { onSelectConversation(id) }
-                                            .padding(12.dp)
-                                            .fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        // Status indicator
-                                        if (isRunning) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(16.dp),
-                                                strokeWidth = 2.dp,
-                                                color = PortaTertiary
-                                            )
-                                        } else {
+                                // --- CONVERSATIONS MATCHED ---
+                                if (matchedConversations.isNotEmpty()) {
+                                    item(key = "search-convos-header") {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 16.dp, bottom = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
                                             Icon(
-                                                Icons.Default.ChatBubbleOutline, null,
-                                                modifier = Modifier.size(16.dp),
-                                                tint = if (isActive) PortaPrimary
-                                                else PortaPrimary.copy(alpha = 0.3f)
+                                                Icons.Default.Forum, null,
+                                                modifier = Modifier.size(14.dp),
+                                                tint = PortaTertiary
+                                            )
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(
+                                                "Conversations Matched",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = PortaTertiary,
+                                                modifier = Modifier.weight(1f)
                                             )
                                         }
-                                        Spacer(Modifier.width(10.dp))
-                                        Column(Modifier.weight(1f)) {
-                                            Text(
-                                                title,
-                                                fontWeight = FontWeight.Medium,
-                                                fontSize = 13.sp,
-                                                maxLines = 2,
-                                                overflow = TextOverflow.Ellipsis,
-                                                color = MaterialTheme.colorScheme.onSurface
+                                    }
+                                    items(matchedConversations, key = { "convo-${it.first}" }) { (id, summary) ->
+                                        val title = summary.get("summary")?.asString ?: id.take(8) + "…"
+                                        val stepCount = summary.get("stepCount")?.asInt ?: 0
+                                        val lastModified = summary.get("lastModifiedTime")?.asString
+                                        val isRunning = summary.get("status")?.asString == "CASCADE_RUN_STATUS_RUNNING"
+                                        val isActive = id == currentId
+
+                                        Card(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            shape = RoundedCornerShape(10.dp),
+                                            colors = CardDefaults.cardColors(
+                                                containerColor = when {
+                                                    isActive -> PortaPrimary.copy(alpha = 0.12f)
+                                                    else -> MaterialTheme.colorScheme.surfaceVariant
+                                                }
                                             )
+                                        ) {
                                             Row(
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                modifier = Modifier
+                                                    .clickable { onSelectConversation(id) }
+                                                    .padding(12.dp)
+                                                    .fillMaxWidth(),
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                Text(
-                                                    UiUtils.relativeTime(lastModified),
-                                                    fontSize = 11.sp,
-                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                                if (isRunning) {
+                                                    CircularProgressIndicator(
+                                                        modifier = Modifier.size(16.dp),
+                                                        strokeWidth = 2.dp,
+                                                        color = PortaTertiary
+                                                    )
+                                                } else {
+                                                    Icon(
+                                                        Icons.Default.ChatBubbleOutline, null,
+                                                        modifier = Modifier.size(16.dp),
+                                                        tint = if (isActive) PortaPrimary
+                                                        else PortaPrimary.copy(alpha = 0.3f)
+                                                    )
+                                                }
+                                                Spacer(Modifier.width(10.dp))
+                                                Column(Modifier.weight(1f)) {
+                                                    Text(
+                                                        title,
+                                                        fontWeight = FontWeight.Medium,
+                                                        fontSize = 13.sp,
+                                                        maxLines = 2,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        color = MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    Row(
+                                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text(
+                                                            UiUtils.relativeTime(lastModified),
+                                                            fontSize = 11.sp,
+                                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                                        )
+                                                        Text(
+                                                            "· $stepCount steps",
+                                                            fontSize = 11.sp,
+                                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                                        )
+                                                        val status = summary.get("status")?.asString
+                                                        when (status) {
+                                                            "CASCADE_RUN_STATUS_FINISHED" -> Text(
+                                                                "✓ Done", fontSize = 10.sp,
+                                                                color = PortaSuccess,
+                                                                fontWeight = FontWeight.Medium
+                                                            )
+                                                            "CASCADE_RUN_STATUS_ERROR" -> Text(
+                                                                "✗ Error", fontSize = 10.sp,
+                                                                color = PortaError,
+                                                                fontWeight = FontWeight.Medium
+                                                            )
+                                                            "CASCADE_RUN_STATUS_WAITING" -> Text(
+                                                                "⏸ Waiting", fontSize = 10.sp,
+                                                                color = PortaWarning,
+                                                                fontWeight = FontWeight.Medium
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                filteredGroups.forEach { group ->
+                                    // Workspace header
+                                    item(key = "header-${group.name}") {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 8.dp, bottom = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Folder, null,
+                                                modifier = Modifier.size(14.dp),
+                                                tint = PortaTertiary
+                                            )
+                                            Text(
+                                                group.name,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = PortaTertiary,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            Text(
+                                                "${group.conversations.size}",
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                            )
+                                            if (group.hasRunning) {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(12.dp),
+                                                    strokeWidth = 1.5.dp,
+                                                    color = PortaTertiary
                                                 )
-                                                Text(
-                                                    "· $stepCount steps",
-                                                    fontSize = 11.sp,
-                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                            }
+                                        }
+                                    }
+
+                                    // Conversation items
+                                    items(
+                                        group.conversations,
+                                        key = { it.first }
+                                    ) { (id, summary) ->
+                                        val title = summary.get("summary")?.asString ?: id.take(8) + "…"
+                                        val stepCount = summary.get("stepCount")?.asInt ?: 0
+                                        val lastModified = summary.get("lastModifiedTime")?.asString
+                                        val isRunning = summary.get("status")?.asString == "CASCADE_RUN_STATUS_RUNNING"
+                                        val isActive = id == currentId
+
+                                        val dismissState = rememberSwipeToDismissBoxState(
+                                            confirmValueChange = { value ->
+                                                if (value == SwipeToDismissBoxValue.EndToStart) {
+                                                    scope.launch {
+                                                        val result = snackbarHostState.showSnackbar(
+                                                            message = "\"${title.take(30)}\" deleted",
+                                                            actionLabel = "Undo",
+                                                            duration = SnackbarDuration.Short
+                                                        )
+                                                        if (result != SnackbarResult.ActionPerformed) {
+                                                            viewModel.deleteConversation(id)
+                                                        }
+                                                    }
+                                                }
+                                                false
+                                            }
+                                        )
+
+                                        SwipeToDismissBox(
+                                            state = dismissState,
+                                            backgroundContent = {
+                                                Box(
+                                                    Modifier
+                                                        .fillMaxSize()
+                                                        .background(
+                                                            MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
+                                                            RoundedCornerShape(10.dp)
+                                                        )
+                                                        .padding(end = 20.dp),
+                                                    contentAlignment = Alignment.CenterEnd
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.Delete,
+                                                        "Delete",
+                                                        tint = MaterialTheme.colorScheme.error
+                                                    )
+                                                }
+                                            },
+                                            enableDismissFromStartToEnd = false,
+                                            enableDismissFromEndToStart = true
+                                        ) {
+                                            Card(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                shape = RoundedCornerShape(10.dp),
+                                                colors = CardDefaults.cardColors(
+                                                    containerColor = when {
+                                                        isActive -> PortaPrimary.copy(alpha = 0.12f)
+                                                        else -> MaterialTheme.colorScheme.surfaceVariant
+                                                    }
                                                 )
-                                                // Status chip
-                                                val status = summary.get("status")?.asString
-                                                when (status) {
-                                                    "CASCADE_RUN_STATUS_FINISHED" -> Text(
-                                                        "✓ Done", fontSize = 10.sp,
-                                                        color = PortaSuccess,
-                                                        fontWeight = FontWeight.Medium
-                                                    )
-                                                    "CASCADE_RUN_STATUS_ERROR" -> Text(
-                                                        "✗ Error", fontSize = 10.sp,
-                                                        color = PortaError,
-                                                        fontWeight = FontWeight.Medium
-                                                    )
-                                                    "CASCADE_RUN_STATUS_WAITING" -> Text(
-                                                        "⏸ Waiting", fontSize = 10.sp,
-                                                        color = PortaWarning,
-                                                        fontWeight = FontWeight.Medium
-                                                    )
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier
+                                                        .clickable { onSelectConversation(id) }
+                                                        .padding(12.dp)
+                                                        .fillMaxWidth(),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    if (isRunning) {
+                                                        CircularProgressIndicator(
+                                                            modifier = Modifier.size(16.dp),
+                                                            strokeWidth = 2.dp,
+                                                            color = PortaTertiary
+                                                        )
+                                                    } else {
+                                                        Icon(
+                                                            Icons.Default.ChatBubbleOutline, null,
+                                                            modifier = Modifier.size(16.dp),
+                                                            tint = if (isActive) PortaPrimary
+                                                            else PortaPrimary.copy(alpha = 0.3f)
+                                                        )
+                                                    }
+                                                    Spacer(Modifier.width(10.dp))
+                                                    Column(Modifier.weight(1f)) {
+                                                        Text(
+                                                            title,
+                                                            fontWeight = FontWeight.Medium,
+                                                            fontSize = 13.sp,
+                                                            maxLines = 2,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            color = MaterialTheme.colorScheme.onSurface
+                                                        )
+                                                        Row(
+                                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Text(
+                                                                UiUtils.relativeTime(lastModified),
+                                                                fontSize = 11.sp,
+                                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                                            )
+                                                            Text(
+                                                                "· $stepCount steps",
+                                                                fontSize = 11.sp,
+                                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                                            )
+                                                            val status = summary.get("status")?.asString
+                                                            when (status) {
+                                                                "CASCADE_RUN_STATUS_FINISHED" -> Text(
+                                                                    "✓ Done", fontSize = 10.sp,
+                                                                    color = PortaSuccess,
+                                                                    fontWeight = FontWeight.Medium
+                                                                )
+                                                                "CASCADE_RUN_STATUS_ERROR" -> Text(
+                                                                    "✗ Error", fontSize = 10.sp,
+                                                                    color = PortaError,
+                                                                    fontWeight = FontWeight.Medium
+                                                                )
+                                                                "CASCADE_RUN_STATUS_WAITING" -> Text(
+                                                                    "⏸ Waiting", fontSize = 10.sp,
+                                                                    color = PortaWarning,
+                                                                    fontWeight = FontWeight.Medium
+                                                                )
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -402,12 +635,25 @@ fun ConversationsScreen(
                                 }
                             }
                         }
-                    }
+                    } // PullToRefreshBox
                 }
-                } // PullToRefreshBox
-            }
             } // Box
         } // Column
     }
 
+    editProjectTarget?.let { proj ->
+        EditProjectDialog(
+            project = proj,
+            onDismiss = { editProjectTarget = null },
+            onSave = { title, status ->
+                viewModel.updateProjectTitle(proj.id, title)
+                viewModel.updateProjectStatus(proj.id, status)
+                editProjectTarget = null
+            },
+            onDelete = {
+                viewModel.deleteProject(proj.id)
+                editProjectTarget = null
+            }
+        )
+    }
 }

@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <boolean name="use_tls" value="true" />
+    <int name="port" value="443" />
+    <string name="host">porta.infinia.id</string>
+    <string name="auth_token">+PNsnICLtTLCknham9t1OiAwz/82bpchXzDgtFOk+5g=</string>
+    <string name="active_project_id">p-blocked-1</string>
+</map>

@@ -19,6 +19,7 @@ import id.infinia.porta.data.ServerProfileManager
 import id.infinia.porta.data.Project
 import id.infinia.porta.data.ProjectStatus
 import id.infinia.porta.service.NotificationService
+import id.infinia.porta.service.PortaConnectionService
 import id.infinia.porta.service.glasses.*
 import id.infinia.porta.service.voice.TextToSpeechService
 import id.infinia.porta.service.voice.VoiceInputService
@@ -161,6 +162,16 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _autoConnect = MutableStateFlow(false)
     val autoConnect: StateFlow<Boolean> = _autoConnect.asStateFlow()
+
+    // ── Workspaces ──
+
+    data class WorkspaceOption(
+        val uri: String,
+        val name: String
+    )
+
+    private val _workspaces = MutableStateFlow<List<WorkspaceOption>>(emptyList())
+    val workspaces: StateFlow<List<WorkspaceOption>> = _workspaces.asStateFlow()
 
     // ── Conversations ──
 
@@ -448,19 +459,29 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
-        // Update status message based on connection state
+        // Update status message based on connection state + manage foreground service
         viewModelScope.launch {
             connectionState.collect { state ->
                 _statusMessage.value = when (state) {
-                    ConnectionState.DISCONNECTED -> "Not connected"
+                    ConnectionState.DISCONNECTED -> {
+                        PortaConnectionService.stop(application)
+                        "Not connected"
+                    }
                     ConnectionState.CONNECTING -> "Connecting..."
                     ConnectionState.CONNECTED -> {
+                        // Start foreground service to keep WS alive in background
+                        PortaConnectionService.start(application)
                         // Drain offline queue on reconnect
                         drainOfflineQueue()
+                        // Fetch workspaces for the picker
+                        loadWorkspaces()
                         "Connected"
                     }
                     ConnectionState.RECONNECTING -> "Reconnecting..."
-                    ConnectionState.ERROR -> "Connection error"
+                    ConnectionState.ERROR -> {
+                        PortaConnectionService.stop(application)
+                        "Connection error"
+                    }
                 }
             }
         }
@@ -570,6 +591,28 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         _latestResponse.value = ""
         _currentConversationId.value = null
         stepCount = 0
+        PortaConnectionService.stop(getApplication())
+    }
+
+    // ── Workspaces ──
+
+    fun loadWorkspaces() {
+        viewModelScope.launch {
+            try {
+                val result = portaClient.fetchWorkspaces()
+                val infos = result.getAsJsonArray("workspaceInfos")
+                val options = infos?.mapNotNull { el ->
+                    val obj = el.asJsonObject
+                    val uri = obj.get("workspaceUri")?.asString ?: return@mapNotNull null
+                    val name = uri.removePrefix("file://").substringAfterLast("/")
+                    WorkspaceOption(uri = uri, name = name)
+                } ?: emptyList()
+                _workspaces.value = options
+                Log.d("BridgeVM", "Loaded ${options.size} workspaces")
+            } catch (e: Exception) {
+                Log.w("BridgeVM", "Failed to load workspaces: ${e.message}")
+            }
+        }
     }
 
     // ── Conversations ──
@@ -1438,5 +1481,6 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         notificationService.destroy()
         _glassesProvider.destroy()
         portaClient.destroy()
+        PortaConnectionService.stop(getApplication())
     }
 }

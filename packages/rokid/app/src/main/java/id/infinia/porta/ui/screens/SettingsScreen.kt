@@ -35,6 +35,7 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
     val statusMessage by viewModel.statusMessage.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val notifyEnabled by viewModel.notifyEnabled.collectAsState()
+    val notifyApprovalEnabled by viewModel.notifyApprovalEnabled.collectAsState()
     val notifySound by viewModel.notifySound.collectAsState()
     val notifyVibrate by viewModel.notifyVibrate.collectAsState()
     val autoConnect by viewModel.autoConnect.collectAsState()
@@ -332,7 +333,27 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Task Completion Alert", style = MaterialTheme.typography.bodyLarge)
+                    Text("Approval Alerts", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Notify when agent needs your approval",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    )
+                }
+                Switch(
+                    checked = notifyApprovalEnabled,
+                    onCheckedChange = { viewModel.setNotifyApprovalEnabled(it) },
+                    colors = SwitchDefaults.colors(checkedTrackColor = PortaPrimary)
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Task Completion", style = MaterialTheme.typography.bodyLarge)
                     Text(
                         "System notification when agent finishes",
                         style = MaterialTheme.typography.bodySmall,
@@ -346,8 +367,8 @@ fun SettingsScreen(viewModel: BridgeViewModel, onBack: () -> Unit, onNavigateToA
                 )
             }
 
-            // Sub-options (only visible when notifications are enabled)
-            if (notifyEnabled) {
+            // Sub-options (visible when either notification type is enabled)
+            if (notifyApprovalEnabled || notifyEnabled) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(start = 16.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,

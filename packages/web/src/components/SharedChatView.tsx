@@ -1,12 +1,11 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { ChatHeader } from "./ChatHeader";
 import { ChatPanel } from "./ChatPanel";
-import { ConnectionBanner } from "./ConnectionBanner";
 import { IconFolder } from "./Icons";
 import { useConversations } from "../hooks/useConversations";
 import { usePolling } from "../hooks/usePolling";
-import { api, clearShareSession, getShareWorkspace } from "../api/client";
+import { api, clearShareSession } from "../api/client";
 import type { HealthResponse } from "../types";
 
 /**
@@ -26,8 +25,7 @@ export function SharedChatView({
   const activeId = chatId ?? null;
 
   const { conversations, loading } = useConversations(15_000);
-  const { data: health } = usePolling<HealthResponse>(api.health, 30_000);
-  const connected = !!health && health.languageServers.length > 0;
+  usePolling<HealthResponse>(api.health, 30_000);
 
   // Sidebar state
   const [sidebarOpen, setSidebarOpen] = useState(
@@ -165,7 +163,7 @@ export function SharedChatView({
             cascadeId={activeId}
             onRevert={() => {}}
             onFilePermission={() => {}}
-            onCommandAction={() => {}}
+            onCommandAction={async () => {}}
             onConfirmOptimistic={() => {}}
             optimisticMessages={[]}
             refreshKey={0}

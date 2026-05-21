@@ -33,6 +33,7 @@ export default defineConfig(({ mode }) => {
           // Don't create a NavigationRoute — let navigation requests
           // hit the network (Cloudflare CDN) for a fresh index.html.
           navigateFallback: null,
+          importScripts: ['/sw-custom.js'],
         },
         manifest: false, // Use our existing public/manifest.json
         injectRegister: "script-defer",

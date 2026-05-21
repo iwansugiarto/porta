@@ -179,6 +179,11 @@ class NotificationService(private val context: Context) {
         notificationManager.cancel(NOTIFICATION_ID_APPROVAL)
     }
 
+    /** Dismiss a specific approval notification by ID. */
+    fun dismissApproval(notificationId: Int) {
+        notificationManager.cancel(notificationId)
+    }
+
     /**
      * Show an approval-needed notification.
      *
@@ -193,7 +198,8 @@ class NotificationService(private val context: Context) {
         description: String,
         cascadeId: String,
         playSound: Boolean = true,
-        vibrate: Boolean = true
+        vibrate: Boolean = true,
+        notificationId: Int = NOTIFICATION_ID_APPROVAL
     ) {
         // Launch intent — opens the app
         val launchIntent = context.packageManager
@@ -217,6 +223,7 @@ class NotificationService(private val context: Context) {
             .setAutoCancel(true)
             .setOngoing(true) // Persistent until user acts
             .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setGroup("porta_approvals")
 
         if (!playSound) {
             builder.setSound(null)
@@ -226,7 +233,18 @@ class NotificationService(private val context: Context) {
             builder.setVibrate(longArrayOf(0))
         }
 
-        notificationManager.notify(NOTIFICATION_ID_APPROVAL, builder.build())
+        notificationManager.notify(notificationId, builder.build())
+
+        // Group summary notification so multiple approvals stack nicely
+        val summaryBuilder = NotificationCompat.Builder(context, CHANNEL_APPROVAL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle("⚠️ Approvals Needed")
+            .setContentText("Multiple conversations need your approval")
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setGroup("porta_approvals")
+            .setGroupSummary(true)
+            .setAutoCancel(true)
+        notificationManager.notify(NOTIFICATION_ID_APPROVAL, summaryBuilder.build())
 
         // Urgent vibration pattern for approval
         if (vibrate) {

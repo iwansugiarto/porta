@@ -20,6 +20,15 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import id.infinia.porta.ui.screens.*
 import id.infinia.porta.ui.theme.PortaRokidTheme
 import id.infinia.porta.viewmodel.BridgeViewModel
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import id.infinia.porta.ui.components.ProjectsDrawerContent
+import kotlinx.coroutines.launch
 
 /**
  * Shared content from external apps (via Android share sheet).
@@ -84,6 +93,9 @@ class MainActivity : ComponentActivity() {
             }
 
             PortaRokidTheme(themeMode = themeMode) {
+                val drawerState = rememberDrawerState(DrawerValue.Closed)
+                val scope = rememberCoroutineScope()
+
                 // Start on chat screen if launched from notification with cascade ID
                 var screen by remember {
                     mutableStateOf(if (pendingCascadeId != null) "chat" else "home")
@@ -100,98 +112,192 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                when (screen) {
-                    "home" -> {
-                        var backPressedOnce by remember { mutableStateOf(false) }
-                        BackHandler {
-                            if (backPressedOnce) {
-                                finish()
-                            } else {
-                                backPressedOnce = true
-                                android.widget.Toast.makeText(
-                                    this@MainActivity,
-                                    "Press back again to exit",
-                                    android.widget.Toast.LENGTH_SHORT
-                                ).show()
-                                // Reset after 2 seconds
-                                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
-                                    { backPressedOnce = false }, 2000
-                                )
+                // Keep viewModel's active conversation screen state in sync
+                LaunchedEffect(screen) {
+                    viewModel.setConversationScreenActive(screen == "chat")
+                }
+
+                val onSelectProject = remember(viewModel) {
+                    { project: id.infinia.porta.data.Project ->
+                        viewModel.setActiveProjectId(project.id)
+                        
+                        // Locate matching conversation
+                        val conversationsMap = viewModel.conversations.value
+                        val exactMatchEntry = conversationsMap.entries.find { entry ->
+                            val summary = entry.value
+                            val summaryTitle = summary.get("summary")?.asString
+                            summaryTitle?.equals(project.title, ignoreCase = true) == true
+                        }
+                        
+                        if (exactMatchEntry != null) {
+                            viewModel.selectConversation(exactMatchEntry.key)
+                            screen = "chat"
+                            scope.launch { drawerState.close() }
+                        } else {
+                            scope.launch {
+                                try {
+                                    val result = viewModel.portaClient.fetchWorkspaces()
+                                    val workspaceInfos = result.getAsJsonArray("workspaceInfos")
+                                    var matchedUri: String? = null
+                                    if (workspaceInfos != null) {
+                                        var bestScore = 0
+                                        for (element in workspaceInfos) {
+                                            val obj = element.asJsonObject
+                                            val uri = obj.get("workspaceUri")?.asString ?: continue
+                                            val cleanUri = uri.replace("file://", "")
+                                            val folderName = cleanUri.split("/").lastOrNull() ?: ""
+                                            val titleLower = project.title.lowercase()
+                                            val folderLower = folderName.lowercase()
+                                            var score = 0
+                                            if (folderLower == titleLower) {
+                                                score = 100
+                                            } else if (titleLower.contains(folderLower) && folderLower.isNotEmpty()) {
+                                                score = folderLower.length
+                                            } else if (folderLower.contains(titleLower) && titleLower.isNotEmpty()) {
+                                                score = titleLower.length
+                                            }
+                                            if (score > bestScore) {
+                                                bestScore = score
+                                                matchedUri = uri
+                                            }
+                                        }
+                                    }
+                                    viewModel.createNewConversation(matchedUri)
+                                    screen = "chat"
+                                } catch (e: Exception) {
+                                    viewModel.createNewConversation(null)
+                                    screen = "chat"
+                                } finally {
+                                    drawerState.close()
+                                }
                             }
                         }
-                        HomeScreen(
-                            viewModel = viewModel,
-                            onNavigateToSettings = { screen = "settings" },
-                            onNavigateToWorkspace = { wsName ->
-                                workspaceFilter = wsName
-                                screen = "conversations"
-                            },
-                            onSelectConversation = { id ->
-                                viewModel.selectConversation(id)
-                                screen = "chat"
-                            },
-                            onNewConversation = {
-                                viewModel.createNewConversation()
-                                screen = "chat"
-                            }
-                        )
+                        Unit
                     }
-                    "chat" -> {
-                        BackHandler {
-                            viewModel.loadConversations()
-                            screen = "home"
+                }
+
+                ModalNavigationDrawer(
+                    drawerState = drawerState,
+                    gesturesEnabled = screen == "home" || screen == "conversations" || screen == "chat",
+                    drawerContent = {
+                        ModalDrawerSheet(modifier = Modifier.width(320.dp)) {
+                            ProjectsDrawerContent(
+                                viewModel = viewModel,
+                                activeScreen = screen,
+                                onSelectProject = onSelectProject,
+                                onSelectConversation = { id ->
+                                    viewModel.selectConversation(id)
+                                    screen = "chat"
+                                    scope.launch { drawerState.close() }
+                                },
+                                onNewConversation = {
+                                    viewModel.createNewConversation()
+                                    screen = "chat"
+                                    scope.launch { drawerState.close() }
+                                },
+                                onOpenSettings = {
+                                    screen = "settings"
+                                    scope.launch { drawerState.close() }
+                                }
+                            )
                         }
-                        ChatScreen(
-                            viewModel = viewModel,
-                            onNavigateToSettings = { screen = "settings" },
-                            onNavigateToConversations = {
+                    }
+                ) {
+                    when (screen) {
+                        "home" -> {
+                            var backPressedOnce by remember { mutableStateOf(false) }
+                            BackHandler {
+                                if (backPressedOnce) {
+                                    finish()
+                                } else {
+                                    backPressedOnce = true
+                                    android.widget.Toast.makeText(
+                                        this@MainActivity,
+                                        "Press back again to exit",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                    // Reset after 2 seconds
+                                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                                        { backPressedOnce = false }, 2000
+                                    )
+                                }
+                            }
+                            HomeScreen(
+                                viewModel = viewModel,
+                                onOpenDrawer = { scope.launch { drawerState.open() } },
+                                onNavigateToSettings = { screen = "settings" },
+                                onNavigateToWorkspace = { wsName ->
+                                    workspaceFilter = wsName
+                                    screen = "conversations"
+                                },
+                                onSelectConversation = { id ->
+                                    viewModel.selectConversation(id)
+                                    screen = "chat"
+                                },
+                                onNewConversation = {
+                                    screen = "chat"
+                                }
+                            )
+                        }
+                        "chat" -> {
+                            BackHandler {
                                 viewModel.loadConversations()
                                 screen = "home"
-                            },
-                            sharedContent = sharedContent,
-                            onSharedContentConsumed = { _sharedContent.value = null }
-                        )
-                    }
-                    "settings" -> {
-                        BackHandler { screen = "home" }
-                        SettingsScreen(
-                            viewModel = viewModel,
-                            onBack = { screen = "home" },
-                            onNavigateToAbout = { screen = "about" },
-                            onNavigateToGlasses = { screen = "glasses" }
-                        )
-                    }
-                    "conversations" -> {
-                        BackHandler {
-                            workspaceFilter = null
-                            screen = "home"
+                            }
+                            ChatScreen(
+                                viewModel = viewModel,
+                                onNavigateToSettings = { screen = "settings" },
+                                onNavigateToConversations = {
+                                    viewModel.loadConversations()
+                                    screen = "home"
+                                },
+                                sharedContent = sharedContent,
+                                onSharedContentConsumed = { _sharedContent.value = null }
+                            )
                         }
-                        ConversationsScreen(
-                            viewModel = viewModel,
-                            onBack = {
+                        "settings" -> {
+                            BackHandler { screen = "home" }
+                            SettingsScreen(
+                                viewModel = viewModel,
+                                onBack = { screen = "home" },
+                                onNavigateToAbout = { screen = "about" },
+                                onNavigateToGlasses = { screen = "glasses" }
+                            )
+                        }
+                        "conversations" -> {
+                            BackHandler {
                                 workspaceFilter = null
                                 screen = "home"
-                            },
-                            onSelectConversation = { id ->
-                                viewModel.selectConversation(id)
-                                screen = "chat"
-                            },
-                            workspaceFilter = workspaceFilter
-                        )
-                    }
-                    "about" -> {
-                        BackHandler { screen = "settings" }
-                        AboutScreen(
-                            viewModel = viewModel,
-                            onBack = { screen = "settings" }
-                        )
-                    }
-                    "glasses" -> {
-                        BackHandler { screen = "settings" }
-                        GlassesScreen(
-                            viewModel = viewModel,
-                            onBack = { screen = "settings" }
-                        )
+                            }
+                            ConversationsScreen(
+                                viewModel = viewModel,
+                                onOpenDrawer = { scope.launch { drawerState.open() } },
+                                onBack = {
+                                    workspaceFilter = null
+                                    screen = "home"
+                                },
+                                onSelectConversation = { id ->
+                                    viewModel.selectConversation(id)
+                                    screen = "chat"
+                                },
+                                onSelectProject = onSelectProject,
+                                workspaceFilter = workspaceFilter
+                            )
+                        }
+                        "about" -> {
+                            BackHandler { screen = "settings" }
+                            AboutScreen(
+                                viewModel = viewModel,
+                                onBack = { screen = "settings" }
+                            )
+                        }
+                        "glasses" -> {
+                            BackHandler { screen = "settings" }
+                            GlassesScreen(
+                                viewModel = viewModel,
+                                onBack = { screen = "settings" }
+                            )
+                        }
                     }
                 }
             }

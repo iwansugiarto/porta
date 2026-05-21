@@ -80,11 +80,23 @@ data class AgentStep(
             val toolSummary = metadata?.get("toolSummary")?.asString
 
             // Check for approval requirement
+            val needsApproval = status == StepStatus.WAITING
             val requestedInteraction = json.getAsJsonObject("requestedInteraction")
-            val needsApproval = status == StepStatus.WAITING && requestedInteraction != null
 
             val approvalInfo = if (needsApproval) {
-                parseApprovalInfo(json, requestedInteraction!!)
+                if (requestedInteraction != null) {
+                    parseApprovalInfo(json, requestedInteraction)
+                } else {
+                    val meta = json.getAsJsonObject("metadata")
+                        ?.getAsJsonObject("sourceTrajectoryStepInfo")
+                    val trajectoryId = meta?.get("trajectoryId")?.asString ?: ""
+                    val stepIndex = meta?.get("stepIndex")?.asInt ?: 0
+                    ApprovalInfo(
+                        trajectoryId = trajectoryId,
+                        stepIndex = stepIndex,
+                        type = ApprovalType.OTHER
+                    )
+                }
             } else null
 
             // Parse command info

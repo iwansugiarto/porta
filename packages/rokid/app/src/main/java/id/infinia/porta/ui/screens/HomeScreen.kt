@@ -30,6 +30,7 @@ import com.google.gson.JsonObject
 import id.infinia.porta.ui.UiUtils
 import id.infinia.porta.ui.theme.*
 import id.infinia.porta.viewmodel.BridgeViewModel
+import kotlinx.coroutines.launch
 
 /**
  * Home screen — conversation timeline with recent carousel.
@@ -70,6 +71,7 @@ private val sectionIcons = mapOf(
 @Composable
 fun HomeScreen(
     viewModel: BridgeViewModel,
+    onOpenDrawer: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToWorkspace: (workspaceName: String) -> Unit,
     onSelectConversation: (String) -> Unit,
@@ -81,6 +83,10 @@ fun HomeScreen(
     val isLoading by viewModel.isLoading.collectAsState()
     val conversations by viewModel.conversations.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
+    val workspaces by viewModel.workspaces.collectAsState()
+
+    // Workspace picker state
+    var showWorkspacePicker by remember { mutableStateOf(false) }
 
     // Auto-load on first render
     LaunchedEffect(Unit) {
@@ -132,6 +138,11 @@ fun HomeScreen(
                         )
                     }
                 },
+                navigationIcon = {
+                    IconButton(onClick = onOpenDrawer) {
+                        Icon(Icons.Default.Menu, contentDescription = "Menu")
+                    }
+                },
                 actions = {
                     IconButton(onClick = { viewModel.loadConversations() }) {
                         Icon(Icons.Default.Refresh, "Refresh")
@@ -147,7 +158,14 @@ fun HomeScreen(
         },
         floatingActionButton = {
             FloatingActionButton(
-                onClick = onNewConversation,
+                onClick = {
+                    if (workspaces.isNotEmpty()) {
+                        showWorkspacePicker = true
+                    } else {
+                        viewModel.createNewConversation()
+                        onNewConversation()
+                    }
+                },
                 containerColor = PortaPrimary,
                 contentColor = Color.White
             ) {
@@ -336,6 +354,170 @@ fun HomeScreen(
                                 )
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // Workspace picker bottom sheet
+    if (showWorkspacePicker) {
+        WorkspacePickerSheet(
+            workspaces = workspaces,
+            onSelect = { wsUri ->
+                showWorkspacePicker = false
+                viewModel.createNewConversation(wsUri)
+                onNewConversation()
+            },
+            onDismiss = { showWorkspacePicker = false }
+        )
+    }
+}
+
+// ── Workspace Picker Bottom Sheet ──
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WorkspacePickerSheet(
+    workspaces: List<BridgeViewModel.WorkspaceOption>,
+    onSelect: (String?) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState()
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        dragHandle = { BottomSheetDefaults.DragHandle() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 32.dp)
+        ) {
+            // Header
+            Text(
+                "New Conversation",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+            Text(
+                "Select a workspace for context",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+
+            // No workspace option
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 3.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .clickable { onSelect(null) }
+                        .padding(14.dp)
+                        .fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(PortaTertiary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.ChatBubbleOutline, null,
+                            modifier = Modifier.size(20.dp),
+                            tint = PortaTertiary
+                        )
+                    }
+                    Column {
+                        Text(
+                            "No workspace",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            "General conversation without project context",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(4.dp))
+
+            // Workspace list
+            workspaces.forEach { ws ->
+                val wsColor = titleColor(ws.name)
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 3.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .clickable { onSelect(ws.uri) }
+                            .padding(14.dp)
+                            .fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // Folder icon with color
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(wsColor, wsColor.copy(alpha = 0.7f))
+                                    )
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.Folder, null,
+                                modifier = Modifier.size(20.dp),
+                                tint = Color.White
+                            )
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                ws.name,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                ws.uri.removePrefix("file://"),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Icon(
+                            Icons.Default.ChevronRight, null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                        )
                     }
                 }
             }
