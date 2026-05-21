@@ -16,6 +16,8 @@ import id.infinia.porta.data.OfflineMessageQueue
 import id.infinia.porta.data.SettingsReader
 import id.infinia.porta.data.PortaClient
 import id.infinia.porta.data.ServerProfileManager
+import id.infinia.porta.data.Project
+import id.infinia.porta.data.ProjectStatus
 import id.infinia.porta.service.NotificationService
 import id.infinia.porta.service.glasses.*
 import id.infinia.porta.service.voice.TextToSpeechService
@@ -56,6 +58,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val SELECTED_MODEL = stringPreferencesKey("selected_model")
         val PLANNER_TYPE = stringPreferencesKey("planner_type")
+        val NOTIFY_APPROVAL_ENABLED = booleanPreferencesKey("notify_approval_enabled")
     }
 
     private val dataStore = application.settingsDataStore
@@ -68,9 +71,30 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     // ── Server profiles ──
     val serverProfiles = ServerProfileManager(application)
 
+    // ── Projects ──
+    private val projectsFile = java.io.File(application.filesDir, "projects.json")
+    private val gson = com.google.gson.Gson()
+
+    private val _projects = MutableStateFlow<List<Project>>(emptyList())
+    val projects: StateFlow<List<Project>> = _projects.asStateFlow()
+
+    private val _activeProjectId = MutableStateFlow<String?>("p-inprogress-1")
+    val activeProjectId: StateFlow<String?> = _activeProjectId.asStateFlow()
+
     // ── Notification service ──
 
     val notificationService = NotificationService(application)
+    private val notifiedSteps = mutableSetOf<String>()
+    
+    private val _isConversationScreenActive = MutableStateFlow(false)
+    val isConversationScreenActive: StateFlow<Boolean> = _isConversationScreenActive.asStateFlow()
+
+    fun setConversationScreenActive(active: Boolean) {
+        _isConversationScreenActive.value = active
+        if (active) {
+            notificationService.dismissApproval()
+        }
+    }
 
     // ── Voice services ──
 
@@ -102,6 +126,10 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     /** Whether to show system notification on task completion. */
     private val _notifyEnabled = MutableStateFlow(true)
     val notifyEnabled: StateFlow<Boolean> = _notifyEnabled.asStateFlow()
+
+    /** Whether to show system notification for approval requests. */
+    private val _notifyApprovalEnabled = MutableStateFlow(true)
+    val notifyApprovalEnabled: StateFlow<Boolean> = _notifyApprovalEnabled.asStateFlow()
 
     /** Whether to play sound with notification. */
     private val _notifySound = MutableStateFlow(true)
@@ -141,6 +169,20 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _currentConversationId = MutableStateFlow<String?>(null)
     val currentConversationId: StateFlow<String?> = _currentConversationId.asStateFlow()
+
+    // ── Pinned Conversations ──
+    private val _pinnedConversationIds = MutableStateFlow<Set<String>>(emptySet())
+    val pinnedConversationIds: StateFlow<Set<String>> = _pinnedConversationIds.asStateFlow()
+
+    fun togglePinConversation(id: String) {
+        val current = _pinnedConversationIds.value
+        val updated = if (current.contains(id)) current - id else current + id
+        _pinnedConversationIds.value = updated
+        getApplication<Application>().getSharedPreferences("porta_fallback_prefs", Context.MODE_PRIVATE)
+            .edit()
+            .putStringSet("pinned_conversations", updated)
+            .apply()
+    }
 
     // ── Workspace grouping (legacy — kept for workspace screen if needed) ──
 
@@ -294,15 +336,33 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     // ── Step tracking ──
     private var stepCount = 0
 
+    /** Whether DataStore settings have been loaded (prevents race with UI connect). */
+    private val _settingsLoaded = MutableStateFlow(false)
+    val settingsLoaded: StateFlow<Boolean> = _settingsLoaded.asStateFlow()
+
     init {
+        loadProjectsFromDisk()
+        // Load saved pinned conversations
+        val savedPinned = application.getSharedPreferences("porta_fallback_prefs", Context.MODE_PRIVATE)
+            .getStringSet("pinned_conversations", emptySet()) ?: emptySet()
+        _pinnedConversationIds.value = savedPinned
+
         // Load saved settings first
         viewModelScope.launch {
             dataStore.data.first().let { prefs ->
-                _host.value = prefs[PrefKeys.HOST] ?: "localhost"
-                _port.value = prefs[PrefKeys.PORT] ?: 443
+                // Load from DataStore with SharedPreferences fallback for connection settings
+                val fallbackPrefs = application.getSharedPreferences("porta_fallback_prefs", Context.MODE_PRIVATE)
+                _host.value = prefs[PrefKeys.HOST]
+                    ?: fallbackPrefs.getString("host", null)
+                    ?: "localhost"
+                _port.value = prefs[PrefKeys.PORT]
+                    ?: fallbackPrefs.getInt("port", 443)
                 _authToken.value = prefs[PrefKeys.AUTH_TOKEN]
-                _useTls.value = prefs[PrefKeys.USE_TLS] ?: true
+                    ?: fallbackPrefs.getString("auth_token", null)
+                _useTls.value = prefs[PrefKeys.USE_TLS]
+                    ?: fallbackPrefs.getBoolean("use_tls", true)
                 _notifyEnabled.value = prefs[PrefKeys.NOTIFY_ENABLED] ?: true
+                _notifyApprovalEnabled.value = prefs[PrefKeys.NOTIFY_APPROVAL_ENABLED] ?: true
                 _notifySound.value = prefs[PrefKeys.NOTIFY_SOUND] ?: true
                 _notifyVibrate.value = prefs[PrefKeys.NOTIFY_VIBRATE] ?: true
                 _autoForwardToGlasses.value = prefs[PrefKeys.GLASSES_AUTO_FORWARD] ?: false
@@ -321,6 +381,10 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
                 // Sync settings to shared JSON for background components
                 syncSharedSettings()
+
+                // Mark settings as loaded BEFORE auto-connect
+                _settingsLoaded.value = true
+                Log.d("BridgeVM", "Settings loaded: host=${_host.value} port=${_port.value} tls=${_useTls.value}")
 
                 // Auto-connect if enabled and credentials are configured
                 if (_autoConnect.value && !_authToken.value.isNullOrBlank()) {
@@ -423,6 +487,15 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 prefs[PrefKeys.USE_TLS] = useTls
             }
+            // Keep SharedPreferences fallback in sync
+            getApplication<Application>().getSharedPreferences("porta_fallback_prefs", Context.MODE_PRIVATE).edit()
+                .putString("host", host)
+                .putInt("port", port)
+                .apply {
+                    if (authToken != null) putString("auth_token", authToken) else remove("auth_token")
+                }
+                .putBoolean("use_tls", useTls)
+                .apply()
             // Sync to shared JSON for background components
             syncSharedSettings()
         }
@@ -443,8 +516,12 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun connect() {
-        portaClient.configure(_host.value, _port.value, _authToken.value, _useTls.value)
-        loadConversations()
+        viewModelScope.launch {
+            // Wait for settings to be loaded from DataStore first
+            _settingsLoaded.first { it }
+            portaClient.configure(_host.value, _port.value, _authToken.value, _useTls.value)
+            loadConversations()
+        }
     }
 
     fun disconnect() {
@@ -461,12 +538,15 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     fun loadConversations() {
         viewModelScope.launch {
             _isLoading.value = true
+            Log.d("BridgeVM", "loadConversations: host=${_host.value} port=${_port.value} tls=${_useTls.value} token=${_authToken.value?.take(10)}...")
             try {
                 val convos = portaClient.fetchConversations()
                 _conversations.value = convos
                 _statusMessage.value = "Loaded ${convos.size} conversations"
+                Log.d("BridgeVM", "loadConversations: success, ${convos.size} conversations")
             } catch (e: Exception) {
                 _statusMessage.value = "Failed: ${e.message}"
+                Log.e("BridgeVM", "loadConversations FAILED", e)
             } finally {
                 _isLoading.value = false
             }
@@ -484,6 +564,10 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         _rawSteps.value = emptyList()
         _latestResponse.value = ""
         stepCount = 0
+        
+        // Clear notified steps and dismiss persistent approval notification
+        notifiedSteps.clear()
+        notificationService.dismissApproval()
 
         // Connect to new conversation
         portaClient.connectWebSocket(cascadeId)
@@ -867,6 +951,13 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun setNotifyApprovalEnabled(enabled: Boolean) {
+        _notifyApprovalEnabled.value = enabled
+        viewModelScope.launch {
+            dataStore.edit { it[PrefKeys.NOTIFY_APPROVAL_ENABLED] = enabled }
+        }
+    }
+
     fun setNotifySound(enabled: Boolean) {
         _notifySound.value = enabled
         viewModelScope.launch {
@@ -1018,29 +1109,59 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 // Check for new steps needing approval → fire notification
-                if (_notifyEnabled.value) {
-                    val pendingSteps = newSteps.filter { it.needsApproval }
-                    if (pendingSteps.isNotEmpty()) {
-                        val step = pendingSteps.last()
-                        val description = step.toolAction
-                            ?: step.toolSummary
-                            ?: step.approvalInfo?.let {
-                                when (it.type) {
-                                    ApprovalType.COMMAND -> "Command: ${step.commandInfo?.commandLine ?: "execute command"}"
-                                    ApprovalType.PERMISSION -> "File permission request"
-                                    ApprovalType.QUESTION -> "Agent has a question"
-                                    ApprovalType.OTHER -> "Action requires approval"
+                if (currentSteps.none { it.needsApproval }) {
+                    notificationService.dismissApproval()
+                }
+
+                if (_notifyApprovalEnabled.value) {
+                    val isChatActive = _isConversationScreenActive.value
+                    val suppressNotification = isChatActive
+                    val cascadeId = _currentConversationId.value ?: ""
+
+                    val pendingSteps = currentSteps.filter { it.needsApproval }
+                    if (pendingSteps.isNotEmpty() && !suppressNotification) {
+                        val stepToNotify = pendingSteps.firstOrNull { step ->
+                            val stepKey = "$cascadeId:${step.index}"
+                            !notifiedSteps.contains(stepKey)
+                        }
+
+                        if (stepToNotify != null) {
+                            val stepKey = "$cascadeId:${stepToNotify.index}"
+                            notifiedSteps.add(stepKey)
+
+                            val description = stepToNotify.toolAction
+                                ?: stepToNotify.toolSummary
+                                ?: stepToNotify.approvalInfo?.let {
+                                    when (it.type) {
+                                        ApprovalType.COMMAND -> "Command: ${stepToNotify.commandInfo?.commandLine ?: "execute command"}"
+                                        ApprovalType.PERMISSION -> "File permission request"
+                                        ApprovalType.QUESTION -> "Agent has a question"
+                                        ApprovalType.OTHER -> "Action requires approval"
+                                    }
                                 }
+                                ?: "Agent needs your approval to proceed"
+
+                            // Look up conversation title for richer notification
+                            val convoSummary = _conversations.value[cascadeId]
+                            val convoTitle = if (convoSummary != null) {
+                                UiUtils.displayTitle(convoSummary)
+                            } else {
+                                "Conversation"
                             }
-                            ?: "Agent needs your approval to proceed"
-                        val cascadeId = _currentConversationId.value ?: ""
-                        notificationService.showApprovalNeeded(
-                            title = "⚠️ Approval Needed",
-                            description = description,
-                            cascadeId = cascadeId,
-                            playSound = _notifySound.value,
-                            vibrate = _notifyVibrate.value
-                        )
+                            val notifTitle = "⚠️ $convoTitle"
+
+                            // Per-conversation notification ID so multiple conversations get separate notifications
+                            val perConvoNotifId = (cascadeId.hashCode() and 0x7FFFFFFF) % 50000 + 2000
+
+                            notificationService.showApprovalNeeded(
+                                title = notifTitle,
+                                description = description,
+                                cascadeId = cascadeId,
+                                playSound = _notifySound.value,
+                                vibrate = _notifyVibrate.value,
+                                notificationId = perConvoNotifId
+                            )
+                        }
                     }
                 }
             }
@@ -1075,6 +1196,199 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             else -> {}
+        }
+    }
+
+    private fun generateMockProjects(): List<Project> {
+        val now = System.currentTimeMillis()
+        val formatter = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("UTC")
+        }
+
+        val initial = listOf(
+            Project(
+                id = "p-blocked-1",
+                title = "Analyzing Odoo 8 Perpetual Inventory Logic & Verification",
+                status = ProjectStatus.BLOCKED,
+                lastUpdated = formatter.format(java.util.Date(now - 3600000 * 2))
+            ),
+            Project(
+                id = "p-inprogress-1",
+                title = "Fixing Porta Android Auto Callback & Media Session Synchronization",
+                status = ProjectStatus.IN_PROGRESS,
+                lastUpdated = formatter.format(java.util.Date(now))
+            ),
+            Project(
+                id = "p-inprogress-2",
+                title = "Integrating Porta With Rokid Glass CXR-L Bluetooth Stack",
+                status = ProjectStatus.IN_PROGRESS,
+                lastUpdated = formatter.format(java.util.Date(now - 3600000 * 4))
+            ),
+            Project(
+                id = "p-idle-1",
+                title = "Investigating Fail2ban Blocklist Synchronization & Logs",
+                status = ProjectStatus.IDLE,
+                lastUpdated = formatter.format(java.util.Date(now - 3600000 * 5)),
+                hasIndicator = true
+            ),
+            Project(
+                id = "p-idle-2",
+                title = "Updating Local Repository Packages & Locking Dependencies",
+                status = ProjectStatus.IDLE,
+                lastUpdated = formatter.format(java.util.Date(now - 3600000 * 18)),
+                timeBadge = "18h"
+            ),
+            Project(
+                id = "p-idle-3",
+                title = "Running The Web Dashboard Profiler & Checking Memory Leak",
+                status = ProjectStatus.IDLE,
+                lastUpdated = formatter.format(java.util.Date(now - 3600000 * 6)),
+                hasIndicator = true
+            ),
+            Project(
+                id = "p-idle-4",
+                title = "Tracing Peterongan Musical Notation Parser & Engine Logs",
+                status = ProjectStatus.IDLE,
+                lastUpdated = formatter.format(java.util.Date(now - 3600000 * 22)),
+                timeBadge = "22h"
+            ),
+            Project(
+                id = "p-idle-5",
+                title = "Diagnosing Infinia Server Latency Spikes Under Load",
+                status = ProjectStatus.IDLE,
+                lastUpdated = formatter.format(java.util.Date(now - 3600000 * 48)),
+                timeBadge = "2d"
+            ),
+            Project(
+                id = "p-idle-6",
+                title = "Displaying Last Login Odoo System Log Audit Trail",
+                status = ProjectStatus.IDLE,
+                lastUpdated = formatter.format(java.util.Date(now - 3600000 * 48)),
+                timeBadge = "2d"
+            )
+        )
+
+        val templates = listOf(
+            "Refactoring Auth Middleware & Token Rotation",
+            "Optimizing Largest Contentful Paint (LCP) performance",
+            "Translating Web Extension UI & Popup Content",
+            "Implementing SQLite Shard Backups & Maintenance Schedule",
+            "Upgrading TailwindCSS to Version 4 & Linting Classes",
+            "Setting up Firebase Crashlytics on Android Debug APK",
+            "Auditing Ensembl Database Variant Consequences Fetcher",
+            "Profiling PWA Service Worker Cache Expiration Logic",
+            "Resolving Dart Tooling Daemon WS Port Collisions",
+            "Debugging Voice Input Noise Reduction Thresholds",
+            "Reviewing Firebase Data Connect PostgreSQL Relations",
+            "Testing WebUSB Connectivity with Rokid AR Glasses",
+            "Improving HSL Adaptive Colors contrast for Accessibility",
+            "Benchmarking MMseqs2 Sequence Similarity Searches",
+            "Updating CLI build scripts with UV Package Manager",
+            "Investigating memory leaks inside local Proxy connections",
+            "Generating OpenAPI schema specifications from Express routes",
+            "Formatting CSS layout systems for Ultra-Wide displays",
+            "Pre-indexing Cloud Firestore databases with Composite Indexes",
+            "Drafting App Store description and Fastlane automated metadata"
+        )
+
+        val list = initial.toMutableList()
+        for (i in 0 until 91) {
+            val template = templates[i % templates.size]
+            val index = i + 7
+            val daysAgo = (index / 3) + 2
+            list.add(
+                Project(
+                    id = "p-idle-$index",
+                    title = "$template (Sprint #${(index + 9) / 10})",
+                    status = ProjectStatus.IDLE,
+                    lastUpdated = formatter.format(java.util.Date(now - 3600000L * 24 * daysAgo)),
+                    timeBadge = "${daysAgo}d"
+                )
+            )
+        }
+        return list
+    }
+
+    private fun loadProjectsFromDisk() {
+        try {
+            if (projectsFile.exists()) {
+                val json = projectsFile.readText()
+                val type = object : com.google.gson.reflect.TypeToken<List<Project>>() {}.type
+                val loadedList: List<Project> = gson.fromJson(json, type) ?: emptyList()
+                _projects.value = loadedList
+            } else {
+                val defaultList = generateMockProjects()
+                _projects.value = defaultList
+                saveProjectsToDisk()
+            }
+        } catch (e: Exception) {
+            _projects.value = generateMockProjects()
+        }
+
+        // Restore active project
+        val sharedPrefs = getApplication<Application>().getSharedPreferences("porta_fallback_prefs", Context.MODE_PRIVATE)
+        _activeProjectId.value = sharedPrefs.getString("active_project_id", "p-inprogress-1") ?: "p-inprogress-1"
+    }
+
+    private fun saveProjectsToDisk() {
+        try {
+            projectsFile.writeText(gson.toJson(_projects.value))
+        } catch (_: Exception) {}
+    }
+
+    fun setActiveProjectId(id: String?) {
+        _activeProjectId.value = id
+        getApplication<Application>().getSharedPreferences("porta_fallback_prefs", Context.MODE_PRIVATE)
+            .edit()
+            .putString("active_project_id", id)
+            .apply()
+    }
+
+    fun createProject(title: String, status: ProjectStatus): Project {
+        val formatter = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("UTC")
+        }
+        val newProj = Project(
+            id = "p-custom-${System.currentTimeMillis()}",
+            title = title,
+            status = status,
+            lastUpdated = formatter.format(java.util.Date()),
+            hasIndicator = status == ProjectStatus.IDLE
+        )
+        _projects.value = listOf(newProj) + _projects.value
+        saveProjectsToDisk()
+        return newProj
+    }
+
+    fun updateProjectStatus(id: String, status: ProjectStatus) {
+        val formatter = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("UTC")
+        }
+        _projects.value = _projects.value.map {
+            if (it.id == id) {
+                it.copy(status = status, lastUpdated = formatter.format(java.util.Date()))
+            } else it
+        }
+        saveProjectsToDisk()
+    }
+
+    fun updateProjectTitle(id: String, title: String) {
+        val formatter = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("UTC")
+        }
+        _projects.value = _projects.value.map {
+            if (it.id == id) {
+                it.copy(title = title, lastUpdated = formatter.format(java.util.Date()))
+            } else it
+        }
+        saveProjectsToDisk()
+    }
+
+    fun deleteProject(id: String) {
+        _projects.value = _projects.value.filter { it.id != id }
+        saveProjectsToDisk()
+        if (_activeProjectId.value == id) {
+            setActiveProjectId(null)
         }
     }
 
