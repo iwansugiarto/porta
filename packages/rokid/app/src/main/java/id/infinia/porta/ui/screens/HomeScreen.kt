@@ -88,6 +88,7 @@ fun HomeScreen(
     // Workspace picker state
     var showWorkspacePicker by remember { mutableStateOf(false) }
 
+
     // Auto-load on first render
     LaunchedEffect(Unit) {
         if (conversations.isEmpty()) {

@@ -70,7 +70,12 @@ object UiUtils {
      */
     fun displayTitle(summary: JsonObject): String {
         val text = summary.get("summary")?.asString ?: return "New conversation"
-        if (text.isBlank() || UUID_SUMMARY.matches(text)) return "New conversation"
+        if (text.isBlank() || UUID_SUMMARY.matches(text)) {
+            // For disk-only conversations with UUID placeholder titles,
+            // try to extract a workspace folder name for context
+            val workspace = extractWorkspaceName(summary)
+            return if (workspace != "Others") "Conversation · $workspace" else "New conversation"
+        }
         return text
     }
 
@@ -82,7 +87,13 @@ object UiUtils {
         val diskOnly = summary.get("_diskOnly")?.asBoolean == true
         val stepCount = summary.get("stepCount")?.asInt ?: 0
         val title = summary.get("summary")?.asString ?: ""
-        return diskOnly && stepCount == 0 && (title.isBlank() || UUID_SUMMARY.matches(title))
+        val hasTimestamp = summary.has("lastModifiedTime") &&
+            !summary.get("lastModifiedTime").isJsonNull
+        // A ghost is a disk-only placeholder with no steps, no meaningful title,
+        // AND no modification timestamp. Real conversations always have timestamps.
+        return diskOnly && stepCount == 0 &&
+            (title.isBlank() || UUID_SUMMARY.matches(title)) &&
+            !hasTimestamp
     }
 
     /**
