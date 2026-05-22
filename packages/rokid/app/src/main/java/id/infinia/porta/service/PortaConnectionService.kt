@@ -50,8 +50,13 @@ class PortaConnectionService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val notification = buildNotification()
-        startForeground(NOTIFICATION_ID, notification)
-        Log.i(TAG, "Foreground service started")
+        try {
+            startForeground(NOTIFICATION_ID, notification)
+            Log.i(TAG, "Foreground service started")
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Cannot start foreground service: ${e.message}")
+            stopSelf()
+        }
         return START_STICKY
     }
 
