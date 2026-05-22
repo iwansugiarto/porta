@@ -476,6 +476,52 @@ fun stepsToMessages(steps: List<JsonObject>): List<ChatMessage> {
                 ))
             }
 
+            // ── Error Message ──
+            "CORTEX_STEP_TYPE_ERROR_MESSAGE" -> {
+                val text = try {
+                    // Try "content" first (simple string)
+                    val content = step.get("content")
+                    if (content != null && content.isJsonPrimitive) {
+                        content.asString
+                    } else {
+                        // Actual structure: step.errorMessage.error.userErrorMessage
+                        val errorMessage = step.get("errorMessage")
+                        when {
+                            errorMessage != null && errorMessage.isJsonObject -> {
+                                val em = errorMessage.asJsonObject
+                                // Check errorMessage.error (nested object)
+                                val innerError = em.get("error")
+                                when {
+                                    innerError != null && innerError.isJsonObject -> {
+                                        val errObj = innerError.asJsonObject
+                                        errObj.get("userErrorMessage")?.takeIf { it.isJsonPrimitive }?.asString
+                                            ?: errObj.get("message")?.takeIf { it.isJsonPrimitive }?.asString
+                                            ?: errObj.get("modelErrorMessage")?.takeIf { it.isJsonPrimitive }?.asString
+                                            ?: "Agent execution terminated due to error"
+                                    }
+                                    innerError != null && innerError.isJsonPrimitive -> innerError.asString
+                                    // Direct fields on errorMessage
+                                    em.get("message")?.isJsonPrimitive == true -> em.get("message").asString
+                                    em.get("userErrorMessage")?.isJsonPrimitive == true -> em.get("userErrorMessage").asString
+                                    else -> "An error occurred during processing"
+                                }
+                            }
+                            errorMessage != null && errorMessage.isJsonPrimitive -> errorMessage.asString
+                            else -> "An error occurred"
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("ChatMsg", "ERROR_MESSAGE extraction failed", e)
+                    "An error occurred"
+                }
+                messages.add(ChatMessage(
+                    role = "assistant",
+                    content = "⚠️ $text",
+                    stepIndex = i,
+                    type = type
+                ))
+            }
+
             // ── Code Acknowledgement ──
             "CORTEX_STEP_TYPE_CODE_ACKNOWLEDGEMENT" -> {
                 // Silently skip — this is an internal LS bookkeeping step
