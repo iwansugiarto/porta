@@ -18,6 +18,24 @@ object UiUtils {
     private val UUID_SUMMARY = Regex("^[0-9a-f]{8}…?\\.?$")
 
     /**
+     * Clean and normalize a title string by unescaping common HTML entities,
+     * converting to lowercase, and removing all non-alphanumeric characters.
+     * Useful for robustly comparing project titles and conversation summaries.
+     */
+    fun normalizeTitle(title: String?): String {
+        if (title == null) return ""
+        val unescaped = title.replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&#39;", "'")
+        return unescaped.lowercase()
+            .replace(Regex("[^a-z0-9]"), "")
+            .trim()
+    }
+
+    /**
      * Format an ISO timestamp as a human-readable relative time.
      * e.g. "just now", "5m ago", "2h ago", "3d ago"
      */

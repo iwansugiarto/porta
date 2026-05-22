@@ -18,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import id.infinia.porta.ui.screens.*
+import id.infinia.porta.ui.UiUtils
 import id.infinia.porta.ui.theme.PortaRokidTheme
 import id.infinia.porta.viewmodel.BridgeViewModel
 import androidx.compose.material3.ModalNavigationDrawer
@@ -121,6 +122,7 @@ class MainActivity : ComponentActivity() {
 
                 val onSelectProject = remember(viewModel) {
                     { project: id.infinia.porta.data.Project ->
+                        android.util.Log.d("MainActivity", "onSelectProject: title='${project.title}' id=${project.id}")
                         viewModel.setActiveProjectId(project.id)
                         
                         // Locate matching conversation
@@ -128,7 +130,13 @@ class MainActivity : ComponentActivity() {
                         val exactMatchEntry = conversationsMap.entries.find { entry ->
                             val summary = entry.value
                             val summaryTitle = summary.get("summary")?.asString
-                            summaryTitle?.equals(project.title, ignoreCase = true) == true
+                            val normSummary = UiUtils.normalizeTitle(summaryTitle)
+                            val normProject = UiUtils.normalizeTitle(project.title)
+                            val isMatch = normSummary.isNotEmpty() && normSummary == normProject
+                            if (isMatch) {
+                                android.util.Log.d("MainActivity", "Found matching conversation! key=${entry.key} title='$summaryTitle'")
+                            }
+                            isMatch
                         }
                         
                         if (exactMatchEntry != null) {

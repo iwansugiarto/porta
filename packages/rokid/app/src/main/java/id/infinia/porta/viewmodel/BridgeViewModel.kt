@@ -304,9 +304,20 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     val recentConversations: StateFlow<List<Pair<String, JsonObject>>> = combine(
         _conversations, _sourceFilter
     ) { convos, filter ->
-        convos.entries
-            .filter { !UiUtils.isGhostConversation(it.value) && matchesSourceFilter(it.value, filter) }
-            .sortedByDescending { it.value.get("lastModifiedTime")?.asString ?: "" }
+        val filtered = convos.entries
+            .filter { entry ->
+                val isGhost = UiUtils.isGhostConversation(entry.value)
+                val matchesFilter = matchesSourceFilter(entry.value, filter)
+                if (isGhost) {
+                    Log.v("BridgeVM", "Filtering out ghost conversation: ${entry.key}")
+                }
+                if (!matchesFilter) {
+                    Log.v("BridgeVM", "Filtering out filter mismatch conversation: ${entry.key}")
+                }
+                !isGhost && matchesFilter
+            }
+        Log.d("BridgeVM", "recentConversations: convos size=${convos.size}, filtered size=${filtered.size}")
+        filtered.sortedByDescending { it.value.get("lastModifiedTime")?.asString ?: "" }
             .take(10)
             .map { it.key to it.value }
     }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())

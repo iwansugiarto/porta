@@ -1171,9 +1171,11 @@ private fun ProjectsExplorerDialog(
 }
 
 private fun getProjectRepoName(projTitle: String, conversations: List<Pair<String, JsonObject>>): String? {
+    val normProject = UiUtils.normalizeTitle(projTitle)
     val matched = conversations.find {
         val title = UiUtils.displayTitle(it.second)
-        title.equals(projTitle, ignoreCase = true)
+        val normTitle = UiUtils.normalizeTitle(title)
+        normTitle.isNotEmpty() && normTitle == normProject
     }
     if (matched != null) {
         val repo = UiUtils.extractWorkspaceName(matched.second)
