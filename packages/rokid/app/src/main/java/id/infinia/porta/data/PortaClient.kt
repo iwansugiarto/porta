@@ -71,6 +71,18 @@ class PortaClient(
     fun resetRunningState() {
         _agentRunning.value = false
     }
+
+    /**
+     * Mark the API as reachable after a successful REST call.
+     * Sets connectionState to CONNECTED so the UI shows green indicator
+     * even before a WebSocket is opened for a specific conversation.
+     */
+    fun markApiReachable() {
+        if (_connectionState.value == ConnectionState.DISCONNECTED ||
+            _connectionState.value == ConnectionState.ERROR) {
+            _connectionState.value = ConnectionState.CONNECTED
+        }
+    }
     private var reconnectJob: Job? = null
     private var reconnectAttempt = 0
     private val maxReconnectDelay = 10_000L // 10 seconds max

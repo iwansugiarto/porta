@@ -26,6 +26,7 @@ import id.infinia.porta.service.voice.VoiceInputService
 import id.infinia.porta.shared.protocol.*
 import id.infinia.porta.shared.protocol.stepsToMessages
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.FlowPreview
 
@@ -580,6 +581,13 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
             // Wait for settings to be loaded from DataStore first
             _settingsLoaded.first { it }
             portaClient.configure(_host.value, _port.value, _authToken.value, _useTls.value)
+            loadConversations(markConnected = true)
+
+            // Re-fetch after delay to pick up warm-up results from proxy.
+            // Disk-only conversations initially return UUID placeholder titles;
+            // after the proxy warm-up loads them into the LS (a few seconds),
+            // proper titles and metadata become available.
+            delay(10_000)
             loadConversations()
         }
     }
@@ -617,7 +625,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     // ── Conversations ──
 
-    fun loadConversations() {
+    fun loadConversations(markConnected: Boolean = false) {
         viewModelScope.launch {
             _isLoading.value = true
             Log.d("BridgeVM", "loadConversations: host=${_host.value} port=${_port.value} tls=${_useTls.value} token=${_authToken.value?.take(10)}...")
@@ -626,6 +634,10 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 _conversations.value = convos
                 _statusMessage.value = "Loaded ${convos.size} conversations"
                 Log.d("BridgeVM", "loadConversations: success, ${convos.size} conversations")
+                // Mark API as reachable so HomeScreen shows connected indicator
+                if (markConnected || convos.isNotEmpty()) {
+                    portaClient.markApiReachable()
+                }
             } catch (e: Exception) {
                 _statusMessage.value = "Failed: ${e.message}"
                 Log.e("BridgeVM", "loadConversations FAILED", e)
