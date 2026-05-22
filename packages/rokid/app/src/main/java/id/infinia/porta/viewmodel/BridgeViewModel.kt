@@ -367,12 +367,31 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     /** Raw JSON steps for the stepsToMessages transform. */
     private val _rawSteps = MutableStateFlow<List<JsonObject>>(emptyList())
 
-    /** Chat messages derived from raw steps — the primary display data. */
+    /** Optimistic user messages — shown immediately before server confirms. */
+    private val _optimisticMessages = MutableStateFlow<List<ChatMessage>>(emptyList())
+
+    /** Chat messages derived from raw steps + optimistic messages. */
     @OptIn(FlowPreview::class)
-    val chatMessages: StateFlow<List<ChatMessage>> = _rawSteps
-        .debounce(50) // Debounce rapid step updates during streaming
-        .map { raw -> stepsToMessages(raw) }
-        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    val chatMessages: StateFlow<List<ChatMessage>> = combine(
+        _rawSteps.debounce(50),
+        _optimisticMessages
+    ) { raw, optimistic ->
+        val fromSteps = stepsToMessages(raw)
+        if (optimistic.isEmpty()) {
+            fromSteps
+        } else {
+            // Check if any optimistic message content matches a real user message
+            val realUserTexts = fromSteps
+                .filter { it.role == "user" }
+                .map { it.content.trim() }
+                .toSet()
+            val remaining = optimistic.filter { it.content.trim() !in realUserTexts }
+            if (remaining.size != optimistic.size) {
+                _optimisticMessages.value = remaining
+            }
+            fromSteps + remaining
+        }
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     /** Latest agent text response for HUD display. */
     private val _latestResponse = MutableStateFlow("")
@@ -718,6 +737,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         _currentConversationId.value = cascadeId
         _steps.value = emptyList()
         _rawSteps.value = emptyList()
+        _optimisticMessages.value = emptyList()
         _latestResponse.value = ""
         stepCount = 0
         rawStepsBaseOffset = 0
@@ -752,9 +772,23 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     // ── Messaging ──
 
     fun sendMessage(text: String, model: String? = null, media: List<Map<String, String>>? = null) {
-        val cascadeId = _currentConversationId.value ?: return
+        val cascadeId = _currentConversationId.value
+        if (cascadeId == null) {
+            Log.w("BridgeVM", "sendMessage: no current conversation")
+            return
+        }
         val activeModel = model ?: _selectedModel.value
         val activePlanner = _plannerType.value
+        Log.d("BridgeVM", "sendMessage: text='${text.take(50)}' model=$activeModel convo=${cascadeId.take(8)} connected=${connectionState.value}")
+
+        // Optimistic insert — show user message immediately
+        val optimisticIndex = -(System.currentTimeMillis() % 100000).toInt() // negative to avoid collision
+        val optimisticMsg = ChatMessage(
+            role = "user",
+            content = text,
+            stepIndex = optimisticIndex
+        )
+        _optimisticMessages.value = _optimisticMessages.value + optimisticMsg
 
         // If disconnected, queue for later
         if (connectionState.value != ConnectionState.CONNECTED) {
@@ -778,7 +812,9 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 _statusMessage.value = "Sending..."
                 portaClient.sendMessage(cascadeId, text, activeModel, activePlanner, media)
                 _statusMessage.value = "Message sent"
+                Log.d("BridgeVM", "sendMessage: success")
             } catch (e: Exception) {
+                Log.e("BridgeVM", "sendMessage failed: ${e.message}")
                 // Queue on send failure too
                 offlineQueue.enqueue(
                     OfflineMessageQueue.PendingMessage(
@@ -1272,6 +1308,13 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 _rawSteps.value = currentRaw
                 Log.d("BridgeVM", "Steps merged: rawSteps=${currentRaw.size} baseOffset=$rawStepsBaseOffset offset=${message.offset} incoming=${message.steps.size}")
+                // Debug: show last 5 step types
+                val lastTypes = currentRaw.takeLast(5).mapIndexed { i, json ->
+                    val idx = currentRaw.size - 5 + i
+                    val t = json.get("type")?.asString ?: "EMPTY"
+                    "$idx:${t.removePrefix("CORTEX_STEP_TYPE_")}"
+                }
+                Log.d("BridgeVM", "Last steps: $lastTypes")
 
                 // Update latest text response for HUD
                 val latestText = currentSteps
