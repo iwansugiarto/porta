@@ -129,6 +129,31 @@ class PortaClient(
     }
 
     /**
+     * Fetch available Language Server instances.
+     *
+     * GET /api/ls-instances
+     * Returns: { instances: [{ pid, subclientType, appDataDir, workspaceId }] }
+     */
+    suspend fun fetchLSInstances(): List<JsonObject> = withContext(Dispatchers.IO) {
+        val url = buildHttpUrl("/api/ls-instances")
+        val request = Request.Builder()
+            .url(url)
+            .apply { addAuthHeader(this) }
+            .build()
+
+        val response = httpClient.newCall(request).execute()
+        response.use { resp ->
+            if (!resp.isSuccessful) return@withContext emptyList()
+
+            val body = resp.body?.string() ?: "{}"
+            val json = gson.fromJson(body, JsonObject::class.java)
+            val instances = json.getAsJsonArray("instances") ?: return@withContext emptyList()
+
+            instances.map { it.asJsonObject }
+        }
+    }
+
+    /**
      * Fetch available workspaces from the Porta proxy.
      *
      * GET /api/workspaces
@@ -202,15 +227,21 @@ class PortaClient(
      * Create a new conversation.
      *
      * POST /api/conversations
+     * @param workspaceUri Optional workspace to create the conversation in.
+     * @param targetSubclientType Optional LS target: "hub" or "ide".
      */
     suspend fun createConversation(
-        workspaceUri: String? = null
+        workspaceUri: String? = null,
+        targetSubclientType: String? = null
     ): String = withContext(Dispatchers.IO) {
         val url = buildHttpUrl("/api/conversations")
 
         val payload = JsonObject().apply {
             workspaceUri?.let {
                 addProperty("workspaceFolderAbsoluteUri", it)
+            }
+            targetSubclientType?.let {
+                addProperty("targetSubclientType", it)
             }
             addProperty("fileAccessGranted", true)
         }
@@ -544,6 +575,7 @@ class PortaClient(
             override fun onMessage(webSocket: WebSocket, text: String) {
                 val message = PortaMessage.parse(text)
                 if (message != null) {
+                    Log.d("PortaClient", "WS recv: ${message::class.simpleName} (${text.length / 1024}KB)")
                     // Update running state from status messages
                     if (message is PortaMessage.Status) {
                         _agentRunning.value = message.running
@@ -552,6 +584,8 @@ class PortaClient(
                     scope.launch {
                         _incomingMessages.emit(message)
                     }
+                } else {
+                    Log.w("PortaClient", "WS message parse returned null: ${text.take(100)}")
                 }
             }
 

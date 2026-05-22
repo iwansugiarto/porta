@@ -385,7 +385,23 @@ app.get("/api/health", async (c) => {
       pid: i.pid,
       httpsPort: i.httpsPort,
       workspaceId: i.workspaceId,
+      subclientType: i.subclientType ?? "unknown",
+      appDataDir: i.appDataDir ?? "unknown",
       source: i.source,
+    })),
+  });
+});
+
+// ── LS Instances (for client LS target selection) ──
+
+app.get("/api/ls-instances", async (c) => {
+  const instances = await discovery.getInstances();
+  return c.json({
+    instances: instances.map((i) => ({
+      pid: i.pid,
+      subclientType: i.subclientType ?? "unknown",
+      appDataDir: i.appDataDir ?? "unknown",
+      workspaceId: i.workspaceId,
     })),
   });
 });

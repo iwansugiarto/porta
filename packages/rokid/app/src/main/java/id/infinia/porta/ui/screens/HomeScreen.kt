@@ -84,9 +84,14 @@ fun HomeScreen(
     val conversations by viewModel.conversations.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
     val workspaces by viewModel.workspaces.collectAsState()
+    val sourceFilter by viewModel.sourceFilter.collectAsState()
+    val lsInstances by viewModel.lsInstances.collectAsState()
+    val selectedTarget by viewModel.selectedTarget.collectAsState()
 
     // Workspace picker state
     var showWorkspacePicker by remember { mutableStateOf(false) }
+    // LS target picker state
+    var showTargetPicker by remember { mutableStateOf(false) }
 
 
     // Auto-load on first render
@@ -160,7 +165,11 @@ fun HomeScreen(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = {
-                    if (workspaces.isNotEmpty()) {
+                    val uniqueTypes = lsInstances.map { it.subclientType }.distinct().filter { it != "unknown" }
+                    if (uniqueTypes.size > 1) {
+                        // Multiple LS types — ask user which one
+                        showTargetPicker = true
+                    } else if (workspaces.isNotEmpty()) {
                         showWorkspacePicker = true
                     } else {
                         viewModel.createNewConversation()
@@ -256,6 +265,17 @@ fun HomeScreen(
                                 "$visibleCount conversations",
                                 fontSize = 13.sp,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                            )
+                        }
+                    }
+
+                    // ── Source filter chips ──
+                    if (lsInstances.isNotEmpty()) {
+                        item(key = "source_filter") {
+                            SourceFilterChips(
+                                currentFilter = sourceFilter,
+                                availableTypes = lsInstances.map { it.subclientType }.distinct(),
+                                onFilterSelected = { viewModel.setSourceFilter(it) }
                             )
                         }
                     }
@@ -371,6 +391,24 @@ fun HomeScreen(
                 onNewConversation()
             },
             onDismiss = { showWorkspacePicker = false }
+        )
+    }
+
+    // LS Target picker dialog
+    if (showTargetPicker) {
+        LSTargetPickerDialog(
+            instances = lsInstances,
+            onSelect = { subclientType ->
+                showTargetPicker = false
+                viewModel.setSelectedTarget(subclientType)
+                if (workspaces.isNotEmpty()) {
+                    showWorkspacePicker = true
+                } else {
+                    viewModel.createNewConversation()
+                    onNewConversation()
+                }
+            },
+            onDismiss = { showTargetPicker = false }
         )
     }
 }
@@ -746,4 +784,176 @@ private fun ConversationRow(
             )
         }
     }
+}
+
+// ── Source Filter Chips ──
+
+private val sourceLabels = mapOf(
+    "all" to "All",
+    "hub" to "Hub",
+    "ide" to "IDE",
+)
+
+private val sourceIcons = mapOf(
+    "all" to Icons.Default.FilterList,
+    "hub" to Icons.Default.Hub,
+    "ide" to Icons.Default.Code,
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SourceFilterChips(
+    currentFilter: String,
+    availableTypes: List<String>,
+    onFilterSelected: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val chips = listOf("all") + availableTypes.filter { it != "unknown" }
+    if (chips.size <= 1) return // Only "all" — no point showing chips
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        for (chip in chips) {
+            val selected = currentFilter == chip
+            FilterChip(
+                selected = selected,
+                onClick = { onFilterSelected(chip) },
+                label = {
+                    Text(
+                        sourceLabels[chip] ?: chip.replaceFirstChar { it.uppercase() },
+                        fontSize = 13.sp
+                    )
+                },
+                leadingIcon = {
+                    sourceIcons[chip]?.let { icon ->
+                        Icon(
+                            icon, null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = PortaPrimary.copy(alpha = 0.15f),
+                    selectedLabelColor = PortaPrimary,
+                    selectedLeadingIconColor = PortaPrimary
+                ),
+                border = if (selected) {
+                    FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = true,
+                        borderColor = PortaPrimary.copy(alpha = 0.4f)
+                    )
+                } else {
+                    FilterChipDefaults.filterChipBorder(enabled = true, selected = false)
+                }
+            )
+        }
+    }
+}
+
+// ── LS Target Picker Dialog ──
+
+private val targetDescriptions = mapOf(
+    "hub" to "Global conversations — no workspace context",
+    "ide" to "Workspace-bound — full code context access",
+)
+
+@Composable
+fun LSTargetPickerDialog(
+    instances: List<BridgeViewModel.LSInstanceInfo>,
+    onSelect: (String?) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val uniqueTypes = instances.map { it.subclientType }.distinct().filter { it != "unknown" }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(Icons.Default.Dns, null, tint = PortaPrimary, modifier = Modifier.size(24.dp))
+                Text("Create Conversation", fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Choose target Language Server:",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+                for (type in uniqueTypes) {
+                    val icon = sourceIcons[type] ?: Icons.Default.Memory
+                    val label = sourceLabels[type] ?: type.replaceFirstChar { it.uppercase() }
+                    val desc = targetDescriptions[type] ?: ""
+
+                    Surface(
+                        onClick = { onSelect(type) },
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Icon(icon, null, tint = PortaPrimary, modifier = Modifier.size(28.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(label, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                                if (desc.isNotEmpty()) {
+                                    Text(
+                                        desc,
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                    )
+                                }
+                            }
+                            Icon(
+                                Icons.Default.ChevronRight, null,
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                            )
+                        }
+                    }
+                }
+
+                // Auto option
+                Surface(
+                    onClick = { onSelect(null) },
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(Icons.Default.AutoAwesome, null, tint = PortaSecondary, modifier = Modifier.size(28.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Auto", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                            Text(
+                                "Let Porta choose the best server",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }

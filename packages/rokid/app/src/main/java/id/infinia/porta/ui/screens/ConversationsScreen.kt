@@ -65,6 +65,8 @@ fun ConversationsScreen(
     val currentId by viewModel.currentConversationId.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val sourceFilter by viewModel.sourceFilter.collectAsState()
+    val lsInstances by viewModel.lsInstances.collectAsState()
 
     val projects by viewModel.projects.collectAsState()
     var editProjectTarget by remember { mutableStateOf<Project?>(null) }
@@ -204,6 +206,15 @@ fun ConversationsScreen(
                         focusedBorderColor = PortaPrimary,
                         cursorColor = PortaPrimary
                     )
+                )
+            }
+
+            // Source filter chips
+            if (lsInstances.isNotEmpty()) {
+                SourceFilterChips(
+                    currentFilter = sourceFilter,
+                    availableTypes = lsInstances.map { it.subclientType }.distinct(),
+                    onFilterSelected = { viewModel.setSourceFilter(it) }
                 )
             }
 

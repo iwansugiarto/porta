@@ -75,6 +75,8 @@ export function parseCommandCandidate(
     pid,
     csrfToken,
     workspaceId: parseArgValue(args, "--workspace_id"),
+    appDataDir: parseArgValue(args, "--app_data_dir"),
+    subclientType: parseArgValue(args, "--subclient_type"),
     httpsPort: parsePort(args, "--server_port"),
     httpPort: parsePort(args, "--extension_server_port"),
     lspPort: parsePort(args, "--lsp_port"),

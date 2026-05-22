@@ -174,6 +174,34 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     private val _workspaces = MutableStateFlow<List<WorkspaceOption>>(emptyList())
     val workspaces: StateFlow<List<WorkspaceOption>> = _workspaces.asStateFlow()
 
+    // ── Language Server instances ──
+
+    data class LSInstanceInfo(
+        val pid: Int,
+        val subclientType: String,
+        val appDataDir: String,
+        val workspaceId: String?
+    )
+
+    private val _lsInstances = MutableStateFlow<List<LSInstanceInfo>>(emptyList())
+    val lsInstances: StateFlow<List<LSInstanceInfo>> = _lsInstances.asStateFlow()
+
+    /** Source filter: "all", "hub", "ide" */
+    private val _sourceFilter = MutableStateFlow("all")
+    val sourceFilter: StateFlow<String> = _sourceFilter.asStateFlow()
+
+    /** Target LS for new conversations: null = auto, "hub", "ide" */
+    private val _selectedTarget = MutableStateFlow<String?>(null)
+    val selectedTarget: StateFlow<String?> = _selectedTarget.asStateFlow()
+
+    fun setSourceFilter(filter: String) {
+        _sourceFilter.value = filter
+    }
+
+    fun setSelectedTarget(target: String?) {
+        _selectedTarget.value = target
+    }
+
     // ── Conversations ──
 
     private val _conversations = MutableStateFlow<Map<String, JsonObject>>(emptyMap())
@@ -241,9 +269,11 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     )
 
     /** Conversations grouped by time (Today, Yesterday, This Week, Earlier), filtered. */
-    val timeGroupedConversations: StateFlow<List<TimeGroup>> = _conversations.map { convos ->
+    val timeGroupedConversations: StateFlow<List<TimeGroup>> = combine(
+        _conversations, _sourceFilter
+    ) { convos, filter ->
         val filtered = convos.entries
-            .filter { !UiUtils.isGhostConversation(it.value) }
+            .filter { !UiUtils.isGhostConversation(it.value) && matchesSourceFilter(it.value, filter) }
             .sortedByDescending { it.value.get("lastModifiedTime")?.asString ?: "" }
             .map { it.key to it.value }
 
@@ -261,19 +291,32 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         }
     }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
-    /** Visible conversation count (excluding ghosts). */
-    val visibleConversationCount: StateFlow<Int> = _conversations.map { convos ->
-        convos.values.count { !UiUtils.isGhostConversation(it) }
+    /** Visible conversation count (excluding ghosts, respecting source filter). */
+    val visibleConversationCount: StateFlow<Int> = combine(
+        _conversations, _sourceFilter
+    ) { convos, filter ->
+        convos.values.count { summary ->
+            !UiUtils.isGhostConversation(summary) && matchesSourceFilter(summary, filter)
+        }
     }.stateIn(viewModelScope, SharingStarted.Lazily, 0)
 
-    /** Recent conversations (last 10, excluding ghosts). */
-    val recentConversations: StateFlow<List<Pair<String, JsonObject>>> = _conversations.map { convos ->
+    /** Recent conversations (last 10, excluding ghosts, respecting source filter). */
+    val recentConversations: StateFlow<List<Pair<String, JsonObject>>> = combine(
+        _conversations, _sourceFilter
+    ) { convos, filter ->
         convos.entries
-            .filter { !UiUtils.isGhostConversation(it.value) }
+            .filter { !UiUtils.isGhostConversation(it.value) && matchesSourceFilter(it.value, filter) }
             .sortedByDescending { it.value.get("lastModifiedTime")?.asString ?: "" }
             .take(10)
             .map { it.key to it.value }
     }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    /** Check if a conversation matches the current source filter. */
+    private fun matchesSourceFilter(summary: JsonObject, filter: String): Boolean {
+        if (filter == "all") return true
+        val source = summary.get("_source")?.asString ?: return filter == "all"
+        return source == filter
+    }
 
     /** Child conversations (subagents) of the currently selected conversation. */
     data class RelatedConversation(
@@ -386,6 +429,8 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     // ── Step tracking ──
     private var stepCount = 0
+    /** Base offset for raw steps array (avoids padding empty entries). */
+    private var rawStepsBaseOffset = 0
 
     /** Whether DataStore settings have been loaded (prevents race with UI connect). */
     private val _settingsLoaded = MutableStateFlow(false)
@@ -599,6 +644,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         _latestResponse.value = ""
         _currentConversationId.value = null
         stepCount = 0
+        rawStepsBaseOffset = 0
         PortaConnectionService.stop(getApplication())
     }
 
@@ -638,6 +684,19 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 if (markConnected || convos.isNotEmpty()) {
                     portaClient.markApiReachable()
                 }
+                // Also fetch available LS instances for filter/target UI
+                try {
+                    val instances = portaClient.fetchLSInstances()
+                    _lsInstances.value = instances.mapNotNull { json ->
+                        val pid = json.get("pid")?.asInt ?: return@mapNotNull null
+                        val subclient = json.get("subclientType")?.asString ?: "unknown"
+                        val appData = json.get("appDataDir")?.asString ?: "unknown"
+                        val wsId = json.get("workspaceId")?.asString
+                        LSInstanceInfo(pid, subclient, appData, wsId)
+                    }
+                } catch (_: Exception) {
+                    // Non-critical — keep old instances
+                }
             } catch (e: Exception) {
                 _statusMessage.value = "Failed: ${e.message}"
                 Log.e("BridgeVM", "loadConversations FAILED", e)
@@ -652,12 +711,16 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         portaClient.disconnectWebSocket()
         portaClient.resetRunningState()
 
+        // Ensure client is configured (e.g. when called before connect())
+        portaClient.configure(_host.value, _port.value, _authToken.value, _useTls.value)
+
         // Clear all conversation-specific state
         _currentConversationId.value = cascadeId
         _steps.value = emptyList()
         _rawSteps.value = emptyList()
         _latestResponse.value = ""
         stepCount = 0
+        rawStepsBaseOffset = 0
         
         // Clear notified steps and dismiss persistent approval notification
         notifiedSteps.clear()
@@ -671,7 +734,11 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                val cascadeId = portaClient.createConversation(workspaceUri)
+                val target = _selectedTarget.value
+                val cascadeId = portaClient.createConversation(
+                    workspaceUri = workspaceUri,
+                    targetSubclientType = target
+                )
                 loadConversations()
                 selectConversation(cascadeId)
             } catch (e: Exception) {
@@ -1135,19 +1202,30 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
             is PortaMessage.Ready -> {
                 stepCount = message.stepCount
                 _statusMessage.value = "Ready (${message.stepCount} steps)"
+                Log.d("BridgeVM", "WS Ready: stepCount=${message.stepCount} convo=${_currentConversationId.value?.take(8)}")
 
-                // Fetch full conversation history from step 0
+                // Fetch conversation history — limit to last 200 steps for large conversations
+                // to avoid huge payloads (e.g. 25MB for 2149 steps)
                 if (message.stepCount > 0) {
-                    portaClient.syncOffset(0)
+                    val maxHistorySteps = 200
+                    val fromOffset = if (message.stepCount > maxHistorySteps) {
+                        message.stepCount - maxHistorySteps
+                    } else {
+                        0
+                    }
+                    Log.d("BridgeVM", "Requesting history via syncOffset($fromOffset) (total=${message.stepCount})")
+                    portaClient.syncOffset(fromOffset)
 
-                    // Retry if steps don't arrive within 1.5s
+                    // Retry if steps don't arrive within 5s (large payloads can take 3+ seconds)
                     viewModelScope.launch {
-                        kotlinx.coroutines.delay(1500)
+                        kotlinx.coroutines.delay(5000)
                         if (_steps.value.isEmpty() && stepCount > 0) {
-                            Log.d("BridgeVM", "Steps not received after Ready, retrying sync(0)...")
-                            portaClient.syncOffset(0)
+                            Log.d("BridgeVM", "Steps not received after Ready, retrying syncOffset($fromOffset)...")
+                            portaClient.syncOffset(fromOffset)
                         }
                     }
+                } else {
+                    Log.d("BridgeVM", "New conversation (0 steps), no history to fetch")
                 }
             }
 
@@ -1177,14 +1255,23 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 _steps.value = currentSteps
 
                 // Merge raw JSON steps for chat messages
+                // Use relative indexing to avoid padding thousands of empty entries
                 val currentRaw = _rawSteps.value.toMutableList()
-                for ((i, json) in message.steps.withIndex()) {
-                    val idx = message.offset + i
-                    // Pad if needed
-                    while (currentRaw.size <= idx) currentRaw.add(JsonObject())
-                    currentRaw[idx] = json
+                if (currentRaw.isEmpty() && message.offset > 0) {
+                    // First batch with non-zero offset — store directly
+                    rawStepsBaseOffset = message.offset
+                    currentRaw.addAll(message.steps)
+                } else {
+                    for ((i, json) in message.steps.withIndex()) {
+                        val idx = message.offset + i - rawStepsBaseOffset
+                        if (idx < 0) continue // Skip steps before our base
+                        // Pad if needed (only small gaps)
+                        while (currentRaw.size <= idx) currentRaw.add(JsonObject())
+                        currentRaw[idx] = json
+                    }
                 }
                 _rawSteps.value = currentRaw
+                Log.d("BridgeVM", "Steps merged: rawSteps=${currentRaw.size} baseOffset=$rawStepsBaseOffset offset=${message.offset} incoming=${message.steps.size}")
 
                 // Update latest text response for HUD
                 val latestText = currentSteps

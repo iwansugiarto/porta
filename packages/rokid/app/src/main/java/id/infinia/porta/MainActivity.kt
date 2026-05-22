@@ -103,9 +103,11 @@ class MainActivity : ComponentActivity() {
                 var workspaceFilter by remember { mutableStateOf<String?>(null) }
 
                 // Navigate to the notified conversation (cold + warm start)
-                LaunchedEffect(pendingCascadeId) {
+                // Wait for settings to load first to avoid connecting with wrong host
+                val settingsReady by viewModel.settingsLoaded.collectAsState()
+                LaunchedEffect(pendingCascadeId, settingsReady) {
                     val cascadeId = pendingCascadeId
-                    if (cascadeId != null) {
+                    if (cascadeId != null && settingsReady) {
                         viewModel.selectConversation(cascadeId)
                         screen = "chat"
                         _pendingCascadeId.value = null  // consume
@@ -251,6 +253,7 @@ class MainActivity : ComponentActivity() {
                                     viewModel.loadConversations()
                                     screen = "home"
                                 },
+                                onOpenDrawer = { scope.launch { drawerState.open() } },
                                 sharedContent = sharedContent,
                                 onSharedContentConsumed = { _sharedContent.value = null }
                             )

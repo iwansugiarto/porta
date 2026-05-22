@@ -72,6 +72,7 @@ fun ChatScreen(
     viewModel: BridgeViewModel,
     onNavigateToSettings: () -> Unit,
     onNavigateToConversations: () -> Unit,
+    onOpenDrawer: () -> Unit = {},
     sharedContent: SharedContent? = null,
     onSharedContentConsumed: () -> Unit = {}
 ) {
@@ -223,33 +224,33 @@ fun ChatScreen(
         topBar = {
             TopAppBar(
                 navigationIcon = {
-                    IconButton(onClick = onNavigateToConversations) {
+                    IconButton(onClick = onOpenDrawer) {
                         Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Home"
+                            Icons.Default.Menu,
+                            contentDescription = "Menu"
                         )
                     }
                 },
                 title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        // Connection status dot
-                        Box(
-                            Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    when (connectionState) {
-                                        ConnectionState.CONNECTED -> PortaSuccess
-                                        ConnectionState.ERROR -> PortaError
-                                        ConnectionState.RECONNECTING -> PortaWarning
-                                        else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-                                    }
-                                )
-                        )
-                        Column(modifier = Modifier.weight(1f)) {
+                    Column {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            // Connection status dot
+                            Box(
+                                Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        when (connectionState) {
+                                            ConnectionState.CONNECTED -> PortaSuccess
+                                            ConnectionState.ERROR -> PortaError
+                                            ConnectionState.RECONNECTING -> PortaWarning
+                                            else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                                        }
+                                    )
+                            )
                             // Primary: workspace or fallback
                             Text(
                                 workspaceName ?: "Porta",
@@ -258,28 +259,28 @@ fun ChatScreen(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            // Secondary: connection status or conversation title
-                            val subtitleText = when (connectionState) {
-                                ConnectionState.CONNECTED -> conversationTitle
-                                ConnectionState.CONNECTING -> "Connecting…"
-                                ConnectionState.RECONNECTING -> "Reconnecting…"
-                                ConnectionState.DISCONNECTED -> "Disconnected"
-                                ConnectionState.ERROR -> "Connection error"
-                            }
-                            val subtitleColor = when (connectionState) {
-                                ConnectionState.CONNECTED -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                                ConnectionState.ERROR -> PortaError.copy(alpha = 0.7f)
-                                else -> PortaWarning.copy(alpha = 0.7f)
-                            }
-                            if (subtitleText != null) {
-                                Text(
-                                    subtitleText,
-                                    fontSize = 11.sp,
-                                    color = subtitleColor,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
+                        }
+                        // Secondary: connection status or conversation title
+                        val subtitleText = when (connectionState) {
+                            ConnectionState.CONNECTED -> conversationTitle
+                            ConnectionState.CONNECTING -> "Connecting…"
+                            ConnectionState.RECONNECTING -> "Reconnecting…"
+                            ConnectionState.DISCONNECTED -> "Disconnected"
+                            ConnectionState.ERROR -> "Connection error"
+                        }
+                        val subtitleColor = when (connectionState) {
+                            ConnectionState.CONNECTED -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                            ConnectionState.ERROR -> PortaError.copy(alpha = 0.7f)
+                            else -> PortaWarning.copy(alpha = 0.7f)
+                        }
+                        if (subtitleText != null) {
+                            Text(
+                                subtitleText,
+                                fontSize = 11.sp,
+                                color = subtitleColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
                 },

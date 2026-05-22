@@ -321,6 +321,16 @@ export function registerConversationRoutes(app: Hono): void {
         }
       }
 
+      // ── Annotate source (Hub/IDE) ──
+      // Tag each conversation with which LS client type owns it.
+      for (const [id, summary] of Object.entries(merged)) {
+        const owner = ownerMap.get(id);
+        if (owner) {
+          (summary as any)._source = owner.subclientType ?? "unknown";
+          (summary as any)._appDataDir = owner.appDataDir ?? "unknown";
+        }
+      }
+
       // Filter for share sessions: only return conversations for the share's workspace
       const shareSession = getShareSession(c);
       if (shareSession) {
@@ -470,17 +480,18 @@ export function registerConversationRoutes(app: Hono): void {
     try {
       const body = await c.req.json().catch(() => ({}));
       const metadata = await getMetadata(!!body.fileAccessGranted);
-
       let workspaceUri: string | undefined = body.workspaceFolderAbsoluteUri;
+      const targetSubclient: string | undefined = body.targetSubclientType;
 
-      // Resolve which LS instance to use based on workspace URI
+      // Resolve which LS instance to use based on workspace URI or target subclient
       let targetInstance: LSInstance | undefined;
       if (workspaceUri) {
         const wsId = normalizeWorkspaceId(uriToWorkspaceId(workspaceUri));
         const instances = await discovery.getInstances();
         targetInstance =
           instances.find(
-            (i) => i.workspaceId && normalizeWorkspaceId(i.workspaceId) === wsId,
+            (i) =>
+              i.workspaceId && normalizeWorkspaceId(i.workspaceId) === wsId,
           ) ?? undefined;
 
         // Workspace was explicitly requested but no LS owns it — fail clearly
@@ -490,6 +501,21 @@ export function registerConversationRoutes(app: Hono): void {
               error:
                 "No Language Server found for this workspace. Open the project in Antigravity first.",
               detail: workspaceUri,
+            },
+            503,
+          );
+        }
+      } else if (targetSubclient) {
+        // Client explicitly chose a target LS by subclient type ("hub" or "ide")
+        const instances = await discovery.getInstances();
+        targetInstance = instances.find(
+          (i) => i.subclientType === targetSubclient,
+        );
+        if (!targetInstance) {
+          return c.json(
+            {
+              error: `No Language Server found with subclient type "${targetSubclient}".`,
+              availableTypes: instances.map((i) => i.subclientType ?? "unknown"),
             },
             503,
           );

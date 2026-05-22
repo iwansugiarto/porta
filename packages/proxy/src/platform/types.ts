@@ -2,6 +2,8 @@ export interface ProcessDiscoveryCandidate {
   pid: number;
   csrfToken: string;
   workspaceId?: string;
+  appDataDir?: string;
+  subclientType?: string;
   httpsPort: number;
   httpPort: number;
   lspPort: number;

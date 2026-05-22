@@ -29,6 +29,10 @@ export interface LSInstance {
   lspPort: number;
   csrfToken: string;
   workspaceId?: string;
+  /** LS --app_data_dir flag (e.g. "antigravity", "antigravity-ide") */
+  appDataDir?: string;
+  /** LS --subclient_type flag (e.g. "hub", "ide") */
+  subclientType?: string;
   /** Derived from discovery source */
   source: "daemon" | "process";
 }
@@ -81,6 +85,8 @@ async function discoverFromProcess(): Promise<LSInstance[]> {
       pid: number;
       csrfToken: string;
       workspaceId?: string;
+      appDataDir?: string;
+      subclientType?: string;
       httpsPort: number;
       httpPort: number;
       lspPort: number;
@@ -97,6 +103,8 @@ async function discoverFromProcess(): Promise<LSInstance[]> {
           lspPort: candidate.lspPort,
           csrfToken: candidate.csrfToken,
           workspaceId: candidate.workspaceId,
+          appDataDir: candidate.appDataDir,
+          subclientType: candidate.subclientType,
           source: "process",
         });
       } else {
@@ -104,6 +112,8 @@ async function discoverFromProcess(): Promise<LSInstance[]> {
           pid: candidate.pid,
           csrfToken: candidate.csrfToken,
           workspaceId: candidate.workspaceId,
+          appDataDir: candidate.appDataDir,
+          subclientType: candidate.subclientType,
           httpsPort: 0,
           httpPort: candidate.httpPort,
           lspPort: candidate.lspPort,
@@ -132,6 +142,8 @@ async function discoverFromProcess(): Promise<LSInstance[]> {
             lspPort: pending.lspPort,
             csrfToken: pending.csrfToken,
             workspaceId: pending.workspaceId,
+            appDataDir: pending.appDataDir,
+            subclientType: pending.subclientType,
             source: "process",
           });
         }),
@@ -334,6 +346,12 @@ export async function discoverInstances(): Promise<LSInstance[]> {
       existing.csrfToken = existing.csrfToken || processInstance.csrfToken;
       if (!existing.workspaceId && processInstance.workspaceId) {
         existing.workspaceId = processInstance.workspaceId;
+      }
+      if (!existing.appDataDir && processInstance.appDataDir) {
+        existing.appDataDir = processInstance.appDataDir;
+      }
+      if (!existing.subclientType && processInstance.subclientType) {
+        existing.subclientType = processInstance.subclientType;
       }
     } else {
       instanceMap.set(processInstance.pid, processInstance);
