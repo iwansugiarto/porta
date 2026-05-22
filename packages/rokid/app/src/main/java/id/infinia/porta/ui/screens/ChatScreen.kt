@@ -119,6 +119,9 @@ fun ChatScreen(
     var inputExpanded by remember { mutableStateOf(false) }
     val haptic = LocalHapticFeedback.current
     val listState = rememberLazyListState()
+    val scrollScope = rememberCoroutineScope()
+    // When true, next message list update forces scroll to bottom
+    var forceScrollToBottom by remember { mutableStateOf(false) }
 
     // Model selector expanded state
     var modelDropdownOpen by remember { mutableStateOf(false) }
@@ -195,10 +198,11 @@ fun ChatScreen(
         }
     }
 
-    // Auto-scroll to bottom when new messages arrive — ONLY if user is near bottom
+    // Auto-scroll to bottom when new messages arrive — ONLY if user is near bottom OR just sent a message
     LaunchedEffect(chatMessages.size) {
-        if (chatMessages.isNotEmpty() && isNearBottom) {
+        if (chatMessages.isNotEmpty() && (isNearBottom || forceScrollToBottom)) {
             listState.animateScrollToItem(chatMessages.size - 1)
+            forceScrollToBottom = false
         }
     }
 
@@ -735,6 +739,7 @@ fun ChatScreen(
                                         )
                                         inputText = ""
                                         inputExpanded = false
+                                        forceScrollToBottom = true
                                         attachments.clear()
                                     }
                                 }
@@ -802,6 +807,7 @@ fun ChatScreen(
                                         )
                                         inputText = ""
                                         inputExpanded = false
+                                        forceScrollToBottom = true
                                         attachments.clear()
                                     }
                                 },
