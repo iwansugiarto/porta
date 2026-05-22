@@ -79,7 +79,6 @@ fun ConversationsScreen(
             map.getOrPut(name) { mutableListOf() }.add(id to summary)
         }
         map.entries
-            .filter { workspaceFilter != null || it.key != "Others" }
             .map { (name, convos) ->
                 convos.sortByDescending { it.second.get("lastModifiedTime")?.asString ?: "" }
                 WorkspaceGroup(
