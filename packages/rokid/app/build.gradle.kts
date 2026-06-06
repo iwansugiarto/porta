@@ -14,9 +14,18 @@ android {
         applicationId = "id.infinia.porta"
         minSdk = 28
         targetSdk = 35
-        versionCode = 79
-        versionName = "0.4.53"
+        versionCode = 84
+        versionName = "0.5.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Rokid CXR-L SDK credentials (from local.properties, never in VCS)
+        val localProps = rootProject.file("local.properties")
+        val props = Properties().apply {
+            if (localProps.exists()) load(localProps.reader())
+        }
+        buildConfigField("String", "ROKID_CLIENT_ID", "\"${props.getProperty("ROKID_CLIENT_ID", "")}\"")
+        buildConfigField("String", "ROKID_CLIENT_SECRET", "\"${props.getProperty("ROKID_CLIENT_SECRET", "")}\"")
+        buildConfigField("String", "ROKID_ACCESS_KEY", "\"${props.getProperty("ROKID_ACCESS_KEY", "")}\"")
     }
 
     signingConfigs {
@@ -101,6 +110,11 @@ dependencies {
     // Glance (home screen widget)
     implementation(libs.androidx.glance)
     implementation(libs.androidx.glance.material3)
+
+    // Rokid CXR-L SDK (from maven.rokid.com)
+    // Uses compileOnly so the build succeeds without the SDK artifact;
+    // RokidCXRLProvider checks class availability at runtime.
+    compileOnly("com.rokid.cxr:client-l:1.0.3")
 
     // Debug
     debugImplementation(libs.androidx.ui.tooling)
