@@ -5,6 +5,21 @@
  * Antigravity Language Server's dynamic Connect RPC endpoint.
  */
 
+// ── Global crash safety ──
+// Catch uncaught exceptions and unhandled rejections to log before dying.
+// This prevents silent crashes (e.g. OOM during JSON.parse) from killing
+// the proxy without any diagnostic output.
+process.on("uncaughtException", (err) => {
+  console.error(`[FATAL] Uncaught exception: ${err.message}`);
+  console.error(err.stack);
+  // Give time to flush logs, then exit (launchd KeepAlive will restart)
+  setTimeout(() => process.exit(1), 500);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error(`[WARN] Unhandled rejection: ${reason}`);
+});
+
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { createAdaptorServer } from "@hono/node-server";
@@ -16,6 +31,7 @@ import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerSearchRoutes } from "./routes/search.js";
 import { registerRpcPassthroughRoutes } from "./routes/rpcPassthrough.js";
+import { registerDashboardRoute } from "./dashboard.js";
 import {
   assertSupportedListenHost,
   formatListenAddress,
@@ -428,6 +444,7 @@ registerWorkspaceRoutes(app);
 registerFileRoutes(app);
 registerSearchRoutes(app);
 registerRpcPassthroughRoutes(app);
+registerDashboardRoute(app);
 
 // ── Start ──
 

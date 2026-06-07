@@ -137,12 +137,37 @@ export async function discoverOwnerInstance(
     conversationAffinity.set(cascadeId, wsId);
     // Only route to the LS that owns this workspace — never misroute
     const normalWsId = normalizeWorkspaceId(wsId);
-    const wsOwners = candidates.filter(
+    
+    // A candidate is valid if it belongs to this workspace OR is a global/hub LS (no workspaceId)
+    const validCandidates = candidates.filter(
+      (c) => !c.inst.workspaceId || normalizeWorkspaceId(c.inst.workspaceId) === normalWsId,
+    );
+
+    const wsOwners = validCandidates.filter(
       (c) => c.inst.workspaceId && normalizeWorkspaceId(c.inst.workspaceId) === normalWsId,
     );
-    if (wsOwners.length === 0) return null;
-    wsOwners.sort((a, b) => b.stepCount - a.stepCount);
-    return wsOwners[0].inst;
+    if (wsOwners.length > 0) {
+      wsOwners.sort((a, b) => b.stepCount - a.stepCount);
+      return wsOwners[0].inst;
+    }
+    // No LS reports a matching workspaceId (e.g. hub LS doesn't expose one).
+    // A RUNNING candidate is definitively the owner — safe for writes.
+    const running = validCandidates.find((c) => c.status === RUNNING_STATUS);
+    if (running) {
+      conversationAffinity.set(cascadeId, `_pid_${running.inst.pid}`);
+      return running.inst;
+    }
+    // Last resort: pick the candidate with the most steps (likely the real owner)
+    if (validCandidates.length > 0) {
+      validCandidates.sort((a, b) => b.stepCount - a.stepCount);
+      return validCandidates[0].inst;
+    }
+    return null;
+  }
+
+  // No workspace metadata. If not read-only, return null (prevent heuristic write routing)
+  if (!readOnly) {
+    return null;
   }
 
   // No workspace metadata. Use heuristics:
@@ -196,13 +221,24 @@ export async function resolveAndCall<T>(
   // Try the affinity LS first
   const wsId = conversationAffinity.get(cascadeId);
   if (wsId) {
-    const normalWsId = normalizeWorkspaceId(wsId);
-    const preferred = instances.find(
-      (i) => i.workspaceId && normalizeWorkspaceId(i.workspaceId) === normalWsId,
-    );
+    let preferred: LSInstance | undefined;
+
+    if (wsId.startsWith("_pid_")) {
+      // PID-based affinity (hub LS without workspaceId)
+      const pid = parseInt(wsId.slice(5), 10);
+      preferred = instances.find((i) => i.pid === pid);
+    } else {
+      // Workspace-based affinity
+      const normalWsId = normalizeWorkspaceId(wsId);
+      preferred = instances.find(
+        (i) => i.workspaceId && normalizeWorkspaceId(i.workspaceId) === normalWsId,
+      );
+    }
+
     if (preferred) {
       try {
         const data = await rpc.call<T>(method, body, preferred);
+        console.log(`[routing] Routed ${method} for ${cascadeId.slice(0, 8)} to LS PID ${preferred.pid} (affinity: ${wsId})`);
         return { data, instance: preferred };
       } catch (err) {
         if (
@@ -224,8 +260,21 @@ export async function resolveAndCall<T>(
   // for reads. Writes get null when workspace metadata is unavailable.
   const owner = await discoverOwnerInstance(cascadeId, instances, readOnly);
   if (owner) {
-    const data = await rpc.call<T>(method, body, owner);
-    return { data, instance: owner };
+    try {
+      const data = await rpc.call<T>(method, body, owner);
+      console.log(`[routing] Routed ${method} for ${cascadeId.slice(0, 8)} to discovered owner LS PID ${owner.pid} (workspace: ${owner.workspaceId ?? "global"})`);
+      return { data, instance: owner };
+    } catch (err) {
+      // Owner found but RPC failed — if readOnly, fall through to try-all
+      // instead of throwing. Handles LS inconsistency where list shows
+      // the conversation but detail/steps can't find it.
+      if (readOnly && err instanceof RPCError && err.code === "not_found") {
+        console.log(`[routing] ${method} on owner PID ${owner.pid} returned not_found, falling through to try-all`);
+        conversationAffinity.delete(cascadeId);
+      } else {
+        throw err;
+      }
+    }
   }
 
   // Fallback for read-only operations: conversation not in any LS's memory
@@ -266,6 +315,7 @@ export async function resolveAndCall<T>(
         if (a.isRunning !== b.isRunning) return a.isRunning ? -1 : 1;
         return b.stepCount - a.stepCount;
       });
+      console.log(`[routing] Routed ${method} for ${cascadeId.slice(0, 8)} to fallback LS PID ${results[0].instance.pid}`);
       return { data: results[0].data, instance: results[0].instance };
     }
     if (errors.length > 0) throw errors[0];

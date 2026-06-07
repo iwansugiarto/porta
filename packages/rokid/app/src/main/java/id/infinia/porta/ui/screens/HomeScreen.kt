@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -88,6 +89,44 @@ fun HomeScreen(
     val lsInstances by viewModel.lsInstances.collectAsState()
     val selectedTarget by viewModel.selectedTarget.collectAsState()
 
+    // Search state
+    var searchQuery by remember { mutableStateOf("") }
+    var isSearchActive by remember { mutableStateOf(false) }
+
+    // Dynamic filtering based on search query
+    val filteredTimeGroups = remember(timeGroups, searchQuery) {
+        if (searchQuery.isBlank()) {
+            timeGroups
+        } else {
+            timeGroups.mapNotNull { group ->
+                val matches = group.conversations.filter { entry ->
+                    val title = UiUtils.displayTitle(entry.second)
+                    title.contains(searchQuery, ignoreCase = true)
+                }
+                if (matches.isNotEmpty()) {
+                    group.copy(conversations = matches)
+                } else {
+                    null
+                }
+            }
+        }
+    }
+
+    val filteredRecentConvos = remember(recentConvos, searchQuery) {
+        if (searchQuery.isBlank()) {
+            recentConvos
+        } else {
+            recentConvos.filter { entry ->
+                val title = UiUtils.displayTitle(entry.second)
+                title.contains(searchQuery, ignoreCase = true)
+            }
+        }
+    }
+
+    val filteredCount = remember(filteredTimeGroups) {
+        filteredTimeGroups.sumOf { it.conversations.size }
+    }
+
     // Workspace picker state
     var showWorkspacePicker by remember { mutableStateOf(false) }
     // LS target picker state
@@ -105,56 +144,101 @@ fun HomeScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            "Porta",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 22.sp
+                    if (isSearchActive) {
+                        TextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            placeholder = {
+                                Text(
+                                    "Search conversations...",
+                                    fontSize = 16.sp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                )
+                            },
+                            singleLine = true,
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
+                                disabledContainerColor = Color.Transparent,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent,
+                                cursorColor = PortaPrimary
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                            textStyle = LocalTextStyle.current.copy(fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
                         )
-                        // Animated connection indicator
-                        val indicatorColor = when (connectionState) {
-                            id.infinia.porta.shared.protocol.ConnectionState.CONNECTED -> PortaSuccess
-                            id.infinia.porta.shared.protocol.ConnectionState.CONNECTING,
-                            id.infinia.porta.shared.protocol.ConnectionState.RECONNECTING -> PortaWarning
-                            else -> PortaError
-                        }
-                        val isConnecting = connectionState == id.infinia.porta.shared.protocol.ConnectionState.CONNECTING ||
-                            connectionState == id.infinia.porta.shared.protocol.ConnectionState.RECONNECTING
-                        val pulseAlpha = if (isConnecting) {
-                            val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-                            val alpha by infiniteTransition.animateFloat(
-                                initialValue = 0.3f,
-                                targetValue = 1f,
-                                animationSpec = infiniteRepeatable(
-                                    animation = tween(800, easing = FastOutSlowInEasing),
-                                    repeatMode = RepeatMode.Reverse
-                                ),
-                                label = "pulseAlpha"
+                    } else {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                "Porta",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 22.sp
                             )
-                            alpha
-                        } else 1f
-                        Box(
-                            Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(indicatorColor.copy(alpha = pulseAlpha))
-                        )
+                            // Animated connection indicator
+                            val indicatorColor = when (connectionState) {
+                                id.infinia.porta.shared.protocol.ConnectionState.CONNECTED -> PortaSuccess
+                                id.infinia.porta.shared.protocol.ConnectionState.CONNECTING,
+                                id.infinia.porta.shared.protocol.ConnectionState.RECONNECTING -> PortaWarning
+                                else -> PortaError
+                            }
+                            val isConnecting = connectionState == id.infinia.porta.shared.protocol.ConnectionState.CONNECTING ||
+                                connectionState == id.infinia.porta.shared.protocol.ConnectionState.RECONNECTING
+                            val pulseAlpha = if (isConnecting) {
+                                val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+                                val alpha by infiniteTransition.animateFloat(
+                                    initialValue = 0.3f,
+                                    targetValue = 1f,
+                                    animationSpec = infiniteRepeatable(
+                                        animation = tween(800, easing = FastOutSlowInEasing),
+                                        repeatMode = RepeatMode.Reverse
+                                    ),
+                                    label = "pulseAlpha"
+                                )
+                                alpha
+                            } else 1f
+                            Box(
+                                Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(indicatorColor.copy(alpha = pulseAlpha))
+                            )
+                        }
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onOpenDrawer) {
-                        Icon(Icons.Default.Menu, contentDescription = "Menu")
+                    if (isSearchActive) {
+                        IconButton(onClick = {
+                            isSearchActive = false
+                            searchQuery = ""
+                        }) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        }
+                    } else {
+                        IconButton(onClick = onOpenDrawer) {
+                            Icon(Icons.Default.Menu, contentDescription = "Menu")
+                        }
                     }
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.loadConversations() }) {
-                        Icon(Icons.Default.Refresh, "Refresh")
-                    }
-                    IconButton(onClick = onNavigateToSettings) {
-                        Icon(Icons.Default.Settings, "Settings")
+                    if (isSearchActive) {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Default.Clear, "Clear")
+                            }
+                        }
+                    } else {
+                        IconButton(onClick = { isSearchActive = true }) {
+                            Icon(Icons.Default.Search, "Search")
+                        }
+                        IconButton(onClick = { viewModel.loadConversations() }) {
+                            Icon(Icons.Default.Refresh, "Refresh")
+                        }
+                        IconButton(onClick = onNavigateToSettings) {
+                            Icon(Icons.Default.Settings, "Settings")
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -237,6 +321,36 @@ fun HomeScreen(
                         )
                     }
                 }
+            } else if (filteredCount == 0 && searchQuery.isNotEmpty() && !isLoading) {
+                // Empty search state
+                Box(
+                    Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.padding(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Search, null,
+                            modifier = Modifier.size(64.dp),
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                        )
+                        Text(
+                            "No results for \"$searchQuery\"",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                        )
+                        Text(
+                            "Check the spelling or try searching for another conversation.",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
             } else {
                 LazyColumn(
                     Modifier.fillMaxSize(),
@@ -262,7 +376,7 @@ fun HomeScreen(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                "$visibleCount conversations",
+                                if (searchQuery.isNotEmpty()) "$filteredCount matches" else "$visibleCount conversations",
                                 fontSize = 13.sp,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                             )
@@ -281,7 +395,7 @@ fun HomeScreen(
                     }
 
                     // ── Recent conversations carousel ──
-                    if (recentConvos.isNotEmpty()) {
+                    if (filteredRecentConvos.isNotEmpty()) {
                         item(key = "recent-header") {
                             Row(
                                 modifier = Modifier
@@ -309,7 +423,7 @@ fun HomeScreen(
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 items(
-                                    recentConvos,
+                                    filteredRecentConvos,
                                     key = { it.first }
                                 ) { (id, summary) ->
                                     RecentConvoCard(
@@ -323,7 +437,7 @@ fun HomeScreen(
                     }
 
                     // ── Time-grouped conversation timeline ──
-                    for (group in timeGroups) {
+                    for (group in filteredTimeGroups) {
                         // Section header
                         item(key = "section-${group.label}") {
                             Row(

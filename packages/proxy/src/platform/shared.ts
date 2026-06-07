@@ -11,8 +11,19 @@ function escapeRegExp(value: string): string {
 }
 
 function parseExecutable(args: string): string | undefined {
-  const match = args.match(/^(?:"([^"]+)"|'([^']+)'|(\S+))(?:\s|$)/);
-  return match?.[1] ?? match?.[2] ?? match?.[3];
+  // Try quoted paths first (handles paths with spaces in quotes)
+  const quoted = args.match(/^(?:"([^"]+)"|'([^']+)')(?:\s|$)/);
+  if (quoted) return quoted[1] ?? quoted[2];
+  // For unquoted paths that may contain spaces (e.g.
+  // "/Applications/Antigravity IDE.app/.../language_server_macos_arm --csrf_token ..."),
+  // find the executable boundary by locating the first "--" flag.
+  const flagIdx = args.search(/\s--\w/);
+  if (flagIdx > 0) {
+    return args.slice(0, flagIdx).trim();
+  }
+  // Fallback: first non-whitespace token (no spaces in path)
+  const simple = args.match(/^(\S+)(?:\s|$)/);
+  return simple?.[1];
 }
 
 export function isLanguageServerExecutable(value: string): boolean {

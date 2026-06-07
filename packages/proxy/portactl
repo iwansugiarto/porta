@@ -1,0 +1,321 @@
+#!/bin/bash
+#
+# portactl — Porta Proxy Controller
+#
+# Usage:
+#   portactl start       Start the proxy
+#   portactl stop        Stop the proxy
+#   portactl restart     Restart the proxy
+#   portactl status      Show running status
+#   portactl logs        Tail the proxy logs
+#   portactl install     Install launchd auto-start (login item)
+#   portactl uninstall   Remove launchd auto-start
+#   portactl dashboard   Open dashboard in browser
+#
+
+set -euo pipefail
+
+# ── Config ──
+PORTA_DIR="/Volumes/980PRO/Users/iwan/porta"
+PROXY_DIR="$PORTA_DIR/packages/proxy"
+PLIST_LABEL="id.infinia.porta.proxy"
+PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist"
+LOG_DIR="$HOME/.porta"
+LOG_FILE="$LOG_DIR/proxy.log"
+ERR_FILE="$LOG_DIR/proxy.err"
+PID_FILE="$LOG_DIR/proxy.pid"
+ENV_FILE="$PORTA_DIR/.env"
+
+# Resolve port from .env or default
+PORT="${PORTA_PORT:-3170}"
+if [[ -f "$ENV_FILE" ]]; then
+  _port=$(grep -E "^PORTA_PORT=" "$ENV_FILE" 2>/dev/null | cut -d= -f2 | tr -d '"' || true)
+  [[ -n "$_port" ]] && PORT="$_port"
+fi
+
+# Resolve host
+HOST="${PORTA_HOST:-}"
+if [[ -f "$ENV_FILE" ]]; then
+  _host=$(grep -E "^PORTA_HOST=" "$ENV_FILE" 2>/dev/null | cut -d= -f2 | tr -d '"' || true)
+  [[ -n "$_host" ]] && HOST="$_host"
+fi
+HOST="${HOST:-127.0.0.1}"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+BOLD='\033[1m'
+
+log()  { echo -e "${GREEN}✓${NC} $*"; }
+warn() { echo -e "${YELLOW}⚠${NC} $*"; }
+err()  { echo -e "${RED}✗${NC} $*" >&2; }
+info() { echo -e "${CYAN}→${NC} $*"; }
+
+# ── Helpers ──
+
+find_proxy_pid() {
+  lsof -sTCP:LISTEN -ti:"$PORT" 2>/dev/null | head -1 || true
+}
+
+is_running() {
+  local pid
+  pid=$(find_proxy_pid)
+  [[ -n "$pid" ]]
+}
+
+wait_for_start() {
+  local retries=15
+  while (( retries > 0 )); do
+    if curl -sf "http://${HOST}:${PORT}/api/health" > /dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    ((retries--))
+  done
+  return 1
+}
+
+# ── Commands ──
+
+cmd_start() {
+  if is_running; then
+    local pid
+    pid=$(find_proxy_pid)
+    warn "Proxy already running (PID $pid) on port $PORT"
+    return 0
+  fi
+
+  info "Starting Porta proxy..."
+  mkdir -p "$LOG_DIR"
+
+  # Use node with tsx to run the proxy
+  cd "$PROXY_DIR"
+  
+  if [[ -f "$ENV_FILE" ]]; then
+    nohup node --max-old-space-size=512 --env-file="$ENV_FILE" \
+      node_modules/tsx/dist/cli.mjs src/index.ts \
+      >> "$LOG_FILE" 2>> "$ERR_FILE" &
+  else
+    nohup node --max-old-space-size=512 \
+      node_modules/tsx/dist/cli.mjs src/index.ts \
+      >> "$LOG_FILE" 2>> "$ERR_FILE" &
+  fi
+
+  local bg_pid=$!
+  echo "$bg_pid" > "$PID_FILE"
+
+  if wait_for_start; then
+    local actual_pid
+    actual_pid=$(find_proxy_pid)
+    log "Proxy started (PID ${actual_pid}) on http://${HOST}:${PORT}"
+    log "Dashboard: http://${HOST}:${PORT}/dashboard"
+  else
+    err "Proxy failed to start. Check logs: $ERR_FILE"
+    return 1
+  fi
+}
+
+cmd_stop() {
+  local pid
+  pid=$(find_proxy_pid)
+
+  if [[ -z "$pid" ]]; then
+    warn "Proxy not running"
+    return 0
+  fi
+
+  info "Stopping proxy (PID $pid)..."
+  kill "$pid" 2>/dev/null || true
+
+  # Wait for graceful shutdown
+  local retries=10
+  while (( retries > 0 )); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.5
+    ((retries--))
+  done
+
+  # Force kill if still running
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+
+  rm -f "$PID_FILE"
+  log "Proxy stopped"
+}
+
+cmd_restart() {
+  cmd_stop
+  sleep 1
+  cmd_start
+}
+
+cmd_status() {
+  echo -e "${BOLD}Porta Proxy Status${NC}"
+  echo "─────────────────────────"
+
+  local pid
+  pid=$(find_proxy_pid)
+
+  if [[ -n "$pid" ]]; then
+    echo -e "Status:    ${GREEN}● Running${NC}"
+    echo -e "PID:       $pid"
+    echo -e "Port:      $PORT"
+    echo -e "Host:      $HOST"
+    echo -e "Dashboard: http://${HOST}:${PORT}/dashboard"
+    
+    # Try to get health info
+    local health
+    health=$(curl -sf "http://${HOST}:${PORT}/api/health" 2>/dev/null || echo "")
+    if [[ -n "$health" ]]; then
+      local uptime ls_count mem
+      uptime=$(echo "$health" | python3 -c "import sys,json; d=json.load(sys.stdin); s=int(d['proxy']['uptime']); print(f'{s//3600}h {(s%3600)//60}m {s%60}s')" 2>/dev/null || echo "?")
+      ls_count=$(echo "$health" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['languageServers']))" 2>/dev/null || echo "?")
+      mem=$(echo "$health" | python3 -c "import sys,json; print(f\"{json.load(sys.stdin)['proxy']['memory']['rss']/1024/1024:.1f} MB\")" 2>/dev/null || echo "?")
+      echo -e "Uptime:    $uptime"
+      echo -e "Memory:    $mem"
+      echo -e "LS:        $ls_count instance(s)"
+    fi
+  else
+    echo -e "Status:    ${RED}● Stopped${NC}"
+    echo -e "Port:      $PORT"
+  fi
+
+  echo ""
+  echo -e "Log:       $LOG_FILE"
+  echo -e "Errors:    $ERR_FILE"
+
+  # Launchd status
+  if [[ -f "$PLIST_PATH" ]]; then
+    echo -e "Auto-start: ${GREEN}enabled${NC} (launchd)"
+  else
+    echo -e "Auto-start: ${YELLOW}disabled${NC}"
+  fi
+}
+
+cmd_logs() {
+  if [[ ! -f "$LOG_FILE" ]]; then
+    warn "No log file found at $LOG_FILE"
+    return 0
+  fi
+  info "Tailing $LOG_FILE (Ctrl+C to stop)"
+  tail -f "$LOG_FILE"
+}
+
+cmd_install() {
+  info "Installing launchd auto-start..."
+  mkdir -p "$(dirname "$PLIST_PATH")"
+  mkdir -p "$LOG_DIR"
+
+  cat > "$PLIST_PATH" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${PLIST_LABEL}</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>cd ${PROXY_DIR}; set -a; source ../../.env 2>/dev/null; set +a; exec /opt/homebrew/bin/node --max-old-space-size=512 node_modules/tsx/dist/cli.mjs src/index.ts</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>${PROXY_DIR}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>${HOME}</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>${LOG_FILE}</string>
+
+    <key>StandardErrorPath</key>
+    <string>${ERR_FILE}</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
+EOF
+
+  # Load the launch agent
+  launchctl unload "$PLIST_PATH" 2>/dev/null || true
+  launchctl load -w "$PLIST_PATH"
+
+  log "Launchd agent installed"
+  log "Proxy will auto-start on login and auto-restart on crash"
+  info "Manage with: launchctl start/stop $PLIST_LABEL"
+}
+
+cmd_uninstall() {
+  if [[ ! -f "$PLIST_PATH" ]]; then
+    warn "Launchd agent not installed"
+    return 0
+  fi
+
+  info "Removing launchd auto-start..."
+  launchctl unload "$PLIST_PATH" 2>/dev/null || true
+  rm -f "$PLIST_PATH"
+  log "Launchd agent removed"
+}
+
+cmd_dashboard() {
+  if ! is_running; then
+    warn "Proxy not running. Start with: portactl start"
+    return 1
+  fi
+  open "http://${HOST}:${PORT}/dashboard"
+  log "Dashboard opened in browser"
+}
+
+# ── Main ──
+
+case "${1:-}" in
+  start)     cmd_start ;;
+  stop)      cmd_stop ;;
+  restart)   cmd_restart ;;
+  status)    cmd_status ;;
+  logs)      cmd_logs ;;
+  install)   cmd_install ;;
+  uninstall) cmd_uninstall ;;
+  dashboard) cmd_dashboard ;;
+  *)
+    echo -e "${BOLD}portactl${NC} — Porta Proxy Controller"
+    echo ""
+    echo "Usage: portactl <command>"
+    echo ""
+    echo "Commands:"
+    echo "  start       Start the proxy server"
+    echo "  stop        Stop the proxy server"
+    echo "  restart     Restart the proxy server"
+    echo "  status      Show proxy status & health"
+    echo "  logs        Tail proxy logs"
+    echo "  install     Enable auto-start on login (launchd)"
+    echo "  uninstall   Disable auto-start"
+    echo "  dashboard   Open web dashboard in browser"
+    ;;
+esac

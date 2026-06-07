@@ -6,12 +6,10 @@ import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const CONVERSATIONS_DIR = join(
-  homedir(),
-  ".gemini",
-  "antigravity",
-  "conversations",
-);
+const CONVERSATIONS_DIRS = [
+  join(homedir(), ".gemini", "antigravity", "conversations"),
+  join(homedir(), ".gemini", "antigravity-ide", "conversations"),
+];
 
 /**
  * Whether the server-side auto-approve setting is enabled.
@@ -57,21 +55,29 @@ export async function getMetadata(
 export async function scanDiskConversations(): Promise<
   { id: string; mtime: string }[]
 > {
-  try {
-    const files = await readdir(CONVERSATIONS_DIR);
-    const results: { id: string; mtime: string }[] = [];
-    for (const file of files) {
-      if (!file.endsWith(".pb")) continue;
-      const id = file.replace(".pb", "");
-      try {
-        const s = await stat(join(CONVERSATIONS_DIR, file));
-        results.push({ id, mtime: s.mtime.toISOString() });
-      } catch {
-        results.push({ id, mtime: new Date().toISOString() });
+  const results: { id: string; mtime: string }[] = [];
+  const seen = new Set<string>();
+
+  for (const dir of CONVERSATIONS_DIRS) {
+    try {
+      const files = await readdir(dir);
+      for (const file of files) {
+        if (!file.endsWith(".pb")) continue;
+        const id = file.replace(".pb", "");
+        if (seen.has(id)) continue; // Avoid duplicates if same .pb in both dirs
+        seen.add(id);
+        try {
+          const s = await stat(join(dir, file));
+          results.push({ id, mtime: s.mtime.toISOString() });
+        } catch {
+          results.push({ id, mtime: new Date().toISOString() });
+        }
       }
+    } catch {
+      // Directory missing or unreadable — skip
     }
-    return results;
-  } catch {
-    return [];
   }
+
+  return results;
 }
+

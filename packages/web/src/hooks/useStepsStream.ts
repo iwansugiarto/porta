@@ -482,7 +482,13 @@ export function useStepsStream(
   // ── Web Notifications ──
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const enabled = localStorage.getItem("porta:notifications-enabled") === "true";
+    let enabled = false;
+    try {
+      enabled = typeof window.localStorage !== "undefined" &&
+        window.localStorage.getItem("porta:notifications-enabled") === "true";
+    } catch {
+      // localStorage may be unavailable or restricted (e.g., in some test environments or private browsing)
+    }
     if (!enabled) return;
 
     const permission = getNotificationPermission();

@@ -18,6 +18,9 @@ import {
 
 const SERVICE_PREFIX = "exa.language_server_pb.LanguageServerService";
 
+/** Maximum response body size (100 MB) — reject before JSON.parse to avoid OOM. */
+const MAX_RESPONSE_BYTES = 100 * 1024 * 1024;
+
 /** Errors indicating we tried TLS on a plaintext port. */
 export function isTlsProtocolError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
@@ -246,7 +249,17 @@ export class RPCClient {
 
       const req = httpsRequest(opts, (res) => {
         const chunks: Buffer[] = [];
+        let totalBytes = 0;
         res.on("data", (chunk: Buffer) => {
+          totalBytes += chunk.length;
+          if (totalBytes > MAX_RESPONSE_BYTES) {
+            res.destroy();
+            reject(new RPCError(
+              `Response too large (${(totalBytes / 1024 / 1024).toFixed(1)} MB) for ${method} — aborting to prevent OOM`,
+              "resource_exhausted",
+            ));
+            return;
+          }
           chunks.push(chunk);
         });
         res.on("end", () => {
@@ -283,7 +296,17 @@ export class RPCClient {
 
       const req = httpRequest(opts, (res) => {
         const chunks: Buffer[] = [];
+        let totalBytes = 0;
         res.on("data", (chunk: Buffer) => {
+          totalBytes += chunk.length;
+          if (totalBytes > MAX_RESPONSE_BYTES) {
+            res.destroy();
+            reject(new RPCError(
+              `Response too large (${(totalBytes / 1024 / 1024).toFixed(1)} MB) for ${method} — aborting to prevent OOM`,
+              "resource_exhausted",
+            ));
+            return;
+          }
           chunks.push(chunk);
         });
         res.on("end", () => {

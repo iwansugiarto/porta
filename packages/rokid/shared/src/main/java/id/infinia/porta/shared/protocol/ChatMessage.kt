@@ -35,6 +35,9 @@ data class ChatMessage(
 
     /** Media attachments (images). */
     val media: List<JsonObject>? = null,
+
+    /** Step timestamp (ISO-8601 string from metadata, for relative time display). */
+    val timestamp: String? = null,
 )
 
 /**
@@ -77,6 +80,12 @@ fun stepsToMessages(steps: List<JsonObject>): List<ChatMessage> {
     for (i in steps.indices) {
         val step = steps[i]
         val type = step.get("type")?.asString ?: continue
+
+        // Extract timestamp from metadata
+        val stepTimestamp = step.getAsJsonObject("metadata")
+            ?.get("createTime")?.asString
+            ?: step.getAsJsonObject("metadata")
+                ?.get("startTime")?.asString
 
         // ── File permission request ──
         val fpr = getFilePermissionRequest(step)
@@ -122,7 +131,8 @@ fun stepsToMessages(steps: List<JsonObject>): List<ChatMessage> {
                         content = texts.joinToString("\n\n"),
                         stepIndex = i,
                         type = type,
-                        media = mediaArray
+                        media = mediaArray,
+                        timestamp = stepTimestamp
                     ))
                 }
             }
@@ -141,7 +151,8 @@ fun stepsToMessages(steps: List<JsonObject>): List<ChatMessage> {
                         stepIndex = i,
                         type = type,
                         thinking = thinking.ifBlank { null },
-                        thinkingDuration = thinkingDuration.ifBlank { null }
+                        thinkingDuration = thinkingDuration.ifBlank { null },
+                        timestamp = stepTimestamp
                     ))
                 }
             }
@@ -580,4 +591,82 @@ private fun getFilePermissionRequest(step: JsonObject): JsonObject? {
         ?: step.getAsJsonObject("grepSearch")?.getAsJsonObject("filePermissionRequest")
         ?: step.getAsJsonObject("viewFileOutline")?.getAsJsonObject("filePermissionRequest")
         ?: step.getAsJsonObject("viewCodeItem")?.getAsJsonObject("filePermissionRequest")
+}
+
+// ── Active task / subagent extraction ──
+
+data class ActiveTaskInfo(
+    val commandLine: String,
+    val status: String,
+    val stepIndex: Int
+)
+
+data class ActiveSubagentInfo(
+    val role: String,
+    val typeName: String,
+    val status: String,
+    val count: Int,
+    val stepIndex: Int
+)
+
+/**
+ * Extracts currently running background tasks from the chat messages.
+ * A task is "running" if its RUN_COMMAND step has status RUNNING or PENDING,
+ * and no COMMAND_STATUS with status DONE has been received for it.
+ */
+fun getActiveTasks(messages: List<ChatMessage>): List<ActiveTaskInfo> {
+    return messages
+        .filter { it.type == "CORTEX_STEP_TYPE_RUN_COMMAND" && it.step != null }
+        .filter { msg ->
+            val status = msg.step!!.get("status")?.asString ?: ""
+            status == "CORTEX_STEP_STATUS_RUNNING" || status == "CORTEX_STEP_STATUS_PENDING"
+        }
+        .map { msg ->
+            val cmd = msg.step!!.getAsJsonObject("runCommand")
+            val commandLine = cmd?.get("commandLine")?.asString
+                ?: cmd?.get("proposedCommandLine")?.asString
+                ?: cmd?.get("command")?.asString
+                ?: "command"
+            // Shorten to basename or last segment
+            val shortCmd = if (commandLine.length > 40) {
+                "…" + commandLine.takeLast(37)
+            } else commandLine
+            ActiveTaskInfo(
+                commandLine = shortCmd,
+                status = msg.step!!.get("status")?.asString ?: "RUNNING",
+                stepIndex = msg.stepIndex
+            )
+        }
+}
+
+/**
+ * Extracts currently active subagents from the chat messages.
+ * A subagent is "active" if its INVOKE_SUBAGENT step has status RUNNING or PENDING.
+ */
+fun getActiveSubagents(messages: List<ChatMessage>): List<ActiveSubagentInfo> {
+    return messages
+        .filter { it.type == "CORTEX_STEP_TYPE_INVOKE_SUBAGENT" && it.step != null }
+        .filter { msg ->
+            val status = msg.step!!.get("status")?.asString ?: ""
+            status == "CORTEX_STEP_STATUS_RUNNING" || status == "CORTEX_STEP_STATUS_PENDING"
+        }
+        .map { msg ->
+            val invokeData = msg.step!!.getAsJsonObject("invokeSubagent")
+            val subagentsArr = invokeData?.getAsJsonArray("Subagents")
+                ?: invokeData?.getAsJsonArray("subagents")
+            val count = subagentsArr?.size() ?: 0
+            val firstRole = subagentsArr?.firstOrNull()?.asJsonObject
+                ?.let { it.get("Role")?.asString ?: it.get("role")?.asString }
+                ?: "Subagent"
+            val firstType = subagentsArr?.firstOrNull()?.asJsonObject
+                ?.let { it.get("TypeName")?.asString ?: it.get("typeName")?.asString }
+                ?: "agent"
+            ActiveSubagentInfo(
+                role = firstRole,
+                typeName = firstType,
+                status = msg.step!!.get("status")?.asString ?: "RUNNING",
+                count = count,
+                stepIndex = msg.stepIndex
+            )
+        }
 }

@@ -29,6 +29,8 @@ import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +51,8 @@ import id.infinia.porta.SharedContent
 import id.infinia.porta.shared.protocol.*
 import id.infinia.porta.ui.UiUtils
 import id.infinia.porta.ui.components.MessageBubble
+import id.infinia.porta.ui.components.ActiveTasksBar
+import id.infinia.porta.ui.components.SearchSheet
 import id.infinia.porta.ui.theme.*
 import id.infinia.porta.viewmodel.BridgeViewModel
 import java.io.ByteArrayOutputStream
@@ -97,6 +101,10 @@ fun ChatScreen(
     val defaultModel by viewModel.defaultModel.collectAsState()
     val plannerType by viewModel.plannerType.collectAsState()
 
+    // Offline queue state
+    val pendingOffline by viewModel.offlineQueue.pendingMessages.collectAsState()
+    val offlineCount = pendingOffline.size
+
     // Derive workspace name and conversation title from active conversation
     val activeConvoSummary = currentConversationId?.let { conversations[it] }
     val workspaceName = remember(activeConvoSummary) {
@@ -125,6 +133,8 @@ fun ChatScreen(
 
     // Model selector expanded state
     var modelDropdownOpen by remember { mutableStateOf(false) }
+    // Search sheet state
+    var showSearchSheet by remember { mutableStateOf(false) }
 
     // ── Attachment state ──
     data class Attachment(
@@ -209,10 +219,17 @@ fun ChatScreen(
     // Scroll to bottom when switching conversations
     LaunchedEffect(currentConversationId) {
         if (currentConversationId != null) {
-            snapshotFlow { chatMessages.size }
-                .filter { it > 0 }
-                .first()
-            listState.scrollToItem(chatMessages.size - 1)
+            // Wait for debounce and state clearing to propagate
+            kotlinx.coroutines.delay(100)
+            if (chatMessages.isNotEmpty()) {
+                listState.scrollToItem(chatMessages.size - 1)
+            } else {
+                // Wait for history to load if it was cleared/empty
+                snapshotFlow { chatMessages.size }
+                    .filter { it > 0 }
+                    .first()
+                listState.scrollToItem(chatMessages.size - 1)
+            }
         }
     }
 
@@ -289,6 +306,13 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    // Search button
+                    IconButton(onClick = { showSearchSheet = true }) {
+                        Icon(
+                            Icons.Default.Search, "Search",
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
                     // TTS toggle
                     IconButton(onClick = { viewModel.toggleTts() }) {
                         Icon(
@@ -314,6 +338,36 @@ fun ChatScreen(
                                 modifier = Modifier.size(18.dp)
                             )
                         }
+                    }
+                    // Share / export conversation
+                    IconButton(onClick = {
+                        val title = conversationTitle ?: "Conversation"
+                        val msgs = chatMessages
+                        if (msgs.isNotEmpty()) {
+                            val sb = StringBuilder()
+                            sb.appendLine("# $title\n")
+                            msgs.forEach { msg ->
+                                when (msg.role) {
+                                    "user" -> sb.appendLine("**User:** ${msg.content}\n")
+                                    "assistant" -> sb.appendLine("**Assistant:** ${msg.content}\n")
+                                    "system" -> if (msg.content.isNotBlank()) sb.appendLine("_${msg.content}_\n")
+                                }
+                            }
+                            val shareIntent = android.content.Intent().apply {
+                                action = android.content.Intent.ACTION_SEND
+                                putExtra(android.content.Intent.EXTRA_TEXT, sb.toString())
+                                putExtra(android.content.Intent.EXTRA_SUBJECT, title)
+                                type = "text/plain"
+                            }
+                            context.startActivity(
+                                android.content.Intent.createChooser(shareIntent, "Share conversation")
+                            )
+                        }
+                    }) {
+                        Icon(
+                            Icons.Default.Share, "Share",
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
                     }
                     IconButton(onClick = onNavigateToSettings) {
                         Icon(Icons.Default.Settings, "Settings")
@@ -918,6 +972,53 @@ fun ChatScreen(
                 }
             }
 
+            // ── Offline queue banner ──
+            AnimatedVisibility(
+                visible = offlineCount > 0,
+                enter = slideInVertically() + fadeIn(),
+                exit = slideOutVertically() + fadeOut()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(PortaWarning.copy(alpha = 0.12f))
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        Icons.Default.CloudOff,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = PortaWarning
+                    )
+                    Text(
+                        "$offlineCount message${if (offlineCount != 1) "s" else ""} queued offline",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = PortaWarning
+                    )
+                    Spacer(Modifier.weight(1f))
+                    if (connectionState == ConnectionState.CONNECTED) {
+                        Text(
+                            "Sending…",
+                            fontSize = 11.sp,
+                            color = PortaWarning.copy(alpha = 0.7f)
+                        )
+                    }
+                    // Discard button
+                    Text(
+                        "Discard",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = PortaError,
+                        modifier = Modifier
+                            .clickable { viewModel.clearOfflineQueue() }
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+
             // ── Related Conversations banner ──
             // Parent conversation link (when viewing a child/subagent)
             parentConversation?.let { parent ->
@@ -1044,7 +1145,29 @@ fun ChatScreen(
                 }
             }
 
+            // ── Active Tasks / Subagents Bar ──
+            ActiveTasksBar(chatMessages = chatMessages)
+
             // Chat messages with scroll-to-bottom FAB
+            val pullRefreshState = rememberPullToRefreshState()
+            var isRefreshing by remember { mutableStateOf(false) }
+
+            LaunchedEffect(chatMessages.size) {
+                // Stop refreshing when new messages arrive
+                if (isRefreshing && chatMessages.isNotEmpty()) {
+                    isRefreshing = false
+                }
+            }
+
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = {
+                    isRefreshing = true
+                    viewModel.refreshCurrentConversation()
+                },
+                state = pullRefreshState,
+                modifier = Modifier.fillMaxSize()
+            ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 if (chatMessages.isEmpty() && !agentRunning) {
                     // Empty state with branded illustration + suggestion chips
@@ -1275,6 +1398,16 @@ fun ChatScreen(
                     }
                 }
             }
+            } // PullToRefreshBox
         }
+    }
+
+    // ── Search bottom sheet ──
+    if (showSearchSheet) {
+        SearchSheet(
+            viewModel = viewModel,
+            onSelectConversation = { /* already handled inside SearchSheet */ },
+            onDismiss = { showSearchSheet = false }
+        )
     }
 }

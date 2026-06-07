@@ -28,7 +28,8 @@ class OfflineMessageQueue(context: Context) {
         val model: String? = null,
         val planner: String? = null,
         val media: List<Map<String, String>>? = null,
-        val timestamp: Long = System.currentTimeMillis()
+        val timestamp: Long = System.currentTimeMillis(),
+        val retryCount: Int = 0
     )
 
     private val gson = Gson()
@@ -89,6 +90,39 @@ class OfflineMessageQueue(context: Context) {
         mutex.withLock {
             _pendingMessages.value = emptyList()
             saveToDisk(emptyList())
+        }
+    }
+
+    /**
+     * Increment retry count for a message. Returns new count.
+     */
+    suspend fun incrementRetry(messageId: String): Int {
+        mutex.withLock {
+            val updated = _pendingMessages.value.map {
+                if (it.id == messageId) it.copy(retryCount = it.retryCount + 1)
+                else it
+            }
+            _pendingMessages.value = updated
+            saveToDisk(updated)
+            return updated.find { it.id == messageId }?.retryCount ?: 0
+        }
+    }
+
+    /**
+     * Drop messages that exceeded max retries or are too old (> 1 hour).
+     * Returns number of dropped messages.
+     */
+    suspend fun dropStale(maxRetries: Int = 3, maxAgeMs: Long = 3_600_000): Int {
+        mutex.withLock {
+            val now = System.currentTimeMillis()
+            val (keep, drop) = _pendingMessages.value.partition {
+                it.retryCount < maxRetries && (now - it.timestamp) < maxAgeMs
+            }
+            if (drop.isNotEmpty()) {
+                _pendingMessages.value = keep
+                saveToDisk(keep)
+            }
+            return drop.size
         }
     }
 

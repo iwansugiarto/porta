@@ -104,6 +104,7 @@ export interface TrajectoryStep {
   invokeSubagent?: InvokeSubagentData;
   /** File permission request can appear on any tool step */
   filePermissionRequest?: FilePermissionRequest;
+  requestedInteraction?: any;
 }
 
 export interface PlannerResponseData {

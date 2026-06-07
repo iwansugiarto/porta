@@ -16,6 +16,9 @@
     <!-- Microphone (for voice input) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- USB Host for Rokid AR glasses detection -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+
     <!-- Keep screen on during active session -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
@@ -34,6 +37,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.PortaRokid"
+        android:usesCleartextTraffic="true"
         tools:targetApi="35">
 
         <activity
@@ -67,6 +71,14 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="image/*" />
             </intent-filter>
+
+            <!-- Auto-launch when Rokid glasses are plugged in via USB -->
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/rokid_usb_device_filter" />
         </activity>
 
         <provider

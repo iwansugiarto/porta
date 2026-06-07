@@ -679,29 +679,41 @@ export function setupWebSocket(
 
       const onConnect = async () => {
         let status = "";
-        try {
-          const data = (await rpcForConversation(
-            "GetCascadeTrajectory",
-            cascadeId,
-            { cascadeId },
-            undefined,
-            true,
-          )) as { numTotalSteps?: number; status?: string };
+        let total = 0;
 
-          const total = data.numTotalSteps ?? 0;
-          status = data.status ?? "";
-          lastStepCount = total;
+        // Try up to 2 times — the LS may need time to load conversation from disk
+        for (let attempt = 0; attempt < 2; attempt++) {
+          if (destroyed || ws.readyState !== WebSocket.OPEN) return;
+          if (attempt > 0) {
+            console.log(`[ws:${shortId}] retry GetCascadeTrajectory (attempt ${attempt + 1})`);
+            await new Promise((r) => setTimeout(r, 2000));
+            if (destroyed || ws.readyState !== WebSocket.OPEN) return;
+          }
 
-          if (ws.readyState === WebSocket.OPEN) {
-            console.log(
-              `[ws:${shortId}] ready stepCount=${total} status=${status}`,
-            );
-            ws.send(JSON.stringify({ type: "ready", stepCount: total }));
+          try {
+            const data = (await rpcForConversation(
+              "GetCascadeTrajectory",
+              cascadeId,
+              { cascadeId },
+              undefined,
+              true,
+            )) as { numTotalSteps?: number; status?: string };
+
+            total = data.numTotalSteps ?? 0;
+            status = data.status ?? "";
+            break; // RPC succeeded, no need to retry
+          } catch (err) {
+            console.error(`[ws:${shortId}] GetCascadeTrajectory failed: ${err instanceof Error ? err.message : err}`);
           }
-        } catch {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "ready", stepCount: 0 }));
-          }
+        }
+
+        lastStepCount = total;
+
+        if (ws.readyState === WebSocket.OPEN) {
+          console.log(
+            `[ws:${shortId}] ready stepCount=${total} status=${status}`,
+          );
+          ws.send(JSON.stringify({ type: "ready", stepCount: total }));
         }
 
         if (status === "CASCADE_RUN_STATUS_RUNNING") {

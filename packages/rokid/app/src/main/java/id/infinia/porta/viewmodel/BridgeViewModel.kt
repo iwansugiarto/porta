@@ -530,8 +530,12 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
         // Listen to incoming WebSocket messages
         viewModelScope.launch {
-            portaClient.incomingMessages.collect { message ->
-                handleIncomingMessage(message)
+            portaClient.incomingMessages.collect { (cascadeId, message) ->
+                if (cascadeId == _currentConversationId.value) {
+                    handleIncomingMessage(message)
+                } else {
+                    Log.d("BridgeVM", "Discarding stale WS message for conversation $cascadeId (current is ${_currentConversationId.value})")
+                }
             }
         }
 
@@ -701,6 +705,56 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     // ── Conversations ──
 
+    // ── Search ──
+
+    private val _searchResults = MutableStateFlow<List<SearchResult>>(emptyList())
+    val searchResults: StateFlow<List<SearchResult>> = _searchResults.asStateFlow()
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+    private val _isSearching = MutableStateFlow(false)
+    val isSearching: StateFlow<Boolean> = _isSearching.asStateFlow()
+
+    data class SearchResult(
+        val id: String,
+        val title: String,
+        val snippets: List<String>,
+        val matchCount: Int
+    )
+
+    fun searchConversations(query: String) {
+        _searchQuery.value = query
+        if (query.isBlank()) {
+            _searchResults.value = emptyList()
+            return
+        }
+        viewModelScope.launch {
+            _isSearching.value = true
+            try {
+                val response = portaClient.searchConversations(query)
+                val results = response.getAsJsonArray("results")?.map { el ->
+                    val obj = el.asJsonObject
+                    SearchResult(
+                        id = obj.get("id")?.asString ?: "",
+                        title = obj.get("title")?.asString ?: "",
+                        snippets = obj.getAsJsonArray("snippets")?.map { it.asString } ?: emptyList(),
+                        matchCount = obj.get("matchCount")?.asInt ?: 0
+                    )
+                } ?: emptyList()
+                _searchResults.value = results
+            } catch (e: Exception) {
+                Log.e("BridgeVM", "Search failed: ${e.message}")
+                _searchResults.value = emptyList()
+            } finally {
+                _isSearching.value = false
+            }
+        }
+    }
+
+    fun clearSearch() {
+        _searchQuery.value = ""
+        _searchResults.value = emptyList()
+    }
+
     fun loadConversations(markConnected: Boolean = false) {
         viewModelScope.launch {
             _isLoading.value = true
@@ -710,6 +764,10 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 _conversations.value = convos
                 _statusMessage.value = "Loaded ${convos.size} conversations"
                 Log.d("BridgeVM", "loadConversations: success, ${convos.size} conversations")
+                
+                // Auto-sync active project with the current conversation context
+                syncActiveProjectWithCurrentConversation()
+
                 // Mark API as reachable so HomeScreen shows connected indicator
                 if (markConnected || convos.isNotEmpty()) {
                     portaClient.markApiReachable()
@@ -736,6 +794,27 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun syncActiveProjectWithCurrentConversation() {
+        val cascadeId = _currentConversationId.value ?: return
+        val summary = _conversations.value[cascadeId] ?: return
+        val workspaceName = UiUtils.extractWorkspaceName(summary)
+        if (workspaceName != "Others") {
+            val matchedProject = _projects.value.find { project ->
+                UiUtils.normalizeTitle(project.title) == UiUtils.normalizeTitle(workspaceName)
+            }
+            if (matchedProject != null) {
+                if (_activeProjectId.value != matchedProject.id) {
+                    Log.d("BridgeVM", "syncActiveProjectWithCurrentConversation: Auto-switching active project to ${matchedProject.title} (id=${matchedProject.id})")
+                    setActiveProjectId(matchedProject.id)
+                }
+            } else {
+                Log.d("BridgeVM", "syncActiveProjectWithCurrentConversation: Workspace folder '$workspaceName' doesn't match any project. Creating new project.")
+                val newProj = createProject(workspaceName, ProjectStatus.IN_PROGRESS)
+                setActiveProjectId(newProj.id)
+            }
+        }
+    }
+
     fun selectConversation(cascadeId: String) {
         // Disconnect old WS first to prevent stale steps bleeding through
         portaClient.disconnectWebSocket()
@@ -757,8 +836,26 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         notifiedSteps.clear()
         notificationService.dismissApproval()
 
+        // Auto-sync active project with the current conversation context immediately
+        syncActiveProjectWithCurrentConversation()
+
         // Connect to new conversation
         portaClient.connectWebSocket(cascadeId)
+
+        // Fetch conversations list in background to populate drawer/workspaces if not loaded yet
+        if (_conversations.value.isEmpty()) {
+            loadConversations()
+        }
+    }
+
+    /**
+     * Refresh current conversation — reconnects WS and reloads conversations list.
+     * Called by pull-to-refresh.
+     */
+    fun refreshCurrentConversation() {
+        val cascadeId = _currentConversationId.value ?: return
+        loadConversations()
+        selectConversation(cascadeId)
     }
 
     fun createNewConversation(workspaceUri: String? = null) {
@@ -823,6 +920,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 _statusMessage.value = "Sending..."
                 portaClient.sendMessage(cascadeId, text, activeModel, activePlanner, media)
                 _statusMessage.value = "Message sent"
+                forwardThinkingToGlasses()
                 Log.d("BridgeVM", "sendMessage: success")
             } catch (e: Exception) {
                 Log.e("BridgeVM", "sendMessage failed: ${e.message}")
@@ -843,9 +941,27 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     // ── Offline queue drain ──
 
+    /**
+     * Clear all offline queued messages (user-initiated discard).
+     */
+    fun clearOfflineQueue() {
+        viewModelScope.launch {
+            offlineQueue.clear()
+            _statusMessage.value = "Queued messages discarded"
+        }
+    }
+
     private fun drainOfflineQueue() {
         if (offlineQueue.size == 0) return
         viewModelScope.launch {
+            // First drop stale messages (>3 retries or >1 hour old)
+            val dropped = offlineQueue.dropStale()
+            if (dropped > 0) {
+                _statusMessage.value = "Dropped $dropped stale queued message(s)"
+                Log.w("BridgeVM", "Dropped $dropped stale offline messages")
+            }
+            if (offlineQueue.size == 0) return@launch
+
             val pending = offlineQueue.drainAll()
             _statusMessage.value = "Sending ${pending.size} queued message(s)..."
             for (msg in pending) {
@@ -855,7 +971,13 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                     )
                     offlineQueue.dequeue(msg.id)
                 } catch (e: Exception) {
-                    _statusMessage.value = "Queue drain failed: ${e.message}"
+                    val retries = offlineQueue.incrementRetry(msg.id)
+                    Log.w("BridgeVM", "Queue send failed (retry $retries): ${e.message}")
+                    if (retries >= 3) {
+                        offlineQueue.dequeue(msg.id)
+                        Log.w("BridgeVM", "Dropped message after $retries retries: ${msg.id}")
+                    }
+                    _statusMessage.value = "Queue send failed (retry $retries/3)"
                     break // Stop draining on first failure; will retry on next reconnect
                 }
             }
@@ -1200,6 +1322,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     fun setGlassesProvider(providerId: String, persist: Boolean = true) {
         _glassesProvider.destroy()
         _glassesProvider = when (providerId) {
+            "usb_display" -> UsbGlassesProvider()
             "rokid_cxrl" -> RokidCXRLProvider()
             else -> MockGlassesProvider()
         }
@@ -1237,9 +1360,40 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun forwardToGlasses(text: String) {
-        if (_autoForwardToGlasses.value && _glassesProvider.state.value == GlassesState.SCENE_ACTIVE) {
+        if (!_autoForwardToGlasses.value) return
+
+        // Method 1: Direct display (USB Presentation / CXR-L CustomView)
+        if (_glassesProvider.state.value == GlassesState.SCENE_ACTIVE) {
             _glassesProvider.displayText("Porta", text)
         }
+
+        // Method 2: Notification mirroring (works with Rokid Relay / built-in mirror)
+        // Always send when auto-forward is on — Rokid mirrors notifications to glasses
+        val cascadeId = _currentConversationId.value ?: ""
+        notificationService.showGlassesResponse(
+            response = text,
+            cascadeId = cascadeId,
+            title = "Porta AI"
+        )
+    }
+
+    /** Show "thinking" indicator on glasses when agent starts processing */
+    fun forwardThinkingToGlasses() {
+        if (!_autoForwardToGlasses.value) return
+
+        // Direct display
+        if (_glassesProvider.state.value == GlassesState.SCENE_ACTIVE) {
+            val provider = _glassesProvider
+            if (provider is UsbGlassesProvider) {
+                provider.showThinking()
+            } else {
+                provider.displayText("Porta", "⏳ Thinking...")
+            }
+        }
+
+        // Notification-based thinking indicator
+        val cascadeId = _currentConversationId.value ?: ""
+        notificationService.showGlassesThinking(cascadeId)
     }
 
     // ── WebSocket message handling ──
@@ -1272,7 +1426,45 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     }
                 } else {
-                    Log.d("BridgeVM", "New conversation (0 steps), no history to fetch")
+                    // WS returned stepCount=0 — check if conversation list knows better
+                    // (happens when LS hasn't loaded conversation from disk yet)
+                    val cascadeId = _currentConversationId.value
+                    val knownSteps = cascadeId?.let { id ->
+                        _conversations.value[id]?.get("stepCount")?.asInt
+                    } ?: 0
+
+                    if (knownSteps > 0 && cascadeId != null) {
+                        Log.d("BridgeVM", "WS returned 0 steps but list shows $knownSteps — fetching via HTTP fallback")
+                        viewModelScope.launch {
+                            try {
+                                val result = portaClient.fetchSteps(cascadeId, 200)
+                                val fetchedSteps = result.getAsJsonArray("steps") ?: com.google.gson.JsonArray()
+                                val serverStepCount = result.get("stepCount")?.asInt ?: 0
+                                val offset = result.get("offset")?.asInt ?: 0
+
+                                if (fetchedSteps.size() > 0) {
+                                    Log.d("BridgeVM", "HTTP fallback got ${fetchedSteps.size()} steps (offset=$offset total=$serverStepCount)")
+                                    stepCount = serverStepCount
+
+                                    // Process steps the same way as WS Steps message
+                                    val newSteps = fetchedSteps.mapIndexed { i, json ->
+                                        AgentStep.fromJson(offset + i, json.asJsonObject)
+                                    }
+                                    _steps.value = newSteps.sortedBy { it.index }
+
+                                    // Also set raw steps for chat messages
+                                    rawStepsBaseOffset = offset
+                                    _rawSteps.value = fetchedSteps.map { it.asJsonObject }
+
+                                    _statusMessage.value = "Loaded $serverStepCount steps (HTTP)"
+                                }
+                            } catch (e: Exception) {
+                                Log.w("BridgeVM", "HTTP steps fallback failed: ${e.message}")
+                            }
+                        }
+                    } else {
+                        Log.d("BridgeVM", "New conversation (0 steps), no history to fetch")
+                    }
                 }
             }
 

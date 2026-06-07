@@ -37,40 +37,48 @@ export interface LSInstance {
   source: "daemon" | "process";
 }
 
-const DAEMON_DIR = join(homedir(), ".gemini", "antigravity", "daemon");
+const DAEMON_DIRS = [
+  join(homedir(), ".gemini", "antigravity", "daemon"),
+  join(homedir(), ".gemini", "antigravity-ide", "daemon"),
+];
 const SERVICE_PREFIX = "exa.language_server_pb.LanguageServerService";
 
 async function discoverFromDaemon(): Promise<LSInstance[]> {
   const instances: LSInstance[] = [];
+  const seenPids = new Set<number>();
 
-  try {
-    const files = await readdir(DAEMON_DIR);
-    const lsFiles = files.filter(
-      (file) => file.startsWith("ls_") && file.endsWith(".json"),
-    );
+  for (const daemonDir of DAEMON_DIRS) {
+    try {
+      const files = await readdir(daemonDir);
+      const lsFiles = files.filter(
+        (file) => file.startsWith("ls_") && file.endsWith(".json"),
+      );
 
-    for (const file of lsFiles) {
-      try {
-        const raw = await readFile(join(DAEMON_DIR, file), "utf-8");
-        const data = JSON.parse(raw);
+      for (const file of lsFiles) {
+        try {
+          const raw = await readFile(join(daemonDir, file), "utf-8");
+          const data = JSON.parse(raw);
 
-        if (!data.pid || !data.httpsPort || !data.csrfToken) continue;
-        if (!(await platformAdapter.isPidAlive(data.pid))) continue;
+          if (!data.pid || !data.httpsPort || !data.csrfToken) continue;
+          if (seenPids.has(data.pid)) continue; // Dedupe across dirs
+          if (!(await platformAdapter.isPidAlive(data.pid))) continue;
 
-        instances.push({
-          pid: data.pid,
-          httpsPort: data.httpsPort,
-          httpPort: data.httpPort ?? 0,
-          lspPort: data.lspPort ?? 0,
-          csrfToken: data.csrfToken,
-          source: "daemon",
-        });
-      } catch {
-        // Skip malformed files
+          seenPids.add(data.pid);
+          instances.push({
+            pid: data.pid,
+            httpsPort: data.httpsPort,
+            httpPort: data.httpPort ?? 0,
+            lspPort: data.lspPort ?? 0,
+            csrfToken: data.csrfToken,
+            source: "daemon",
+          });
+        } catch {
+          // Skip malformed files
+        }
       }
+    } catch {
+      // Daemon dir missing or unreadable
     }
-  } catch {
-    // Daemon dir missing or unreadable
   }
 
   return instances;

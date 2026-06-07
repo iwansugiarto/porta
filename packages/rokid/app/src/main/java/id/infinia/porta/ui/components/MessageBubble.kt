@@ -2,6 +2,7 @@ package id.infinia.porta.ui.components
 
 import android.graphics.BitmapFactory
 import android.util.Base64
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -9,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -21,7 +23,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -146,6 +150,18 @@ private fun UserBubble(message: ChatMessage) {
                         modifier = Modifier.padding(top = 4.dp)
                     )
                 }
+                // Timestamp
+                message.timestamp?.let { ts ->
+                    val relative = formatRelativeTime(ts)
+                    if (relative.isNotEmpty()) {
+                        Text(
+                            relative,
+                            fontSize = 9.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                }
             }
         }
     }
@@ -252,6 +268,19 @@ private fun AssistantBubble(
                     color = PortaSuccess,
                     modifier = Modifier.padding(start = 4.dp, top = 2.dp)
                 )
+            }
+
+            // Timestamp
+            message.timestamp?.let { ts ->
+                val relative = formatRelativeTime(ts)
+                if (relative.isNotEmpty()) {
+                    Text(
+                        relative,
+                        fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f),
+                        modifier = Modifier.padding(start = 4.dp, top = 1.dp)
+                    )
+                }
             }
         }
 
@@ -417,6 +446,7 @@ private fun SystemCard(
         "CORTEX_STEP_TYPE_FILE_PERMISSION" -> FilePermissionCard(message, onApprovePermission)
         "ASK_QUESTION" -> QuestionCard(message, onAnswerQuestion)
         "CORTEX_STEP_TYPE_INVOKE_SUBAGENT" -> SubagentCard(message)
+        "CORTEX_STEP_TYPE_GENERATE_IMAGE" -> GeneratedImageCard(message)
         else -> InfoCard(message)
     }
 }
@@ -453,10 +483,15 @@ private fun CommandCard(
         ?.getAsJsonObject("sourceTrajectoryStepInfo")
         ?.get("stepIndex")?.asInt ?: 0
 
+    val isRunningCmd = stepData.get("status")?.asString?.let {
+        it == "CORTEX_STEP_STATUS_RUNNING" || it == "CORTEX_STEP_STATUS_PENDING"
+    } ?: false
+
     val statusColor = when {
         isWaiting && !responded -> PortaWarning
         responded && approvalChoice == "approved" -> PortaSuccess
         responded && approvalChoice == "rejected" -> PortaError
+        isRunningCmd -> PortaTertiary
         exitCode == null -> PortaTertiary
         exitCode == 0 -> PortaSuccess
         else -> PortaError
@@ -476,6 +511,25 @@ private fun CommandCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
+                // Pulsing dot for running commands
+                if (isRunningCmd) {
+                    val infiniteTransition = rememberInfiniteTransition(label = "cmdPulse")
+                    val alpha by infiniteTransition.animateFloat(
+                        initialValue = 1f,
+                        targetValue = 0.3f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(800, easing = EaseInOutSine),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "cmdPulseAlpha"
+                    )
+                    Box(
+                        Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(PortaTertiary.copy(alpha = alpha))
+                    )
+                }
                 Icon(Icons.Default.Terminal, null, Modifier.size(13.dp), tint = statusColor)
                 Text(
                     "$ $commandLine",
@@ -486,7 +540,13 @@ private fun CommandCard(
                     modifier = Modifier.weight(1f),
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.9f)
                 )
-                if (exitCode != null) {
+                if (isRunningCmd) {
+                    Text(
+                        "running",
+                        fontSize = 10.sp,
+                        color = PortaTertiary.copy(alpha = 0.7f)
+                    )
+                } else if (exitCode != null) {
                     Text(
                         if (exitCode == 0) "✓" else "✗ $exitCode",
                         fontSize = 11.sp,
@@ -614,16 +674,32 @@ private fun CodeActionCard(message: ChatMessage) {
 
     val toolName = stepData2.getAsJsonObject("metadata")
         ?.getAsJsonObject("toolCall")?.get("name")?.asString ?: ""
-    val icon = when (toolName) {
-        "write_to_file" -> Icons.Default.Add
-        "multi_replace_file_content", "replace_file_content" -> Icons.Default.Edit
+
+    // ── Artifact detection ──
+    val toolArgs = stepData2.getAsJsonObject("metadata")
+        ?.getAsJsonObject("toolCall")?.getAsJsonObject("arguments")
+    val isArtifact = toolArgs?.get("IsArtifact")?.asBoolean
+        ?: toolArgs?.get("isArtifact")?.asBoolean ?: false
+    val artifactMeta = toolArgs?.getAsJsonObject("ArtifactMetadata")
+        ?: toolArgs?.getAsJsonObject("artifactMetadata")
+    val artifactType = artifactMeta?.get("ArtifactType")?.asString
+        ?: artifactMeta?.get("artifactType")?.asString
+    val artifactSummary = artifactMeta?.get("Summary")?.asString
+        ?: artifactMeta?.get("summary")?.asString
+
+    val icon = when {
+        isArtifact -> Icons.Default.Description
+        toolName == "write_to_file" -> Icons.Default.Add
+        toolName == "multi_replace_file_content" || toolName == "replace_file_content" -> Icons.Default.Edit
         else -> Icons.Default.Description
     }
+
+    val accentAmber = Color(0xFFFBBF24)
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = hasDiff) { expanded = !expanded },
+            .clickable(enabled = hasDiff || isArtifact) { expanded = !expanded },
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
     ) {
@@ -632,19 +708,58 @@ private fun CodeActionCard(message: ChatMessage) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Icon(icon, null, Modifier.size(13.dp), tint = PortaTertiary)
+                Icon(icon, null, Modifier.size(13.dp),
+                    tint = if (isArtifact) accentAmber else PortaTertiary)
+
+                // Artifact badge
+                if (isArtifact) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = accentAmber.copy(alpha = 0.15f)
+                    ) {
+                        Text(
+                            "ARTIFACT",
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = accentAmber,
+                            letterSpacing = 0.5.sp,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                        )
+                    }
+                }
+
                 // Diff stats
-                Text("+$additions", fontSize = 11.sp, color = PortaSuccess, fontWeight = FontWeight.Bold)
-                Text("-$deletions", fontSize = 11.sp, color = PortaError, fontWeight = FontWeight.Bold)
+                if (!isArtifact) {
+                    Text("+$additions", fontSize = 11.sp, color = PortaSuccess, fontWeight = FontWeight.Bold)
+                    Text("-$deletions", fontSize = 11.sp, color = PortaError, fontWeight = FontWeight.Bold)
+                }
                 if (fileName.isNotEmpty()) {
                     Text(
                         fileName, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
-                        color = PortaTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        color = if (isArtifact) accentAmber else PortaTertiary,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
                 }
+
+                // Artifact type badge
+                if (isArtifact && artifactType != null) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Text(
+                            artifactType.replace("_", " "),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                        )
+                    }
+                }
+
                 Spacer(Modifier.weight(1f))
-                if (hasDiff) {
+                if (hasDiff || isArtifact) {
                     Icon(
                         if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                         null, Modifier.size(14.dp),
@@ -656,8 +771,35 @@ private fun CodeActionCard(message: ChatMessage) {
             Text(
                 description, fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                maxLines = 1, overflow = TextOverflow.Ellipsis
+                maxLines = if (isArtifact) 2 else 1, overflow = TextOverflow.Ellipsis
             )
+
+            // Artifact summary (expanded)
+            if (expanded && isArtifact && !artifactSummary.isNullOrBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(6.dp),
+                    color = accentAmber.copy(alpha = 0.04f)
+                ) {
+                    Column(modifier = Modifier.padding(8.dp)) {
+                        Text(
+                            "Summary",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = accentAmber.copy(alpha = 0.7f),
+                            letterSpacing = 0.5.sp
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            artifactSummary,
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+            }
 
             // Expanded diff view
             if (expanded && hasDiff && diffLines != null) {
@@ -787,6 +929,111 @@ private fun FilePermissionCard(
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = PortaSuccess)
                     ) { Text("Allow Conv.", fontSize = 11.sp) }
+                }
+            }
+        }
+    }
+}
+
+// ── Generated Image Card ──
+
+@Composable
+private fun GeneratedImageCard(message: ChatMessage) {
+    val step = message.step ?: return
+    val gi = step.getAsJsonObject("generateImage") ?: return
+    val prompt = gi.get("prompt")?.asString ?: ""
+    val imageName = gi.get("imageName")?.asString ?: gi.get("ImageName")?.asString ?: "image"
+    var expanded by remember { mutableStateOf(false) }
+
+    val accentGreen = Color(0xFF34D399)
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = !expanded },
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = accentGreen.copy(alpha = 0.06f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Image icon with gradient background
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(
+                                    Color(0xFF6366F1),
+                                    Color(0xFF8B5CF6),
+                                    Color(0xFFEC4899)
+                                )
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.Image,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = Color.White
+                    )
+                }
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Generated: $imageName",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "🎨 AI-generated image",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    )
+                }
+
+                // Expand chevron
+                Icon(
+                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    null, Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                )
+            }
+
+            // Expanded: show prompt
+            if (expanded && prompt.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)
+                ) {
+                    Column(modifier = Modifier.padding(8.dp)) {
+                        Text(
+                            "Prompt",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                            letterSpacing = 0.5.sp
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            prompt,
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                        )
+                    }
                 }
             }
         }
@@ -1108,20 +1355,42 @@ private fun SubagentCard(message: ChatMessage) {
 
                 // Status indicator
                 if (isRunning) {
-                    // Compact text spinner indicator
-                    Text(
-                        "⟳",
-                        fontSize = 12.sp,
-                        color = accentPurple,
-                        modifier = Modifier.padding(end = 2.dp)
+                    // Animated spinning indicator
+                    val infiniteTransition = rememberInfiniteTransition(label = "subagentSpin")
+                    val rotation by infiniteTransition.animateFloat(
+                        initialValue = 0f,
+                        targetValue = 360f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(1200, easing = LinearEasing)
+                        ),
+                        label = "subagentSpinRotation"
+                    )
+                    val pulseAlpha by infiniteTransition.animateFloat(
+                        initialValue = 1f,
+                        targetValue = 0.4f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(800, easing = EaseInOutSine),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "subagentPulse"
+                    )
+                    Icon(
+                        Icons.Default.Sync,
+                        contentDescription = "Running",
+                        modifier = Modifier
+                            .size(14.dp)
+                            .rotate(rotation)
+                            .padding(end = 2.dp),
+                        tint = accentPurple.copy(alpha = pulseAlpha)
                     )
                 } else if (isDone) {
-                    Text(
-                        "✓",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = PortaSuccess,
-                        modifier = Modifier.padding(end = 2.dp)
+                    Icon(
+                        Icons.Default.CheckCircle,
+                        contentDescription = "Done",
+                        modifier = Modifier
+                            .size(14.dp)
+                            .padding(end = 2.dp),
+                        tint = PortaSuccess
                     )
                 }
 
@@ -1228,4 +1497,35 @@ private fun buildAnnotationFeedback(
     }
 
     return sb.toString().trim()
+}
+
+/**
+ * Format an ISO-8601 timestamp string as relative time (e.g. "2m ago", "1h ago").
+ * Returns empty string if parsing fails.
+ */
+private fun formatRelativeTime(isoTimestamp: String): String {
+    return try {
+        val instant = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            java.time.Instant.parse(isoTimestamp).toEpochMilli()
+        } else {
+            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US)
+            sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+            sdf.parse(isoTimestamp.replace(Regex("\\.[0-9]+Z$"), "Z").replace("Z", ""))?.time
+                ?: return ""
+        }
+
+        val now = System.currentTimeMillis()
+        val diff = now - instant
+        when {
+            diff < 0 -> ""
+            diff < 60_000 -> "just now"
+            diff < 3_600_000 -> "${diff / 60_000}m ago"
+            diff < 86_400_000 -> "${diff / 3_600_000}h ago"
+            diff < 604_800_000 -> "${diff / 86_400_000}d ago"
+            else -> {
+                val sdf = java.text.SimpleDateFormat("MMM d", java.util.Locale.US)
+                sdf.format(java.util.Date(instant))
+            }
+        }
+    } catch (_: Exception) { "" }
 }

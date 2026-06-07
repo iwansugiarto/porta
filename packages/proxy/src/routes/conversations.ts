@@ -116,15 +116,12 @@ export function registerConversationRoutes(app: Hono): void {
       const merged: Record<string, Record<string, unknown>> = {};
       const ownerMap = new Map<string, LSInstance>();
 
-      // Build normalized set of workspaceIds served by running LS instances.
-      // Normalization handles format differences between CLI --workspace_id
-      // (e.g. file_e_3A_Work_novels) and URI-derived IDs (e.g. file_E:_Work_novels).
-      const knownWsIds = new Set(
-        instances
-          .map((i) => i.workspaceId)
-          .filter(Boolean)
-          .map((id) => normalizeWorkspaceId(id!)),
-      );
+      // Optional workspace filter: clients can pass ?workspaceId= to get
+      // only conversations for a specific workspace (e.g. Android project view).
+      const filterWsId = c.req.query("workspaceId");
+      const filterNormalized = filterWsId
+        ? normalizeWorkspaceId(filterWsId)
+        : undefined;
 
       await Promise.allSettled(
         instances.map(async (inst) => {
@@ -134,19 +131,18 @@ export function registerConversationRoutes(app: Hono): void {
             }>("GetAllCascadeTrajectories", {}, inst);
             const summaries = data.trajectorySummaries ?? {};
             for (const [id, summary] of Object.entries(summaries)) {
-              // Skip conversations whose workspace isn't served by any running LS
+              // Optional workspace filter: skip conversations not in the requested workspace
               const workspaces = summary.workspaces as
                 | { workspaceFolderAbsoluteUri?: string }[]
                 | undefined;
               const wsUri = workspaces?.[0]?.workspaceFolderAbsoluteUri;
-              if (wsUri && !knownWsIds.has(normalizeWorkspaceId(uriToWorkspaceId(wsUri)))) continue;
-
-              // NOTE: We intentionally do NOT inject the LS's workspace URI
-              // into conversations that lack one. With warm-up loading .pb
-              // files onto all LSes, the loading LS is not necessarily the
-              // owner. Instead, we rely on the .pb itself containing the
-              // correct workspace metadata — once warm-up loads it, the LS
-              // returns it with genuine metadata on the next poll cycle.
+              if (filterNormalized && wsUri) {
+                const convWsId = normalizeWorkspaceId(uriToWorkspaceId(wsUri));
+                if (convWsId !== filterNormalized) continue;
+              } else if (filterNormalized && !wsUri) {
+                // Conversation has no workspace metadata — skip when filtering
+                continue;
+              }
 
               const existing = merged[id];
               const newCount = (summary.stepCount as number) ?? 0;
@@ -494,16 +490,20 @@ export function registerConversationRoutes(app: Hono): void {
               i.workspaceId && normalizeWorkspaceId(i.workspaceId) === wsId,
           ) ?? undefined;
 
-        // Workspace was explicitly requested but no LS owns it — fail clearly
+        // Workspace was explicitly requested but no LS owns it —
+        // fall back to any available LS and still inject the workspace URI
         if (!targetInstance) {
-          return c.json(
-            {
-              error:
-                "No Language Server found for this workspace. Open the project in Antigravity first.",
-              detail: workspaceUri,
-            },
-            503,
-          );
+          targetInstance = (await discovery.getInstance()) ?? undefined;
+          if (!targetInstance) {
+            return c.json(
+              {
+                error:
+                  "No Language Server available. Start Antigravity first.",
+                detail: workspaceUri,
+              },
+              503,
+            );
+          }
         }
       } else if (targetSubclient) {
         // Client explicitly chose a target LS by subclient type ("hub" or "ide")
@@ -550,12 +550,20 @@ export function registerConversationRoutes(app: Hono): void {
         targetInstance,
       );
 
-      // Learn affinity immediately
+      // Learn affinity immediately — use workspace ID when available,
+      // fall back to PID-based affinity for LS instances without workspace
+      // (e.g. hub). Without affinity, the first sendMessage after creation
+      // would fail to route because discoverOwnerInstance returns null for
+      // brand-new conversations with no trajectory/workspace metadata.
       const newId = (data as Record<string, unknown>)?.cascadeId as
         | string
         | undefined;
-      if (newId && targetInstance?.workspaceId) {
-        conversationAffinity.set(newId, targetInstance.workspaceId);
+      if (newId && targetInstance) {
+        if (targetInstance.workspaceId) {
+          conversationAffinity.set(newId, targetInstance.workspaceId);
+        } else {
+          conversationAffinity.set(newId, `_pid_${targetInstance.pid}`);
+        }
       }
 
       // Signal WS connections for this conversation to enter ACTIVE state
@@ -589,10 +597,27 @@ export function registerConversationRoutes(app: Hono): void {
         const typeConfig =
           plannerType === "planning" ? { planning: {} } : { conversational: {} };
 
+        // LS requires requestedModel to be set — fall back to a sensible default
+        // when the client (e.g. Android app's first message) doesn't specify one.
+        let resolvedModel = model;
+        if (!resolvedModel) {
+          try {
+            const modelConfig = await rpc.call<{
+              defaultOverrideModelConfig?: { modelOrAlias?: { model?: string } };
+            }>("GetCascadeModelConfigData", {}, instance);
+            resolvedModel = modelConfig.defaultOverrideModelConfig?.modelOrAlias?.model;
+          } catch (e) {
+            console.error("Failed to fetch default model from LS", e);
+          }
+          if (!resolvedModel) {
+            resolvedModel = "MODEL_PLACEHOLDER_M20";
+          }
+        }
+
         req.cascadeConfig = {
           plannerConfig: {
             plannerTypeConfig: typeConfig,
-            ...(model ? { requestedModel: { model } } : {}),
+            requestedModel: { model: resolvedModel },
           },
         };
 

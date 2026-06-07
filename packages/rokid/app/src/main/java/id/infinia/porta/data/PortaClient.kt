@@ -52,11 +52,11 @@ class PortaClient(
     private val _agentRunning = MutableStateFlow(false)
     val agentRunning: StateFlow<Boolean> = _agentRunning.asStateFlow()
 
-    private val _incomingMessages = MutableSharedFlow<PortaMessage>(
+    private val _incomingMessages = MutableSharedFlow<Pair<String, PortaMessage>>(
         replay = 0,
         extraBufferCapacity = 100
     )
-    val incomingMessages: SharedFlow<PortaMessage> = _incomingMessages.asSharedFlow()
+    val incomingMessages: SharedFlow<Pair<String, PortaMessage>> = _incomingMessages.asSharedFlow()
 
     private val _error = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val error: SharedFlow<String> = _error.asSharedFlow()
@@ -177,6 +177,29 @@ class PortaClient(
     }
 
     /**
+     * Fetch conversation steps via HTTP REST API (fallback when WS returns 0).
+     *
+     * GET /api/conversations/{id}/steps?tail={count}
+     */
+    suspend fun fetchSteps(cascadeId: String, tail: Int = 200): JsonObject = withContext(Dispatchers.IO) {
+        val url = buildHttpUrl("/api/conversations/$cascadeId/steps?tail=$tail")
+        val request = Request.Builder()
+            .url(url)
+            .apply { addAuthHeader(this) }
+            .build()
+
+        val response = httpClient.newCall(request).execute()
+        response.use { resp ->
+            if (!resp.isSuccessful) {
+                throw PortaApiException("Failed to fetch steps: ${resp.code}")
+            }
+
+            val body = resp.body?.string() ?: "{}"
+            gson.fromJson(body, JsonObject::class.java)
+        }
+    }
+
+    /**
      * Send a message to a conversation.
      *
      * POST /api/conversations/{id}/messages
@@ -192,7 +215,7 @@ class PortaClient(
 
         val payload = JsonObject().apply {
             add("items", gson.toJsonTree(listOf(
-                mapOf("text" to text)
+                mapOf("type" to "text", "text" to text)
             )))
             model?.let { addProperty("model", it) }
             plannerType?.let { addProperty("plannerType", it) }
@@ -582,7 +605,7 @@ class PortaClient(
                     }
                     // Emit to subscribers
                     scope.launch {
-                        _incomingMessages.emit(message)
+                        _incomingMessages.emit(cascadeId to message)
                     }
                 } else {
                     Log.w("PortaClient", "WS message parse returned null: ${text.take(100)}")
@@ -658,6 +681,33 @@ class PortaClient(
     private fun addAuthHeader(builder: Request.Builder) {
         authToken?.let {
             builder.addHeader("Authorization", "Bearer $it")
+        }
+    }
+
+    /**
+     * Search across all conversations.
+     *
+     * GET /api/search?q={query}
+     * Returns matching conversations with snippets and match counts.
+     */
+    suspend fun searchConversations(query: String): JsonObject = withContext(Dispatchers.IO) {
+        val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
+        val url = buildHttpUrl("/api/search?q=$encodedQuery")
+
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .apply { addAuthHeader(this) }
+            .addHeader("X-Porta-Request", "1")
+            .build()
+
+        val response = httpClient.newCall(request).execute()
+        response.use { resp ->
+            if (!resp.isSuccessful) {
+                throw PortaApiException("Search failed: ${resp.code}")
+            }
+            val body = resp.body?.string() ?: "{}"
+            gson.fromJson(body, JsonObject::class.java)
         }
     }
 }

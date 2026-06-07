@@ -108,6 +108,7 @@ class MainActivity : ComponentActivity() {
                 val settingsReady by viewModel.settingsLoaded.collectAsState()
                 LaunchedEffect(pendingCascadeId, settingsReady) {
                     val cascadeId = pendingCascadeId
+                    android.util.Log.d("MainActivity", "LaunchedEffect: pendingCascadeId=$cascadeId settingsReady=$settingsReady")
                     if (cascadeId != null && settingsReady) {
                         viewModel.selectConversation(cascadeId)
                         screen = "chat"
@@ -201,7 +202,6 @@ class MainActivity : ComponentActivity() {
                                     scope.launch { drawerState.close() }
                                 },
                                 onNewConversation = {
-                                    viewModel.createNewConversation()
                                     screen = "chat"
                                     scope.launch { drawerState.close() }
                                 },
@@ -320,9 +320,11 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         handleShareIntent(intent)
         // Handle warm-start notification taps
-        intent.getStringExtra(
+        val cascadeId = intent.getStringExtra(
             id.infinia.porta.service.NotificationService.EXTRA_CASCADE_ID
-        )?.let { _pendingCascadeId.value = it }
+        )
+        android.util.Log.d("MainActivity", "onNewIntent: cascadeId=$cascadeId")
+        cascadeId?.let { _pendingCascadeId.value = it }
     }
 
     /**

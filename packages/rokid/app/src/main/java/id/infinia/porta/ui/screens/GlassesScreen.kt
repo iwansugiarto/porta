@@ -92,7 +92,10 @@ fun GlassesScreen(viewModel: BridgeViewModel, onBack: () -> Unit) {
                                 GlassesState.CONNECTED, GlassesState.SCENE_ACTIVE ->
                                     Icons.Default.Visibility
                                 GlassesState.CONNECTING ->
-                                    Icons.AutoMirrored.Filled.BluetoothSearching
+                                    if (glassesProviderName.contains("USB"))
+                                        Icons.Default.Usb
+                                    else
+                                        Icons.AutoMirrored.Filled.BluetoothSearching
                                 GlassesState.ERROR ->
                                     Icons.Default.ErrorOutline
                                 GlassesState.DISCONNECTED ->
@@ -226,7 +229,11 @@ fun GlassesScreen(viewModel: BridgeViewModel, onBack: () -> Unit) {
 
             // Provider selector
             var providerExpanded by remember { mutableStateOf(false) }
-            val providers = listOf("mock" to "Mock (Development)", "rokid_cxrl" to "Rokid CXR-L")
+            val providers = listOf(
+                "usb_display" to "USB Display (Rokid)",
+                "rokid_cxrl" to "Rokid CXR-L",
+                "mock" to "Mock (Development)"
+            )
 
             Text("Provider", style = MaterialTheme.typography.titleSmall, color = PortaPrimary)
 

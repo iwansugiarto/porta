@@ -68,6 +68,10 @@ fun ProjectsDrawerContent(
     var showExplorerDialog by remember { mutableStateOf(false) }
     var explorerInitialFilter by remember { mutableStateOf<ProjectStatus?>(null) }
 
+    // Workspace picker for new conversations
+    val workspaces by viewModel.workspaces.collectAsState()
+    var showDrawerWorkspacePicker by remember { mutableStateOf(false) }
+
     // Collapsible states
     var blockedCollapsed by remember { mutableStateOf(false) }
     var inProgressCollapsed by remember { mutableStateOf(false) }
@@ -111,7 +115,13 @@ fun ProjectsDrawerContent(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Button(
-                onClick = onNewConversation,
+                onClick = {
+                    if (workspaces.isNotEmpty()) {
+                        showDrawerWorkspacePicker = true
+                    } else {
+                        onNewConversation()
+                    }
+                },
                 colors = ButtonDefaults.buttonColors(containerColor = PortaPrimary),
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.weight(1f),
@@ -440,6 +450,19 @@ fun ProjectsDrawerContent(
                 }
             },
             shape = RoundedCornerShape(14.dp)
+        )
+    }
+
+    // Workspace picker for New Chat button
+    if (showDrawerWorkspacePicker) {
+        DrawerWorkspacePickerSheet(
+            workspaces = workspaces,
+            onSelect = { wsUri ->
+                showDrawerWorkspacePicker = false
+                viewModel.createNewConversation(wsUri)
+                onNewConversation()
+            },
+            onDismiss = { showDrawerWorkspacePicker = false }
         )
     }
 }
@@ -1185,4 +1208,148 @@ private fun getProjectRepoName(projTitle: String, conversations: List<Pair<Strin
     if (titleLower.contains("porta")) return "porta"
     if (titleLower.contains("odoo")) return "odoo-addons"
     return null
+}
+
+// ── Workspace Picker for Drawer New Chat ──
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DrawerWorkspacePickerSheet(
+    workspaces: List<BridgeViewModel.WorkspaceOption>,
+    onSelect: (String?) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState()
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        dragHandle = { BottomSheetDefaults.DragHandle() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 32.dp)
+        ) {
+            Text(
+                "New Conversation",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+            Text(
+                "Select a workspace for context",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+
+            // No workspace option
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 3.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .clickable { onSelect(null) }
+                        .padding(14.dp)
+                        .fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(PortaTertiary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.ChatBubbleOutline, null,
+                            modifier = Modifier.size(20.dp),
+                            tint = PortaTertiary
+                        )
+                    }
+                    Column {
+                        Text(
+                            "No workspace",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            "General conversation without project context",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(4.dp))
+
+            // Workspace list
+            workspaces.forEach { ws ->
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 3.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .clickable { onSelect(ws.uri) }
+                            .padding(14.dp)
+                            .fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(PortaPrimary.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.Folder, null,
+                                modifier = Modifier.size(20.dp),
+                                tint = PortaPrimary
+                            )
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                ws.name,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                ws.uri.removePrefix("file://"),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Icon(
+                            Icons.Default.ChevronRight, null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                        )
+                    }
+                }
+            }
+        }
+    }
 }

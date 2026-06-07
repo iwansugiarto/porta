@@ -71,6 +71,10 @@ fun ConversationsScreen(
     val projects by viewModel.projects.collectAsState()
     var editProjectTarget by remember { mutableStateOf<Project?>(null) }
 
+    // Workspace picker for new conversations
+    val workspaces by viewModel.workspaces.collectAsState()
+    var showWorkspacePicker by remember { mutableStateOf(false) }
+
     // Group conversations by workspace
     val groups = remember(conversations, workspaceFilter) {
         val map = mutableMapOf<String, MutableList<Pair<String, JsonObject>>>()
@@ -164,7 +168,17 @@ fun ConversationsScreen(
                     IconButton(onClick = { viewModel.loadConversations() }) {
                         Icon(Icons.Default.Refresh, "Refresh")
                     }
-                    IconButton(onClick = { viewModel.createNewConversation() }) {
+                    IconButton(onClick = {
+                        if (workspaceFilter != null) {
+                            // Already in a workspace view — find URI and create directly
+                            val wsUri = workspaces.find { it.name == workspaceFilter }?.uri
+                            viewModel.createNewConversation(wsUri)
+                        } else if (workspaces.isNotEmpty()) {
+                            showWorkspacePicker = true
+                        } else {
+                            viewModel.createNewConversation()
+                        }
+                    }) {
                         Icon(Icons.Default.Add, "New")
                     }
                 },
@@ -252,7 +266,16 @@ fun ConversationsScreen(
                             "No conversations yet",
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                         )
-                        FilledTonalButton(onClick = { viewModel.createNewConversation() }) {
+                        FilledTonalButton(onClick = {
+                            if (workspaceFilter != null) {
+                                val wsUri = workspaces.find { it.name == workspaceFilter }?.uri
+                                viewModel.createNewConversation(wsUri)
+                            } else if (workspaces.isNotEmpty()) {
+                                showWorkspacePicker = true
+                            } else {
+                                viewModel.createNewConversation()
+                            }
+                        }) {
                             Icon(Icons.Default.Add, null, Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("New Conversation")
@@ -651,6 +674,18 @@ fun ConversationsScreen(
         } // Column
     }
 
+    // Workspace picker bottom sheet for new conversations
+    if (showWorkspacePicker) {
+        NewConvoWorkspacePickerSheet(
+            workspaces = workspaces,
+            onSelect = { wsUri ->
+                showWorkspacePicker = false
+                viewModel.createNewConversation(wsUri)
+            },
+            onDismiss = { showWorkspacePicker = false }
+        )
+    }
+
     editProjectTarget?.let { proj ->
         EditProjectDialog(
             project = proj,
@@ -665,5 +700,151 @@ fun ConversationsScreen(
                 editProjectTarget = null
             }
         )
+    }
+}
+
+// ── Workspace Picker for New Conversation ──
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NewConvoWorkspacePickerSheet(
+    workspaces: List<BridgeViewModel.WorkspaceOption>,
+    onSelect: (String?) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState()
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        dragHandle = { BottomSheetDefaults.DragHandle() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 32.dp)
+        ) {
+            // Header
+            Text(
+                "New Conversation",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+            Text(
+                "Select a workspace for context",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+
+            // No workspace option
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 3.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .clickable { onSelect(null) }
+                        .padding(14.dp)
+                        .fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(PortaTertiary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.ChatBubbleOutline, null,
+                            modifier = Modifier.size(20.dp),
+                            tint = PortaTertiary
+                        )
+                    }
+                    Column {
+                        Text(
+                            "No workspace",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            "General conversation without project context",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(4.dp))
+
+            // Workspace list
+            workspaces.forEach { ws ->
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 3.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .clickable { onSelect(ws.uri) }
+                            .padding(14.dp)
+                            .fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // Folder icon with workspace color
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(PortaPrimary.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.Folder, null,
+                                modifier = Modifier.size(20.dp),
+                                tint = PortaPrimary
+                            )
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                ws.name,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                ws.uri.removePrefix("file://"),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Icon(
+                            Icons.Default.ChevronRight, null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                        )
+                    }
+                }
+            }
+        }
     }
 }

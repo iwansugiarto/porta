@@ -37,3 +37,4 @@ npm-debug.log*
 .agent
 .gemini
 .porta-shares.json
+GEMINI_INSTRUCTIONS.md

@@ -30,13 +30,22 @@ class NotificationService(private val context: Context) {
         const val CHANNEL_NAME = "Task Completion"
         const val CHANNEL_APPROVAL_ID = "porta_approval"
         const val CHANNEL_APPROVAL_NAME = "Approval Requests"
+        const val CHANNEL_GLASSES_ID = "porta_glasses"
+        const val CHANNEL_GLASSES_NAME = "AR Glasses Display"
         const val NOTIFICATION_ID_TASK_COMPLETE = 1001
         const val NOTIFICATION_ID_APPROVAL = 1002
+        const val NOTIFICATION_ID_GLASSES = 2001
+        const val NOTIFICATION_ID_GLASSES_STREAM = 2002
 
         const val ACTION_QUICK_REPLY = "id.infinia.porta.QUICK_REPLY"
         const val EXTRA_REPLY_TEXT = "reply_text"
         const val EXTRA_CASCADE_ID = "cascade_id"
         const val KEY_REPLY = "key_quick_reply"
+
+        /** Max chars for glasses display (Micro-LED readability) */
+        private const val GLASSES_MAX_CHARS = 500
+        /** Max chars per line for glasses */
+        private const val GLASSES_LINE_WIDTH = 40
 
         private var quickReplyListener: ((String, String) -> Unit)? = null
 
@@ -93,6 +102,18 @@ class NotificationService(private val context: Context) {
             )
         }
         notificationManager.createNotificationChannel(approvalChannel)
+
+        // Glasses channel — for AR glasses notification mirroring
+        val glassesChannel = NotificationChannel(
+            CHANNEL_GLASSES_ID,
+            CHANNEL_GLASSES_NAME,
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "AI responses displayed on AR glasses via notification mirroring"
+            enableVibration(false)  // Don't vibrate phone for glasses-only notifications
+            setSound(null, null)    // Silent on phone — glasses handle display
+        }
+        notificationManager.createNotificationChannel(glassesChannel)
     }
 
     /**
@@ -276,6 +297,153 @@ class NotificationService(private val context: Context) {
         vibrator.vibrate(
             VibrationEffect.createWaveform(longArrayOf(0, 250, 100, 250, 100, 250), -1)
         )
+    }
+
+    // ── Glasses-optimized notifications ──
+
+    /**
+     * Show an AI response notification optimized for AR glasses display.
+     *
+     * Uses MessagingStyle for Rokid Relay / notification mirroring compatibility.
+     * Includes direct reply action for replying from glasses.
+     * Text is smart-truncated for Micro-LED readability.
+     *
+     * @param response  The AI response text
+     * @param cascadeId Conversation ID for reply routing
+     * @param title     Optional title (workspace/conversation name)
+     */
+    fun showGlassesResponse(
+        response: String,
+        cascadeId: String,
+        title: String = "Porta AI"
+    ) {
+        // Smart truncate for glasses readability
+        val glassesText = formatForGlasses(response)
+
+        // Launch intent
+        val launchIntent = context.packageManager
+            .getLaunchIntentForPackage(context.packageName)
+            ?.apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(EXTRA_CASCADE_ID, cascadeId)
+            }
+        val contentPendingIntent = PendingIntent.getActivity(
+            context, 3, launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Direct reply action (works with Rokid Relay!)
+        val remoteInput = RemoteInput.Builder(KEY_REPLY)
+            .setLabel("Reply...")
+            .build()
+
+        val replyIntent = Intent(context, QuickReplyReceiver::class.java).apply {
+            action = ACTION_QUICK_REPLY
+            putExtra(EXTRA_CASCADE_ID, cascadeId)
+        }
+        val replyPendingIntent = PendingIntent.getBroadcast(
+            context, NOTIFICATION_ID_GLASSES, replyIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        )
+        val replyAction = NotificationCompat.Action.Builder(
+            android.R.drawable.ic_menu_send,
+            "Reply",
+            replyPendingIntent
+        ).addRemoteInput(remoteInput).build()
+
+        // Use MessagingStyle for maximum compatibility with notification mirroring
+        val person = androidx.core.app.Person.Builder()
+            .setName(title)
+            .setImportant(true)
+            .build()
+
+        val messagingStyle = NotificationCompat.MessagingStyle(person)
+            .setConversationTitle(title)
+            .addMessage(
+                glassesText,
+                System.currentTimeMillis(),
+                person
+            )
+
+        val builder = NotificationCompat.Builder(context, CHANNEL_GLASSES_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle(title)
+            .setContentText(glassesText.take(100))
+            .setStyle(messagingStyle)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(contentPendingIntent)
+            .setAutoCancel(true)
+            .addAction(replyAction)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setSound(null)     // Silent on phone
+            .setVibrate(null)   // No vibration
+
+        // Cancel any streaming notification
+        notificationManager.cancel(NOTIFICATION_ID_GLASSES_STREAM)
+
+        notificationManager.notify(NOTIFICATION_ID_GLASSES, builder.build())
+    }
+
+    /**
+     * Show a "thinking" streaming notification on glasses.
+     * Replaced by showGlassesResponse when the response arrives.
+     */
+    fun showGlassesThinking(cascadeId: String) {
+        val builder = NotificationCompat.Builder(context, CHANNEL_GLASSES_ID)
+            .setSmallIcon(android.R.drawable.ic_menu_rotate)
+            .setContentTitle("Porta AI")
+            .setContentText("⏳ Thinking...")
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setOngoing(true)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setSound(null)
+            .setVibrate(null)
+
+        notificationManager.notify(NOTIFICATION_ID_GLASSES_STREAM, builder.build())
+    }
+
+    /** Dismiss glasses notifications. */
+    fun dismissGlasses() {
+        notificationManager.cancel(NOTIFICATION_ID_GLASSES)
+        notificationManager.cancel(NOTIFICATION_ID_GLASSES_STREAM)
+    }
+
+    /**
+     * Format AI response text for AR glasses readability.
+     *
+     * - Strips markdown formatting (bold, headers, code fences)
+     * - Truncates to GLASSES_MAX_CHARS
+     * - Adds ellipsis if truncated
+     * - Preserves paragraph breaks
+     */
+    private fun formatForGlasses(text: String): String {
+        var formatted = text
+            // Strip markdown headers
+            .replace(Regex("^#{1,6}\\s+"), "")
+            // Strip bold/italic markers
+            .replace(Regex("\\*{1,3}([^*]+)\\*{1,3}"), "$1")
+            // Strip code fences
+            .replace(Regex("```[\\s\\S]*?```"), "[code]")
+            // Strip inline code
+            .replace(Regex("`([^`]+)`"), "$1")
+            // Strip links: [text](url) → text
+            .replace(Regex("\\[([^\\]]+)\\]\\([^)]+\\)"), "$1")
+            // Collapse multiple newlines
+            .replace(Regex("\n{3,}"), "\n\n")
+            .trim()
+
+        // Truncate with ellipsis
+        if (formatted.length > GLASSES_MAX_CHARS) {
+            // Try to cut at a sentence boundary
+            val cutPoint = formatted.lastIndexOf(". ", GLASSES_MAX_CHARS)
+            formatted = if (cutPoint > GLASSES_MAX_CHARS / 2) {
+                formatted.substring(0, cutPoint + 1) + "\n\n[... open phone for full response]"
+            } else {
+                formatted.take(GLASSES_MAX_CHARS) + "...\n\n[open phone for more]"
+            }
+        }
+
+        return formatted
     }
 
     fun destroy() {
