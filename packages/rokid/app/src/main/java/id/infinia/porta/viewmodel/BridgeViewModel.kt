@@ -56,6 +56,10 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         val NOTIFY_ENABLED = booleanPreferencesKey("notify_enabled")
         val GLASSES_PROVIDER = stringPreferencesKey("glasses_provider")
         val GLASSES_AUTO_FORWARD = booleanPreferencesKey("glasses_auto_forward")
+        val GLASSES_AUTO_CONNECT = booleanPreferencesKey("glasses_auto_connect")
+        val GLASSES_ALIGNMENT = stringPreferencesKey("glasses_alignment")
+        val GLASSES_FONT_SIZE = stringPreferencesKey("glasses_font_size")
+        val GLASSES_PADDING = intPreferencesKey("glasses_padding")
         val VOICE_LANGUAGE = stringPreferencesKey("voice_language")
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val SELECTED_MODEL = stringPreferencesKey("selected_model")
@@ -116,6 +120,18 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _autoForwardToGlasses = MutableStateFlow(false)
     val autoForwardToGlasses: StateFlow<Boolean> = _autoForwardToGlasses.asStateFlow()
+
+    private val _autoConnectGlasses = MutableStateFlow(true)
+    val autoConnectGlasses: StateFlow<Boolean> = _autoConnectGlasses.asStateFlow()
+
+    private val _glassesAlignment = MutableStateFlow("top")
+    val glassesAlignment: StateFlow<String> = _glassesAlignment.asStateFlow()
+
+    private val _glassesFontSize = MutableStateFlow("medium")
+    val glassesFontSize: StateFlow<String> = _glassesFontSize.asStateFlow()
+
+    private val _glassesPadding = MutableStateFlow(24)
+    val glassesPadding: StateFlow<Int> = _glassesPadding.asStateFlow()
 
     /** App theme: SYSTEM, LIGHT, or DARK. */
     private val _themeMode = MutableStateFlow(ThemeMode.SYSTEM)
@@ -492,6 +508,10 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 _notifySound.value = prefs[PrefKeys.NOTIFY_SOUND] ?: true
                 _notifyVibrate.value = prefs[PrefKeys.NOTIFY_VIBRATE] ?: true
                 _autoForwardToGlasses.value = prefs[PrefKeys.GLASSES_AUTO_FORWARD] ?: false
+                _autoConnectGlasses.value = prefs[PrefKeys.GLASSES_AUTO_CONNECT] ?: true
+                _glassesAlignment.value = prefs[PrefKeys.GLASSES_ALIGNMENT] ?: "top"
+                _glassesFontSize.value = prefs[PrefKeys.GLASSES_FONT_SIZE] ?: "medium"
+                _glassesPadding.value = prefs[PrefKeys.GLASSES_PADDING] ?: 24
                 _autoConnect.value = prefs[PrefKeys.AUTO_CONNECT] ?: false
                 _voiceLanguage.value = prefs[PrefKeys.VOICE_LANGUAGE] ?: "id-ID"
                 _themeMode.value = try {
@@ -502,6 +522,12 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 // Restore glasses provider
                 val savedProvider = prefs[PrefKeys.GLASSES_PROVIDER] ?: "mock"
                 setGlassesProvider(savedProvider, persist = false)
+                
+                // Auto-connect glasses if enabled and not mock
+                if (_autoConnectGlasses.value && savedProvider != "mock") {
+                    Log.d("BridgeVM", "Auto-connecting glasses on startup: $savedProvider")
+                    connectGlasses(application)
+                }
                 // Apply saved config to client
                 portaClient.configure(_host.value, _port.value, _authToken.value, _useTls.value)
 
@@ -1324,6 +1350,14 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         _glassesProvider = when (providerId) {
             "usb_display" -> UsbGlassesProvider()
             "rokid_cxrl" -> RokidCXRLProvider()
+            "bluetooth_serial" -> BluetoothSerialGlassesProvider(
+                onSendChat = { text -> sendMessage(text) },
+                onStartVoice = { startVoiceInput() },
+                onStopVoice = { stopVoiceInput() },
+                getLayoutSettings = {
+                    Triple(_glassesAlignment.value, _glassesFontSize.value, _glassesPadding.value)
+                }
+            )
             else -> MockGlassesProvider()
         }
         _glassesProviderName.value = _glassesProvider.providerName
@@ -1338,6 +1372,48 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         _autoForwardToGlasses.value = enabled
         viewModelScope.launch {
             dataStore.edit { it[PrefKeys.GLASSES_AUTO_FORWARD] = enabled }
+        }
+    }
+
+    fun setAutoConnectGlasses(enabled: Boolean) {
+        _autoConnectGlasses.value = enabled
+        viewModelScope.launch {
+            dataStore.edit { it[PrefKeys.GLASSES_AUTO_CONNECT] = enabled }
+        }
+    }
+
+    fun setGlassesAlignment(alignment: String) {
+        _glassesAlignment.value = alignment
+        viewModelScope.launch {
+            dataStore.edit { it[PrefKeys.GLASSES_ALIGNMENT] = alignment }
+        }
+        syncGlassesLayout()
+    }
+
+    fun setGlassesFontSize(fontSize: String) {
+        _glassesFontSize.value = fontSize
+        viewModelScope.launch {
+            dataStore.edit { it[PrefKeys.GLASSES_FONT_SIZE] = fontSize }
+        }
+        syncGlassesLayout()
+    }
+
+    fun setGlassesPadding(padding: Int) {
+        _glassesPadding.value = padding
+        viewModelScope.launch {
+            dataStore.edit { it[PrefKeys.GLASSES_PADDING] = padding }
+        }
+        syncGlassesLayout()
+    }
+
+    private fun syncGlassesLayout() {
+        val provider = _glassesProvider
+        if (provider is BluetoothSerialGlassesProvider) {
+            provider.updateLayout(
+                _glassesAlignment.value,
+                _glassesFontSize.value,
+                _glassesPadding.value
+            )
         }
     }
 

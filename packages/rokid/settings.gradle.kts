@@ -24,4 +24,5 @@ dependencyResolutionManagement {
 rootProject.name = "porta-rokid"
 include(":app")
 include(":shared")
-// include(":glasses")  // Uncomment when glasses module is ready
+include(":glasses")
+

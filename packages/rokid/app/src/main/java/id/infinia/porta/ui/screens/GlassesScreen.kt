@@ -34,6 +34,10 @@ fun GlassesScreen(viewModel: BridgeViewModel, onBack: () -> Unit) {
     val glassesCapabilities by viewModel.glassesCapabilities.collectAsState()
     val glassesProviderName by viewModel.glassesProviderName.collectAsState()
     val autoForwardToGlasses by viewModel.autoForwardToGlasses.collectAsState()
+    val autoConnectGlasses by viewModel.autoConnectGlasses.collectAsState()
+    val glassesAlignment by viewModel.glassesAlignment.collectAsState()
+    val glassesFontSize by viewModel.glassesFontSize.collectAsState()
+    val glassesPadding by viewModel.glassesPadding.collectAsState()
 
     Scaffold(
         topBar = {
@@ -227,11 +231,115 @@ fun GlassesScreen(viewModel: BridgeViewModel, onBack: () -> Unit) {
                 )
             }
 
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Auto-Connect Glasses", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Automatically connect to glasses on app startup",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    )
+                }
+                Switch(
+                    checked = autoConnectGlasses,
+                    onCheckedChange = { viewModel.setAutoConnectGlasses(it) },
+                    colors = SwitchDefaults.colors(checkedTrackColor = PortaPrimary)
+                )
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        "HUD Layout & Position",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = PortaPrimary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    Text("Screen Position", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf("top" to "Top", "center" to "Center", "bottom" to "Bottom").forEach { (id, label) ->
+                            val isSelected = glassesAlignment == id
+                            Button(
+                                onClick = { viewModel.setGlassesAlignment(id) },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isSelected) PortaPrimary else MaterialTheme.colorScheme.surfaceVariant,
+                                    contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(vertical = 8.dp)
+                            ) {
+                                Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(4.dp))
+                    Text("Text Size", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf("small" to "Small", "medium" to "Medium", "large" to "Large").forEach { (id, label) ->
+                            val isSelected = glassesFontSize == id
+                            Button(
+                                onClick = { viewModel.setGlassesFontSize(id) },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isSelected) PortaPrimary else MaterialTheme.colorScheme.surfaceVariant,
+                                    contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(vertical = 8.dp)
+                            ) {
+                                Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Screen Padding", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Text("${glassesPadding} dp", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = PortaPrimary)
+                    }
+                    Slider(
+                        value = glassesPadding.toFloat(),
+                        onValueChange = { viewModel.setGlassesPadding(it.toInt()) },
+                        valueRange = 8f..48f,
+                        steps = 4, // 8, 16, 24, 32, 40, 48
+                        colors = SliderDefaults.colors(
+                            thumbColor = PortaPrimary,
+                            activeTrackColor = PortaPrimary
+                        )
+                    )
+                }
+            }
+
             // Provider selector
             var providerExpanded by remember { mutableStateOf(false) }
             val providers = listOf(
                 "usb_display" to "USB Display (Rokid)",
                 "rokid_cxrl" to "Rokid CXR-L",
+                "bluetooth_serial" to "Bluetooth Serial (Direct)",
                 "mock" to "Mock (Development)"
             )
 
