@@ -74,6 +74,10 @@ export function assertSupportedListenHost(
   host: string,
   env: NodeJS.ProcessEnv = process.env,
 ): void {
+  if (env.PORTA_ALLOW_WILDCARD === "1") {
+    return;
+  }
+
   const normalized = host.trim().toLowerCase();
 
   if (isLoopbackHost(normalized) || isPrivateLanHost(normalized)) {
