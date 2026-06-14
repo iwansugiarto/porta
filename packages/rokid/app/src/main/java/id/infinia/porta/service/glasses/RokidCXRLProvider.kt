@@ -281,7 +281,7 @@ class RokidCXRLProvider : GlassesProvider {
             "orientation": "vertical",
             "style": {
                 "padding": 24,
-                "backgroundColor": "#0A0A0F"
+                "backgroundColor": "#000000"
             },
             "children": [
                 {

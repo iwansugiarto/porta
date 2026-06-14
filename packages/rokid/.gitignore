@@ -22,3 +22,8 @@ fastlane/*service*account*.json
 fastlane/*.keystore
 fastlane/README.md
 vendor/bundle
+
+# Secrets and Logs
+*.lc
+*.log
+

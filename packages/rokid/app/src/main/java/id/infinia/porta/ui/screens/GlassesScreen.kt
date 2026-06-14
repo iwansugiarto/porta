@@ -295,7 +295,7 @@ fun GlassesScreen(viewModel: BridgeViewModel, onBack: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        listOf("small" to "Small", "medium" to "Medium", "large" to "Large").forEach { (id, label) ->
+                        listOf("tiny" to "Tiny", "xsmall" to "XS", "small" to "S", "medium" to "M", "large" to "L").forEach { (id, label) ->
                             val isSelected = glassesFontSize == id
                             Button(
                                 onClick = { viewModel.setGlassesFontSize(id) },
@@ -305,9 +305,9 @@ fun GlassesScreen(viewModel: BridgeViewModel, onBack: () -> Unit) {
                                     contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
                                 ),
                                 shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(vertical = 8.dp)
+                                contentPadding = PaddingValues(vertical = 8.dp, horizontal = 4.dp)
                             ) {
-                                Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                Text(label, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                             }
                         }
                     }

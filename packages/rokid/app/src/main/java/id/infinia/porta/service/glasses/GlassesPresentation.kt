@@ -41,12 +41,12 @@ class GlassesPresentation(
 
     companion object {
         // Colors optimized for Micro-OLED
-        private const val BG_COLOR = 0xFF0A0A0F.toInt()        // Near-black
+        private const val BG_COLOR = 0xFF000000.toInt()        // Pure black (completely off on OLED)
         private const val TITLE_COLOR = 0xFF818CF8.toInt()      // Indigo-400 (Porta accent)
         private const val BODY_COLOR = 0xFFF1F5F9.toInt()       // Slate-100
         private const val STATUS_COLOR = 0xFF64748B.toInt()     // Slate-500
         private const val THINKING_COLOR = 0xFFFBBF24.toInt()   // Amber-400
-        private const val DIVIDER_COLOR = 0xFF1E293B.toInt()    // Slate-800
+        private const val DIVIDER_COLOR = 0xFF000000.toInt()    // Pure black (hidden to avoid line glow)
     }
 
     private lateinit var rootLayout: FrameLayout

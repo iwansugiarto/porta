@@ -14,8 +14,8 @@ android {
         applicationId = "id.infinia.porta"
         minSdk = 28
         targetSdk = 35
-        versionCode = 88
-        versionName = "0.5.6"
+        versionCode = 89
+        versionName = "0.5.7"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // Rokid CXR-L SDK credentials (from local.properties, never in VCS)

@@ -91,6 +91,8 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     val notificationService = NotificationService(application)
     private val notifiedSteps = mutableSetOf<String>()
+    private var lastForwardedApprovalKey: String? = null
+    private var glassesStateCollectionJob: kotlinx.coroutines.Job? = null
     
     private val _isConversationScreenActive = MutableStateFlow(false)
     val isConversationScreenActive: StateFlow<Boolean> = _isConversationScreenActive.asStateFlow()
@@ -565,6 +567,14 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
+        // Listen to steps changes to check for approvals and forward to glasses
+        viewModelScope.launch {
+            _steps.collect { currentSteps ->
+                checkAndForwardPendingApprovalToGlasses(currentSteps)
+                updateGlassesToolbar()
+            }
+        }
+
         // Update status message based on connection state + manage foreground service
         viewModelScope.launch {
             connectionState.collect { state ->
@@ -860,6 +870,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         
         // Clear notified steps and dismiss persistent approval notification
         notifiedSteps.clear()
+        lastForwardedApprovalKey = null
         notificationService.dismissApproval()
 
         // Auto-sync active project with the current conversation context immediately
@@ -1111,6 +1122,18 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun getAbsolutePathUri(step: AgentStep): String? {
+        val raw = step.raw
+        val fpr = raw.getAsJsonObject("filePermissionRequest")
+            ?: raw.getAsJsonObject("viewFile")?.getAsJsonObject("filePermissionRequest")
+            ?: raw.getAsJsonObject("listDirectory")?.getAsJsonObject("filePermissionRequest")
+            ?: raw.getAsJsonObject("codeAction")?.getAsJsonObject("filePermissionRequest")
+            ?: raw.getAsJsonObject("grepSearch")?.getAsJsonObject("filePermissionRequest")
+            ?: raw.getAsJsonObject("viewFileOutline")?.getAsJsonObject("filePermissionRequest")
+            ?: raw.getAsJsonObject("viewCodeItem")?.getAsJsonObject("filePermissionRequest")
+        return fpr?.get("absolutePathUri")?.asString
+    }
+
     // ── Approvals ──
 
     fun approveStep(step: AgentStep) {
@@ -1119,6 +1142,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch {
             try {
+                Log.i("BridgeVM", "Sending approval request to server: type=${info.type} traj=${info.trajectoryId} idx=${info.stepIndex}")
                 when (info.type) {
                     ApprovalType.COMMAND -> {
                         portaClient.handleCommandAction(
@@ -1126,8 +1150,9 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     }
                     ApprovalType.PERMISSION -> {
+                        val path = getAbsolutePathUri(step) ?: ""
                         portaClient.handleFilePermission(
-                            cascadeId, info.trajectoryId, info.stepIndex, true
+                            cascadeId, info.trajectoryId, info.stepIndex, true, path
                         )
                     }
                     ApprovalType.QUESTION -> {
@@ -1141,8 +1166,10 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     }
                 }
+                Log.i("BridgeVM", "Approval request succeeded!")
                 _statusMessage.value = "Approved"
             } catch (e: Exception) {
+                Log.e("BridgeVM", "Approval request failed", e)
                 _statusMessage.value = "Approval failed: ${e.message}"
             }
         }
@@ -1154,6 +1181,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch {
             try {
+                Log.i("BridgeVM", "Sending rejection request to server: type=${info.type} traj=${info.trajectoryId} idx=${info.stepIndex}")
                 when (info.type) {
                     ApprovalType.COMMAND -> {
                         portaClient.handleCommandAction(
@@ -1161,8 +1189,10 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     }
                     ApprovalType.PERMISSION -> {
+                        val path = getAbsolutePathUri(step) ?: ""
                         portaClient.handleFilePermission(
-                            cascadeId, info.trajectoryId, info.stepIndex, false
+                            cascadeId, info.trajectoryId, info.stepIndex, false, path,
+                            scope = 0
                         )
                     }
                     ApprovalType.QUESTION -> {
@@ -1176,8 +1206,10 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     }
                 }
+                Log.i("BridgeVM", "Rejection request succeeded!")
                 _statusMessage.value = "Rejected"
             } catch (e: Exception) {
+                Log.e("BridgeVM", "Rejection request failed", e)
                 _statusMessage.value = "Rejection failed: ${e.message}"
             }
         }
@@ -1212,13 +1244,13 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun handleFilePermissionByTrajectory(
-        trajectoryId: String, stepIndex: Int, allow: Boolean, scope: Int
+        trajectoryId: String, stepIndex: Int, allow: Boolean, scope: Int, absolutePathUri: String
     ) {
         val cascadeId = _currentConversationId.value ?: return
         viewModelScope.launch {
             try {
                 portaClient.handleFilePermission(
-                    cascadeId, trajectoryId, stepIndex, allow,
+                    cascadeId, trajectoryId, stepIndex, allow, absolutePathUri,
                     scope = if (allow) scope else 0
                 )
                 _statusMessage.value = if (allow) "Allowed" else "Denied"
@@ -1356,14 +1388,43 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 onStopVoice = { stopVoiceInput() },
                 getLayoutSettings = {
                     Triple(_glassesAlignment.value, _glassesFontSize.value, _glassesPadding.value)
+                },
+                onApproveAction = {
+                    val pendingStep = _steps.value.firstOrNull { it.needsApproval }
+                    if (pendingStep != null) {
+                        Log.i("BridgeVM", "Approving step from glasses click/swipe: index=${pendingStep.index}")
+                        approveStep(pendingStep)
+                    }
+                },
+                onRejectAction = {
+                    val pendingStep = _steps.value.firstOrNull { it.needsApproval }
+                    if (pendingStep != null) {
+                        Log.i("BridgeVM", "Rejecting step from glasses swipe: index=${pendingStep.index}")
+                        rejectStep(pendingStep)
+                    }
                 }
             )
             else -> MockGlassesProvider()
         }
         _glassesProviderName.value = _glassesProvider.providerName
+        observeGlassesProvider()
         if (persist) {
             viewModelScope.launch {
                 dataStore.edit { it[PrefKeys.GLASSES_PROVIDER] = providerId }
+            }
+        }
+    }
+
+    private fun observeGlassesProvider() {
+        glassesStateCollectionJob?.cancel()
+        glassesStateCollectionJob = viewModelScope.launch {
+            _glassesProvider.state.collect { state ->
+                Log.d("BridgeVM", "Glasses state changed to: $state")
+                if (state == GlassesState.SCENE_ACTIVE) {
+                    // Reset last forwarded approval key to force resending any active approvals
+                    lastForwardedApprovalKey = null
+                    checkAndForwardPendingApprovalToGlasses(_steps.value)
+                }
             }
         }
     }
@@ -1438,24 +1499,39 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     private fun forwardToGlasses(text: String) {
         if (!_autoForwardToGlasses.value) return
 
+        // If there's an active approval request, do not overwrite the display with normal text response!
+        if (_steps.value.any { it.needsApproval }) {
+            Log.d("BridgeVM", "Suppressing forwardToGlasses because an approval request is pending")
+            return
+        }
+
         // Method 1: Direct display (USB Presentation / CXR-L CustomView)
         if (_glassesProvider.state.value == GlassesState.SCENE_ACTIVE) {
             _glassesProvider.displayText("Porta", text)
+            // Dismiss glasses notifications to prevent them covering the HUD
+            notificationService.dismissGlasses()
+        } else {
+            // Method 2: Notification mirroring (works with Rokid Relay / built-in mirror)
+            // Only send when direct display is NOT active to avoid covering the screen with popups!
+            val cascadeId = _currentConversationId.value ?: ""
+            notificationService.showGlassesResponse(
+                response = text,
+                cascadeId = cascadeId,
+                title = "Porta AI"
+            )
         }
-
-        // Method 2: Notification mirroring (works with Rokid Relay / built-in mirror)
-        // Always send when auto-forward is on — Rokid mirrors notifications to glasses
-        val cascadeId = _currentConversationId.value ?: ""
-        notificationService.showGlassesResponse(
-            response = text,
-            cascadeId = cascadeId,
-            title = "Porta AI"
-        )
+        updateGlassesToolbar()
     }
 
     /** Show "thinking" indicator on glasses when agent starts processing */
     fun forwardThinkingToGlasses() {
         if (!_autoForwardToGlasses.value) return
+
+        // If there's an active approval request, do not overwrite the display with thinking state!
+        if (_steps.value.any { it.needsApproval }) {
+            Log.d("BridgeVM", "Suppressing forwardThinkingToGlasses because an approval request is pending")
+            return
+        }
 
         // Direct display
         if (_glassesProvider.state.value == GlassesState.SCENE_ACTIVE) {
@@ -1465,11 +1541,111 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
             } else {
                 provider.displayText("Porta", "⏳ Thinking...")
             }
+            // Dismiss glasses notifications to prevent them covering the HUD
+            notificationService.dismissGlasses()
+        } else {
+            // Notification-based thinking indicator
+            val cascadeId = _currentConversationId.value ?: ""
+            notificationService.showGlassesThinking(cascadeId)
         }
+        updateGlassesToolbar()
+    }
 
-        // Notification-based thinking indicator
-        val cascadeId = _currentConversationId.value ?: ""
-        notificationService.showGlassesThinking(cascadeId)
+    /** Send live toolbar insights to glasses (model, steps, agent status, tool action, subagents) */
+    private fun updateGlassesToolbar() {
+        if (!_autoForwardToGlasses.value) return
+        val provider = _glassesProvider
+        if (provider is BluetoothSerialGlassesProvider && provider.state.value == GlassesState.SCENE_ACTIVE) {
+            val selectedId = _selectedModel.value
+            val modelName = if (selectedId != null) {
+                _availableModels.value.firstOrNull { it.id == selectedId }?.label
+                    ?: selectedId.substringAfterLast("/").take(20)
+            } else {
+                _defaultModel.value?.let { defaultId ->
+                    _availableModels.value.firstOrNull { it.id == defaultId }?.label
+                } ?: ""
+            }
+            val latestToolAction = _steps.value.lastOrNull { it.toolAction != null }?.toolAction
+            val isRunning = agentRunning.value
+
+            // Compute active subagents
+            val activeSubagents = getActiveSubagents(chatMessages.value)
+            val subagentPairs = if (activeSubagents.isNotEmpty()) {
+                activeSubagents.map { it.role to it.count }
+            } else null
+
+            provider.updateToolbar(
+                model = modelName,
+                steps = stepCount,
+                agentRunning = isRunning,
+                toolAction = latestToolAction,
+                subagents = subagentPairs
+            )
+        }
+    }
+
+    private fun checkAndForwardPendingApprovalToGlasses(currentSteps: List<AgentStep>) {
+        if (!_autoForwardToGlasses.value) return
+
+        val pendingStep = currentSteps.firstOrNull { it.needsApproval }
+        if (pendingStep != null) {
+            val cascadeId = _currentConversationId.value ?: ""
+            val stepKey = "$cascadeId:${pendingStep.index}"
+
+            if (lastForwardedApprovalKey != stepKey) {
+                lastForwardedApprovalKey = stepKey
+
+                val title = when (pendingStep.approvalInfo?.type) {
+                    ApprovalType.COMMAND -> "⚠️ Approve Command?"
+                    ApprovalType.PERMISSION -> "⚠️ Approve Permission?"
+                    ApprovalType.QUESTION -> "❓ Question"
+                    else -> "⚠️ Approve Action?"
+                }
+
+                val body = when (pendingStep.approvalInfo?.type) {
+                    ApprovalType.COMMAND -> {
+                        val cmd = pendingStep.commandInfo?.commandLine ?: "execute command"
+                        "$cmd\n\n👉 Swipe Forward to Approve\n👈 Swipe Backward to Reject"
+                    }
+                    ApprovalType.PERMISSION -> {
+                        val path = pendingStep.fileInfo?.path ?: "file"
+                        val act = pendingStep.fileInfo?.action ?: "access"
+                        "File: $path\nAction: $act\n\n👉 Swipe Forward to Approve\n👈 Swipe Backward to Reject"
+                    }
+                    ApprovalType.QUESTION -> {
+                        val qInfo = pendingStep.questionInfo
+                        val questionText = qInfo?.question ?: ""
+                        val optionsText = qInfo?.options?.mapIndexed { index, option ->
+                            "${index + 1}. ${option.text}"
+                        }?.joinToString("\n") ?: ""
+
+                        if (optionsText.isNotEmpty()) {
+                            "$questionText\n\n$optionsText\n\n🎙️ Click to speak response"
+                        } else {
+                            "$questionText\n\n🎙️ Click to speak response"
+                        }
+                    }
+                    else -> {
+                        val actionDesc = pendingStep.toolAction ?: pendingStep.toolSummary ?: "Agent action"
+                        "$actionDesc\n\n👉 Swipe Forward to Approve\n👈 Swipe Backward to Reject"
+                    }
+                }
+
+                if (_glassesProvider.state.value == GlassesState.SCENE_ACTIVE) {
+                    _glassesProvider.displayText(title, body)
+                }
+            }
+        } else {
+            if (lastForwardedApprovalKey != null) {
+                lastForwardedApprovalKey = null
+                val latestText = _latestResponse.value
+                if (latestText.isNotEmpty()) {
+                    forwardToGlasses(latestText)
+                } else {
+                    _glassesProvider.clearDisplay()
+                }
+            }
+        }
     }
 
     // ── WebSocket message handling ──

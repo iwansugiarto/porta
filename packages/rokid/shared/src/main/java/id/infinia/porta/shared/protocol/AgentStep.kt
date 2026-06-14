@@ -67,7 +67,8 @@ data class AgentStep(
 
             // Extract planner response text
             val plannerResponse = json.getAsJsonObject("plannerResponse")
-            val plannerText = plannerResponse?.get("text")?.asString
+            val plannerText = plannerResponse?.get("modifiedResponse")?.asString
+                ?: plannerResponse?.get("text")?.asString
                 ?: plannerResponse?.getAsJsonArray("items")
                     ?.firstOrNull()
                     ?.asJsonObject

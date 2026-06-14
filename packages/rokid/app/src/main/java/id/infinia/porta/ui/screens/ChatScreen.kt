@@ -1275,9 +1275,9 @@ fun ChatScreen(
                                 onRejectCommand = { trajectoryId, stepIndex ->
                                     viewModel.rejectCommandByTrajectory(trajectoryId, stepIndex)
                                 },
-                                onApprovePermission = { trajectoryId, stepIndex, allow, scope ->
+                                onApprovePermission = { trajectoryId, stepIndex, allow, scope, path ->
                                     viewModel.handleFilePermissionByTrajectory(
-                                        trajectoryId, stepIndex, allow, scope
+                                        trajectoryId, stepIndex, allow, scope, path
                                     )
                                 },
                                 onRevert = { stepIndex ->

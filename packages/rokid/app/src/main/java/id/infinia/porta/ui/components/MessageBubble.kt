@@ -58,7 +58,7 @@ fun MessageBubble(
     message: ChatMessage,
     onApproveCommand: ((String, Int) -> Unit)? = null,
     onRejectCommand: ((String, Int) -> Unit)? = null,
-    onApprovePermission: ((String, Int, Boolean, Int) -> Unit)? = null,
+    onApprovePermission: ((String, Int, Boolean, Int, String) -> Unit)? = null,
     onRevert: ((Int) -> Unit)? = null,
     onAnswerQuestion: ((String, Int, List<Int>, String?) -> Unit)? = null,
     onSendFeedback: ((String) -> Unit)? = null,
@@ -437,7 +437,7 @@ private fun SystemCard(
     message: ChatMessage,
     onApproveCommand: ((String, Int) -> Unit)?,
     onRejectCommand: ((String, Int) -> Unit)?,
-    onApprovePermission: ((String, Int, Boolean, Int) -> Unit)?,
+    onApprovePermission: ((String, Int, Boolean, Int, String) -> Unit)?,
     onAnswerQuestion: ((String, Int, List<Int>, String?) -> Unit)?,
 ) {
     when (message.type) {
@@ -855,7 +855,7 @@ private fun CodeActionCard(message: ChatMessage) {
 @Composable
 private fun FilePermissionCard(
     message: ChatMessage,
-    onPermission: ((String, Int, Boolean, Int) -> Unit)?,
+    onPermission: ((String, Int, Boolean, Int, String) -> Unit)?,
 ) {
     val step = message.step ?: return
     val fpr = step.getAsJsonObject("filePermissionRequest")
@@ -916,16 +916,16 @@ private fun FilePermissionCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End)
                 ) {
                     OutlinedButton(
-                        onClick = { responded = true; onPermission(trajectoryId, stepIdx, false, 0) },
+                        onClick = { responded = true; onPermission(trajectoryId, stepIdx, false, 0, path) },
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = PortaError)
                     ) { Text("Deny", fontSize = 11.sp) }
                     FilledTonalButton(
-                        onClick = { responded = true; onPermission(trajectoryId, stepIdx, true, 1) },
+                        onClick = { responded = true; onPermission(trajectoryId, stepIdx, true, 1, path) },
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
                     ) { Text("Once", fontSize = 11.sp) }
                     Button(
-                        onClick = { responded = true; onPermission(trajectoryId, stepIdx, true, 2) },
+                        onClick = { responded = true; onPermission(trajectoryId, stepIdx, true, 2, path) },
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = PortaSuccess)
                     ) { Text("Allow Conv.", fontSize = 11.sp) }

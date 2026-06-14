@@ -339,6 +339,7 @@ class PortaClient(
         trajectoryId: String,
         stepIndex: Int,
         allow: Boolean,
+        absolutePathUri: String,
         scope: Int = 2 // CONVERSATION scope
     ) = withContext(Dispatchers.IO) {
         val url = buildHttpUrl("/api/conversations/$cascadeId/file-permission")
@@ -348,6 +349,7 @@ class PortaClient(
             addProperty("stepIndex", stepIndex)
             addProperty("allow", allow)
             addProperty("scope", scope)
+            addProperty("absolutePathUri", absolutePathUri)
         }
 
         val requestBody = payload.toString()

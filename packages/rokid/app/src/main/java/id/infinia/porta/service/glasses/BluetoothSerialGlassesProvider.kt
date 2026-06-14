@@ -25,7 +25,9 @@ class BluetoothSerialGlassesProvider(
     private val onSendChat: ((String) -> Unit)? = null,
     private val onStartVoice: (() -> Unit)? = null,
     private val onStopVoice: (() -> Unit)? = null,
-    private val getLayoutSettings: (() -> Triple<String, String, Int>)? = null
+    private val getLayoutSettings: (() -> Triple<String, String, Int>)? = null,
+    private val onApproveAction: (() -> Unit)? = null,
+    private val onRejectAction: (() -> Unit)? = null
 ) : GlassesProvider {
 
     companion object {
@@ -73,17 +75,24 @@ class BluetoothSerialGlassesProvider(
         _errorMessage.value = null
         Log.i(TAG, "Starting Bluetooth Serial connection...")
 
-        val context = appContext ?: return
+        // Find paired Rokid device
+        val context = appContext
+        if (context == null) {
+            Log.w(TAG, "appContext is null, returning")
+            return
+        }
         val adapter = bluetoothAdapter
         if (adapter == null) {
             _state.value = GlassesState.ERROR
             _errorMessage.value = "Bluetooth is not supported on this device."
+            Log.w(TAG, "bluetoothAdapter is null, returning")
             return
         }
 
         if (!adapter.isEnabled) {
             _state.value = GlassesState.ERROR
             _errorMessage.value = "Bluetooth is turned off. Please turn it on and try again."
+            Log.w(TAG, "bluetoothAdapter is disabled, returning")
             scheduleReconnect()
             return
         }
@@ -96,18 +105,41 @@ class BluetoothSerialGlassesProvider(
             if (!hasPermission) {
                 _state.value = GlassesState.ERROR
                 _errorMessage.value = "Bluetooth connect permission not granted."
+                Log.w(TAG, "BLUETOOTH_CONNECT permission NOT granted, returning")
                 return
             }
         }
 
+
         // Find paired Rokid device
+        Log.i(TAG, "Getting bonded devices...")
         val pairedDevices = try {
-            adapter.bondedDevices
+            val devices = adapter.bondedDevices
+            Log.i(TAG, "Total bonded devices: ${devices?.size ?: 0}")
+            devices?.forEach { device ->
+                Log.i(TAG, "Bonded device: name='${device.name}' addr='${device.address}'")
+            }
+            devices
         } catch (e: SecurityException) {
+            Log.e(TAG, "SecurityException getting bonded devices", e)
             _state.value = GlassesState.ERROR
             _errorMessage.value = "Security Exception: Bluetooth connect permission missing."
             return
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception getting bonded devices", e)
+            _state.value = GlassesState.ERROR
+            _errorMessage.value = "Error: ${e.message}"
+            return
         }
+
+        if (pairedDevices == null || pairedDevices.isEmpty()) {
+            _state.value = GlassesState.ERROR
+            _errorMessage.value = "No paired Bluetooth devices found on this phone."
+            Log.w(TAG, "Bonded devices list is empty or null")
+            scheduleReconnect()
+            return
+        }
+
         val rokidDevice = pairedDevices.firstOrNull { device ->
             val name = device.name ?: ""
             name.contains("Rokid", ignoreCase = true) || name.contains("Glasses", ignoreCase = true)
@@ -118,14 +150,15 @@ class BluetoothSerialGlassesProvider(
             _errorMessage.value = buildString {
                 appendLine("No paired Rokid glasses found.")
                 appendLine()
-                appendLine("1. Pair your glasses in Phone Bluetooth Settings first.")
-                appendLine("2. Open the HUD App on your glasses.")
-                appendLine("3. Click connect again.")
+                appendLine("Bonded devices checked: ${pairedDevices.size}")
+                appendLine("Ensure device name contains 'Rokid' or 'Glasses'.")
             }
             Log.w(TAG, "No paired device found containing 'Rokid' or 'Glasses'")
             scheduleReconnect()
             return
         }
+
+
 
         Log.i(TAG, "Found paired Rokid device: ${rokidDevice.name} (${rokidDevice.address})")
         connectToDevice(rokidDevice)
@@ -148,7 +181,6 @@ class BluetoothSerialGlassesProvider(
                     withContext(Dispatchers.Main) {
                         _state.value = GlassesState.CONNECTED
                         delay(200) // Brief delay
-                        _state.value = GlassesState.SCENE_ACTIVE
                         _capabilities.value = GlassesCapabilities(
                             canDisplay = true,
                             canCapturePhoto = false,
@@ -171,6 +203,9 @@ class BluetoothSerialGlassesProvider(
                             "title" to "Porta AI",
                             "body" to "Connected via Bluetooth Serial! ✨\nReady for your questions."
                         ))
+
+                        // Set SCENE_ACTIVE after sending the welcome message to let VM update screen if needed
+                        _state.value = GlassesState.SCENE_ACTIVE
                     }
                 } catch (e: IOException) {
                     Log.e(TAG, "Socket connection failed", e)
@@ -237,6 +272,37 @@ class BluetoothSerialGlassesProvider(
         }
     }
 
+    fun updateToolbar(
+        model: String? = null,
+        steps: Int? = null,
+        agentRunning: Boolean? = null,
+        toolAction: String? = null,
+        conversation: String? = null,
+        subagents: List<Pair<String, Int>>? = null  // List of (role, count)
+    ) {
+        if (_state.value != GlassesState.SCENE_ACTIVE) return
+        val json = JsonObject().apply {
+            addProperty("action", "update_toolbar")
+            model?.let { addProperty("model", it) }
+            steps?.let { addProperty("steps", it) }
+            agentRunning?.let { addProperty("agent_running", it) }
+            toolAction?.let { addProperty("tool_action", it) }
+            conversation?.let { addProperty("conversation", it) }
+            subagents?.let { list ->
+                val arr = com.google.gson.JsonArray()
+                list.forEach { (role, count) ->
+                    val sa = JsonObject().apply {
+                        addProperty("role", role)
+                        addProperty("count", count)
+                    }
+                    arr.add(sa)
+                }
+                add("subagents", arr)
+            }
+        }
+        sendJsonObject(json)
+    }
+
     override fun startAudioStream(callback: AudioStreamCallback) {
         // Direct serial doesn't support mic streaming without receiver-side audio coding.
         // Fall back to phone microphone.
@@ -266,14 +332,10 @@ class BluetoothSerialGlassesProvider(
 
     // ── Helper ──
 
-    private fun sendJsonCommand(action: String, data: Map<String, String>) {
+    private fun sendJsonObject(json: JsonObject) {
         val stream = outputStream ?: return
         scope.launch(Dispatchers.IO) {
             try {
-                val json = JsonObject().apply {
-                    addProperty("action", action)
-                    data.forEach { (key, value) -> addProperty(key, value) }
-                }
                 val payload = json.toString() + "\n"
                 stream.write(payload.toByteArray(Charsets.UTF_8))
                 stream.flush()
@@ -287,6 +349,14 @@ class BluetoothSerialGlassesProvider(
                 }
             }
         }
+    }
+
+    private fun sendJsonCommand(action: String, data: Map<String, String>) {
+        val json = JsonObject().apply {
+            addProperty("action", action)
+            data.forEach { (key, value) -> addProperty(key, value) }
+        }
+        sendJsonObject(json)
     }
 
     private fun closeSocket() {
@@ -304,7 +374,7 @@ class BluetoothSerialGlassesProvider(
         scope.launch(Dispatchers.IO) {
             try {
                 val reader = java.io.BufferedReader(java.io.InputStreamReader(socket.inputStream))
-                while (isActive && (_state.value == GlassesState.CONNECTED || _state.value == GlassesState.SCENE_ACTIVE)) {
+                while (isActive) {
                     val line = reader.readLine() ?: break // Socket disconnected
                     Log.d(TAG, "Received from glasses: $line")
                     withContext(Dispatchers.Main) {
@@ -343,6 +413,12 @@ class BluetoothSerialGlassesProvider(
                 }
                 "stop_mic" -> {
                     onStopVoice?.invoke()
+                }
+                "approve_action" -> {
+                    onApproveAction?.invoke()
+                }
+                "reject_action" -> {
+                    onRejectAction?.invoke()
                 }
             }
         } catch (e: Exception) {

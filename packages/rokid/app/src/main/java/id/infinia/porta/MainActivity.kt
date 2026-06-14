@@ -51,6 +51,12 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { /* granted or denied — VoiceInputService checks availability */ }
 
+    // Runtime permission request for Bluetooth (S+)
+    private val bluetoothPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { /* granted or denied */ }
+
+
     /** Shared content state — consumed by ChatScreen */
     private val _sharedContent = mutableStateOf<SharedContent?>(null)
 
@@ -62,6 +68,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         requestNotificationPermissionIfNeeded()
         requestAudioPermissionIfNeeded()
+        requestBluetoothPermissionIfNeeded()
         setupAppShortcuts()
         id.infinia.porta.service.ConversationPollWorker.enqueue(this)
 
@@ -385,6 +392,24 @@ class MainActivity : ComponentActivity() {
             ) != PackageManager.PERMISSION_GRANTED
         ) {
             audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    /**
+     * Request Bluetooth permissions required on Android 12+ (API 31+).
+     */
+    private fun requestBluetoothPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val permissions = arrayOf(
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.BLUETOOTH_SCAN
+            )
+            val needsRequest = permissions.any {
+                ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+            }
+            if (needsRequest) {
+                bluetoothPermissionLauncher.launch(permissions)
+            }
         }
     }
 
