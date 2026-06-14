@@ -53,7 +53,7 @@ export function resolveAuthConfig(
     username: env.PORTA_AUTH_USER?.trim() || undefined,
     password: env.PORTA_AUTH_PASSWORD?.trim() || undefined,
     sessionTtlMs: ttlHours * 60 * 60 * 1000,
-    publicPaths: ["/api/health", "/api/auth/check", "/api/auth/login", "/api/share/auth", "/api/share/info"],
+    publicPaths: ["/api/health", "/api/auth/check", "/api/auth/login", "/api/share/auth", "/api/share/info", "/dashboard/api/health", "/dashboard/api/config/auto-approve"],
   };
 }
 

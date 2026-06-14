@@ -11,6 +11,8 @@
  */
 
 import type { Hono } from "hono";
+import { existsSync, readFileSync, utimesSync, openSync, readSync, closeSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { discovery } from "./routing.js";
 import { isAutoApproveEnabled } from "./metadata.js";
 
@@ -341,7 +343,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     }
 
     .btn:hover { border-color: var(--accent); background: var(--accent-glow); }
-    .btn.danger:hover { border-color: var(--error); background: rgba(248, 113, 113, 0.1); }
+    .btn.warning:hover { border-color: var(--warning); background: rgba(251, 191, 36, 0.15); }
+    .btn.danger:hover { border-color: var(--error); background: rgba(248, 113, 113, 0.15); }
 
     /* ── Conversations ── */
     .conv-list { display: flex; flex-direction: column; gap: 6px; }
@@ -462,6 +465,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         </div>
         <button class="btn" onclick="refreshAll()">🔄 Refresh Now</button>
         <button class="btn danger" onclick="rediscover()">♻️ Re-discover LS</button>
+        <button class="btn warning" onclick="restartService()" style="width: 100%; margin-top: 8px;">⚡ Restart Porta Service</button>
       </div>
     </div>
 
@@ -478,9 +482,20 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     <!-- Row 4: Log Viewer -->
     <div class="card span-3">
-      <div class="card-header">
-        <span class="card-title">Activity Log</span>
-        <span class="card-icon">📋</span>
+      <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span class="card-title" id="logTitle">Activity Log</span>
+          <span class="card-icon">📋</span>
+        </div>
+        <div style="display: flex; gap: 6px; align-items: center;">
+          <select id="logSourceSelect" onchange="changeLogSource(this.value)" style="background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border); padding: 6px 12px; border-radius: 6px; font-size: 12px; outline: none; cursor: pointer; font-family: inherit;">
+            <option value="activity">Browser Events</option>
+            <option value="proxy">Proxy Log (proxy.log)</option>
+            <option value="web">Web Log (web.log)</option>
+            <option value="telegram">Telegram Log (telegram.log)</option>
+          </select>
+          <button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="refreshLogs()">🔄 Refresh Log</button>
+        </div>
       </div>
       <div class="log-viewer" id="logViewer">
         <div class="log-line"><span class="ts">[--:--:--]</span> Initializing...</div>
@@ -539,15 +554,125 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
     }
 
+    const browserLogs = [];
+
     function addLog(message, level = 'info') {
-      const viewer = document.getElementById('logViewer');
       const now = new Date().toLocaleTimeString('en-US', { hour12: false });
+      const logEntry = { now, message, level };
+      browserLogs.push(logEntry);
+      if (browserLogs.length > 200) browserLogs.shift();
+
+      const select = document.getElementById('logSourceSelect');
+      if (select && select.value === 'activity') {
+        appendLogToUI(logEntry);
+        const viewer = document.getElementById('logViewer');
+        if (viewer) {
+          while (viewer.children.length > 200) viewer.removeChild(viewer.firstChild);
+          viewer.scrollTop = viewer.scrollHeight;
+        }
+      }
+    }
+
+    function appendLogToUI(entry) {
+      const viewer = document.getElementById('logViewer');
+      if (!viewer) return;
       const line = document.createElement('div');
       line.className = 'log-line';
-      line.innerHTML = '<span class="ts">[' + now + ']</span> <span class="' + level + '">' + escapeHtml(message) + '</span>';
+      line.innerHTML = '<span class="ts">[' + entry.now + ']</span> <span class="' + entry.level + '">' + escapeHtml(entry.message) + '</span>';
       viewer.appendChild(line);
-      while (viewer.children.length > 200) viewer.removeChild(viewer.firstChild);
-      viewer.scrollTop = viewer.scrollHeight;
+    }
+
+    function changeLogSource(value) {
+      const viewer = document.getElementById('logViewer');
+      if (!viewer) return;
+      viewer.innerHTML = '';
+
+      if (value === 'activity') {
+        document.getElementById('logTitle').textContent = 'Activity Log';
+        browserLogs.forEach(appendLogToUI);
+        viewer.scrollTop = viewer.scrollHeight;
+      } else {
+        const fileNames = {
+          proxy: 'Proxy Log (proxy.log)',
+          web: 'Web Log (web.log)',
+          telegram: 'Telegram Log (telegram.log)'
+        };
+        document.getElementById('logTitle').textContent = fileNames[value] || 'System Log';
+        fetchLogFiles(value);
+      }
+    }
+
+    async function fetchLogFiles(type) {
+      const viewer = document.getElementById('logViewer');
+      if (!viewer) return;
+      viewer.innerHTML = '<div class="log-line"><span class="ts">[--:--:--]</span> Loading logs for ' + type + '...</div>';
+      try {
+        const data = await fetchJSON('/control/logs?type=' + type);
+        viewer.innerHTML = '';
+        if (data.error) {
+          const line = document.createElement('div');
+          line.className = 'log-line';
+          line.innerHTML = '<span class="ts">[--:--:--]</span> <span class="err">Error: ' + escapeHtml(data.error) + '</span>';
+          viewer.appendChild(line);
+          return;
+        }
+        if (!data.lines || data.lines.length === 0) {
+          const line = document.createElement('div');
+          line.className = 'log-line';
+          line.innerHTML = '<span class="ts">[--:--:--]</span> <span class="warning">Log file is empty</span>';
+          viewer.appendChild(line);
+          return;
+        }
+        data.lines.forEach(rawLine => {
+          if (!rawLine.trim()) return;
+          const line = document.createElement('div');
+          line.className = 'log-line';
+          let levelClass = 'info';
+          if (rawLine.includes('[ERROR]') || rawLine.includes('[FATAL]') || rawLine.toLowerCase().includes('error:') || rawLine.toLowerCase().includes('fail')) {
+            levelClass = 'err';
+          } else if (rawLine.includes('[WARN]') || rawLine.includes('warn')) {
+            levelClass = 'warn';
+          } else if (rawLine.includes('[OK]') || rawLine.includes('✓')) {
+            levelClass = 'ok';
+          }
+          line.innerHTML = '<span class="ts">[log]</span> <span class="' + levelClass + '">' + escapeHtml(rawLine) + '</span>';
+          viewer.appendChild(line);
+        });
+        viewer.scrollTop = viewer.scrollHeight;
+      } catch (e) {
+        viewer.innerHTML = '<div class="log-line"><span class="ts">[--:--:--]</span> <span class="err">Failed to fetch logs: ' + escapeHtml(e.message) + '</span></div>';
+      }
+    }
+
+    function refreshLogs() {
+      const select = document.getElementById('logSourceSelect');
+      if (select) changeLogSource(select.value);
+    }
+
+    async function restartService() {
+      if (!confirm('Are you sure you want to restart the Porta Service? This will restart the proxy, web interface, and telegram bot.')) {
+        return;
+      }
+      addLog('Sending restart command...', 'warning');
+      try {
+        const res = await fetch(API + '/control/restart', {
+          method: 'POST',
+          headers: headers()
+        });
+        const data = await res.json();
+        if (data.success) {
+          addLog('Restart initiated. Reconnecting in 5 seconds...', 'ok');
+          updateConnectionStatus(false);
+          pollOk = false;
+        } else {
+          addLog('Restart failed: ' + (data.message || 'unknown error'), 'err');
+        }
+      } catch (e) {
+        // Since server exits, the connection will drop. That means success!
+        addLog('Restart request completed: Service is offline and restarting...', 'ok');
+        updateConnectionStatus(false);
+        pollOk = false;
+      }
     }
 
     function escapeHtml(s) {
@@ -718,5 +843,68 @@ export function registerDashboardRoute(app: Hono) {
       process.env.PORTA_AUTO_APPROVE = body.enabled ? "true" : "false";
     }
     return c.json({ enabled: isAutoApproveEnabled() });
+  });
+
+  app.get("/dashboard/api/control/logs", (c) => {
+    const type = c.req.query("type") ?? "proxy";
+    const allowedTypes = ["proxy", "web", "telegram"];
+    if (!allowedTypes.includes(type)) {
+      return c.json({ error: "Invalid log type" }, 400);
+    }
+    const repoRoot = process.cwd();
+    const logPath = join(repoRoot, "..", "..", "logs", `${type}.log`);
+
+    if (!existsSync(logPath)) {
+      return c.json({ lines: [`[System] No log file found at ${logPath}`] });
+    }
+
+    try {
+      // Memory-safe tail: only read the last 32KB of the file
+      const TAIL_BYTES = 32 * 1024;
+      const stat = statSync(logPath);
+      const fileSize = stat.size;
+      const readSize = Math.min(TAIL_BYTES, fileSize);
+      const startPos = Math.max(0, fileSize - readSize);
+
+      const fd = openSync(logPath, "r");
+      const buf = Buffer.alloc(readSize);
+      readSync(fd, buf, 0, readSize, startPos);
+      closeSync(fd);
+
+      const content = buf.toString("utf-8");
+      let lines = content.split("\n");
+      // If we started mid-line (not at file start), drop the first partial line
+      if (startPos > 0 && lines.length > 1) {
+        lines = lines.slice(1);
+      }
+      // Take last 150 lines
+      lines = lines.slice(-150);
+      return c.json({ lines });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  app.post("/dashboard/api/control/restart", (c) => {
+    console.log("⚠️ [dashboard] Restart request received.");
+    const repoRoot = process.cwd();
+    const indexPath = join(repoRoot, "src", "index.ts");
+
+    if (existsSync(indexPath)) {
+      console.log("Touching src/index.ts to trigger tsx watch reload...");
+      try {
+        const now = new Date();
+        utimesSync(indexPath, now, now);
+        return c.json({ success: true, message: "Porta proxy is reloading (development mode)..." });
+      } catch (err) {
+        console.warn("Touch failed, falling back to process.exit:", err);
+      }
+    }
+
+    // Fallback/production: exit process and let launchd/orchestrator restart it
+    setTimeout(() => {
+      process.exit(0);
+    }, 1000);
+    return c.json({ success: true, message: "Porta service is restarting (production mode)..." });
   });
 }

@@ -132,6 +132,7 @@ app.use("/api/*", csrfProtection());
 
 // 5. Authentication
 app.use("/api/*", authMiddleware(authConfig));
+app.use("/dashboard/api/*", authMiddleware(authConfig));
 
 // Track auth failures for lockout
 app.use("/api/*", async (c, next) => {
