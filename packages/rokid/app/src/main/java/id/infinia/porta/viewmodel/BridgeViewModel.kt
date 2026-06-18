@@ -1478,6 +1478,25 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun sendGlassesPowerConfig(dimTimeout: Int, sleepTimeout: Int) {
+        val provider = _glassesProvider
+        if (provider is BluetoothSerialGlassesProvider) {
+            provider.sendPowerConfig(dimTimeout, sleepTimeout)
+        }
+    }
+
+    /**
+     * Forward a phone notification to glasses display.
+     * NOTE: Caller is responsible for capturing notifications (e.g. NotificationListenerService).
+     */
+    fun forwardNotificationToGlasses(appName: String, title: String, text: String) {
+        if (_glassesProvider.state.value != GlassesState.SCENE_ACTIVE) return
+        _glassesProvider.displayText(
+            "📱 $appName",
+            "$title\n$text"
+        )
+    }
+
     fun testGlassesDisplay() {
         _glassesProvider.displayText(
             "Porta Test",

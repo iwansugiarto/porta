@@ -59,6 +59,9 @@ class BluetoothSerialGlassesProvider(
     private var userWantsConnection = false
     private var reconnectJob: Job? = null
 
+    private var _connectionLost = false
+    val connectionLost: Boolean get() = _connectionLost
+
     override fun connect(context: Context) {
         appContext = context.applicationContext
         userWantsConnection = true
@@ -179,6 +182,7 @@ class BluetoothSerialGlassesProvider(
                     }
 
                     withContext(Dispatchers.Main) {
+                        _connectionLost = false
                         _state.value = GlassesState.CONNECTED
                         delay(200) // Brief delay
                         _capabilities.value = GlassesCapabilities(
@@ -245,6 +249,14 @@ class BluetoothSerialGlassesProvider(
         _errorMessage.value = null
     }
 
+    fun reconnect() {
+        val context = appContext ?: return
+        if (_state.value == GlassesState.CONNECTED || _state.value == GlassesState.SCENE_ACTIVE) return
+        userWantsConnection = true
+        _connectionLost = false
+        startConnectionAttempt()
+    }
+
     override fun displayText(title: String, body: String) {
         if (_state.value != GlassesState.SCENE_ACTIVE) {
             Log.w(TAG, "displayText: connection not active")
@@ -262,6 +274,15 @@ class BluetoothSerialGlassesProvider(
                 "alignment" to alignment,
                 "font_size" to fontSize,
                 "padding" to padding.toString()
+            ))
+        }
+    }
+
+    fun sendPowerConfig(dimTimeout: Int, sleepTimeout: Int) {
+        if (_state.value == GlassesState.SCENE_ACTIVE) {
+            sendJsonCommand("set_power", mapOf(
+                "screen_timeout" to dimTimeout.toString(),
+                "screen_sleep" to sleepTimeout.toString()
             ))
         }
     }
@@ -343,9 +364,11 @@ class BluetoothSerialGlassesProvider(
             } catch (e: IOException) {
                 Log.e(TAG, "Failed to send command", e)
                 withContext(Dispatchers.Main) {
+                    _connectionLost = true
                     _state.value = GlassesState.ERROR
                     _errorMessage.value = "Connection lost: ${e.message}"
                     closeSocket()
+                    scheduleReconnect()
                 }
             }
         }

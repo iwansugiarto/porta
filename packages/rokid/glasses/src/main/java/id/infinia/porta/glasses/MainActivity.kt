@@ -4,8 +4,12 @@ import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
@@ -15,6 +19,12 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.InfiniteTransition
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -27,6 +37,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -37,7 +49,6 @@ import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import androidx.compose.foundation.clickable
-import android.graphics.PixelFormat
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import com.google.gson.JsonObject
@@ -65,6 +76,9 @@ class MainActivity : ComponentActivity() {
         private const val TAG = "PortaGlassesHUD"
         private val SPP_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
         private const val NAME = "PortaGlassesServer"
+        private const val MAX_HISTORY = 20
+        private const val DOUBLE_TAP_THRESHOLD_MS = 300L
+        private const val MAX_RECONNECT_DELAY_MS = 30_000L
     }
 
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
@@ -86,6 +100,13 @@ class MainActivity : ComponentActivity() {
     private val fontSizeScale = mutableStateOf("medium") // "small", "medium", "large"
     private val hudPadding = mutableStateOf(24) // padding in dp
 
+    // Power management
+    private var screenTimeoutSeconds = 30L  // seconds before dim (configurable from phone)
+    private var screenSleepSeconds = 120L   // seconds before sleep (configurable from phone)
+    private var idleTimerJob: Job? = null
+    private val screenDimmed = mutableStateOf(false)
+    private val screenAsleep = mutableStateOf(false)
+
     // Gesture scroll states
     private val isApprovalActive = mutableStateOf(false)
     private var composeScrollState: ScrollState? = null
@@ -98,6 +119,22 @@ class MainActivity : ComponentActivity() {
     private val toolbarConversation = mutableStateOf("")
     data class SubagentEntry(val role: String, val count: Int)
     private val toolbarSubagents = mutableStateOf<List<SubagentEntry>>(emptyList())
+
+    // Battery level
+    private val batteryLevel = mutableStateOf(100)
+    private var batteryReceiver: BroadcastReceiver? = null
+
+    // Auto-reconnect
+    private val reconnectAttempt = mutableStateOf(0)
+    private val isReconnecting = mutableStateOf(false)
+
+    // Message history
+    private val messageHistory = mutableStateListOf<String>()
+    private val historyIndex = mutableStateOf(-1) // -1 = live (latest)
+    private val browsingHistory = mutableStateOf(false)
+
+    // Double-tap detection
+    private var lastEnterTapTime = 0L
 
     // Permission launcher for Android 12+
     private val requestPermissionLauncher = registerForActivityResult(
@@ -126,6 +163,9 @@ class MainActivity : ComponentActivity() {
         window.navigationBarColor = android.graphics.Color.BLACK
         window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.BLACK))
         WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        // Register battery broadcast receiver
+        registerBatteryReceiver()
         
         setContent {
             Box(
@@ -166,10 +206,31 @@ class MainActivity : ComponentActivity() {
         checkPermissionsAndStart()
     }
 
+    private fun registerBatteryReceiver() {
+        batteryReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+                if (level >= 0 && scale > 0) {
+                    batteryLevel.value = (level * 100) / scale
+                }
+            }
+        }
+        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        registerReceiver(batteryReceiver, filter)
+    }
+
     private fun wakeScreen() {
+        // Restore full brightness
+        val lp = window.attributes
+        lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        window.attributes = lp
+        screenDimmed.value = false
+        screenAsleep.value = false
+
         // Keep screen on while app is in foreground
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        
+
         // Turn screen on (for lock screen/timed-out screen)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setTurnScreenOn(true)
@@ -181,8 +242,8 @@ class MainActivity : ComponentActivity() {
                 WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
             )
         }
-        
-        // Force screen wake using PowerManager (requires WAKE_LOCK permission)
+
+        // Force screen wake using PowerManager
         try {
             val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
             if (pm != null) {
@@ -192,24 +253,120 @@ class MainActivity : ComponentActivity() {
                     PowerManager.ACQUIRE_CAUSES_WAKEUP,
                     "PortaGlassesHUD::Wake"
                 )
-                wl.acquire(1000) // Acquire for 1s to trigger screen turn on
+                wl.acquire(1000)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to acquire wake lock", e)
+        }
+
+        // Reset idle timer
+        resetIdleTimer()
+    }
+
+    private fun resetIdleTimer() {
+        idleTimerJob?.cancel()
+        idleTimerJob = scope.launch {
+            // Phase 1: Wait, then dim
+            delay(screenTimeoutSeconds * 1000)
+            dimScreen()
+
+            // Phase 2: Wait more, then sleep
+            delay((screenSleepSeconds - screenTimeoutSeconds) * 1000)
+            sleepScreen()
+        }
+    }
+
+    private fun dimScreen() {
+        Log.d(TAG, "Power: Dimming screen")
+        screenDimmed.value = true
+        val lp = window.attributes
+        lp.screenBrightness = 0.01f  // Very dim but still visible
+        window.attributes = lp
+    }
+
+    private fun sleepScreen() {
+        Log.d(TAG, "Power: Sleeping screen")
+        screenAsleep.value = true
+        val lp = window.attributes
+        lp.screenBrightness = 0.0f  // Screen off
+        window.attributes = lp
+        // Allow system to turn off screen
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    @Composable
+    fun AmbientClockContent() {
+        // Live clock for ambient mode
+        var currentTime by remember { mutableStateOf("") }
+        LaunchedEffect(Unit) {
+            while (true) {
+                val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
+                currentTime = sdf.format(Date())
+                delay(30_000)
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = currentTime,
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Light,
+                color = Color(0xFF334155) // Very dim color
+            )
         }
     }
 
     @Composable
     fun HUDContent() {
+        val isDimmed by screenDimmed
+        val isAsleep by screenAsleep
+
+        // Ambient clock mode: show minimal clock when dimmed
+        if (isAsleep) {
+            // Black screen — show nothing
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+            )
+            return
+        }
+
+        if (isDimmed) {
+            AmbientClockContent()
+            return
+        }
+
+        // Normal HUD content
+        HUDMainContent()
+    }
+
+    @Composable
+    fun HUDMainContent() {
         val state by serverState
         val title by titleText
         val body by bodyText
         val status by statusLabel
         var localListening by remember { mutableStateOf(false) }
+        val isBrowsingHistory by browsingHistory
+        val currentHistoryIndex by historyIndex
 
         val scrollState = rememberScrollState()
         composeScrollState = scrollState
-        LaunchedEffect(body) {
+
+        // Determine displayed text: live or from history
+        val displayedBody = if (isBrowsingHistory && currentHistoryIndex >= 0 && currentHistoryIndex < messageHistory.size) {
+            messageHistory[currentHistoryIndex]
+        } else {
+            body
+        }
+
+        LaunchedEffect(displayedBody) {
             scrollState.animateScrollTo(scrollState.maxValue)
         }
 
@@ -272,12 +429,39 @@ class MainActivity : ComponentActivity() {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .padding(end = 20.dp) // Reserve space for steps overlay
                         .verticalScroll(scrollState)
                 ) {
+                    // History indicator
+                    if (isBrowsingHistory) {
+                        Text(
+                            text = "📜 History (${currentHistoryIndex + 1}/${messageHistory.size})",
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = Color(0xFFFBBF24),
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                    }
+
+                    // Reconnecting indicator
+                    val reconnecting by isReconnecting
+                    val reconnectNum by reconnectAttempt
+                    if (reconnecting && reconnectNum > 0) {
+                        Text(
+                            text = "Reconnecting... (attempt $reconnectNum)",
+                            fontSize = bodySize,
+                            fontFamily = FontFamily.Monospace,
+                            color = Color(0xFFFBBF24),
+                            fontStyle = FontStyle.Italic,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                    }
+
                     if (state == ServerState.THINKING) {
                         Text(
                             text = "⏳ Thinking...",
                             fontSize = bodySize,
+                            fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFFFBBF24),
                             fontStyle = FontStyle.Italic
@@ -287,16 +471,37 @@ class MainActivity : ComponentActivity() {
                             Text(
                                 text = title,
                                 fontSize = titleSize,
+                                fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF818CF8),
                                 modifier = Modifier.padding(bottom = 8.dp)
                             )
                         }
                         Text(
-                            text = body,
+                            text = displayedBody,
                             fontSize = bodySize,
+                            fontFamily = FontFamily.Monospace,
                             color = Color(0xFFF1F5F9),
                             lineHeight = bodyLineHeight
+                        )
+                    }
+                }
+
+                // Steps overlay — vertical text on right edge
+                val steps by toolbarSteps
+                if (steps > 0) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .graphicsLayer { rotationZ = 90f }
+                    ) {
+                        Text(
+                            text = "$steps",
+                            fontSize = 28.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Light,
+                            color = Color(0xFF334155),
+                            letterSpacing = 2.sp
                         )
                     }
                 }
@@ -314,6 +519,7 @@ class MainActivity : ComponentActivity() {
         val running by toolbarAgentRunning
         val toolAction by toolbarToolAction
         val subagents by toolbarSubagents
+        val battery by batteryLevel
 
         // Live clock - updates every 30 seconds
         var currentTime by remember { mutableStateOf("") }
@@ -324,6 +530,26 @@ class MainActivity : ComponentActivity() {
                 delay(30_000)
             }
         }
+
+        // Pulse animation for connection dot
+        val infiniteTransition = rememberInfiniteTransition(label = "dotPulse")
+        val dotAlpha by infiniteTransition.animateFloat(
+            initialValue = 0.5f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1000),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "dotAlpha"
+        )
+
+        // Battery display
+        val batteryIcon = when {
+            battery > 50 -> "🔋"
+            battery <= 20 -> "🪫"
+            else -> ""
+        }
+        val batteryDisplay = if (batteryIcon.isNotEmpty()) "$batteryIcon$battery%" else "$battery%"
 
         // Single wrapper Column — ensures toolbar is one solid block
         Column(modifier = Modifier.fillMaxWidth()) {
@@ -382,11 +608,17 @@ class MainActivity : ComponentActivity() {
                         ServerState.ERROR -> Color(0xFFF87171)
                         ServerState.IDLE -> Color(0xFF64748B)
                     }
+                    // Apply pulse animation only when connected or thinking
+                    val effectiveAlpha = if (state == ServerState.CONNECTED || state == ServerState.THINKING) {
+                        dotAlpha
+                    } else {
+                        1.0f
+                    }
                     Box(
                         modifier = Modifier
                             .size(6.dp)
                             .clip(RoundedCornerShape(3.dp))
-                            .background(dotColor)
+                            .background(dotColor.copy(alpha = effectiveAlpha))
                     )
                     Text(
                         text = currentTime,
@@ -412,7 +644,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // Right: model + steps
+                // Right: model + steps + battery
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -433,6 +665,11 @@ class MainActivity : ComponentActivity() {
                             color = Color(0xFF64748B)
                         )
                     }
+                    Text(
+                        text = batteryDisplay,
+                        fontSize = 10.sp,
+                        color = if (battery <= 20) Color(0xFFF87171) else Color(0xFF64748B)
+                    )
                 }
             }
         }
@@ -470,7 +707,9 @@ class MainActivity : ComponentActivity() {
         
         Log.i(TAG, "Starting Bluetooth SPP Server...")
         serverState.value = ServerState.WAITING
-        bodyText.value = "Waiting for connection from Porta phone app..."
+        if (!isReconnecting.value) {
+            bodyText.value = "Waiting for connection from Porta phone app..."
+        }
         statusLabel.value = "Status: Listening (SPP)"
 
         scope.launch {
@@ -503,6 +742,9 @@ class MainActivity : ComponentActivity() {
             titleText.value = "Porta AI"
             bodyText.value = "Connected! Ready to stream responses."
             statusLabel.value = "Status: Connected"
+            // Reset reconnect counter on successful connection
+            reconnectAttempt.value = 0
+            isReconnecting.value = false
             Log.i(TAG, "Client connected: ${socket.remoteDevice.name ?: "Unknown"}")
         }
 
@@ -521,7 +763,20 @@ class MainActivity : ComponentActivity() {
                 Log.e(TAG, "Socket read error", e)
             } finally {
                 closeConnection()
-                // Restart listening
+                // Auto-reconnect with exponential backoff
+                withContext(Dispatchers.Main) {
+                    isReconnecting.value = true
+                    reconnectAttempt.value++
+                    val attempt = reconnectAttempt.value
+                    val delayMs = (1000L * (1L shl (attempt - 1).coerceAtMost(5)))
+                        .coerceAtMost(MAX_RECONNECT_DELAY_MS)
+                    Log.i(TAG, "Reconnecting attempt $attempt after ${delayMs}ms")
+                    bodyText.value = "Reconnecting... (attempt $attempt)"
+                }
+                delay(
+                    (1000L * (1L shl (reconnectAttempt.value - 1).coerceAtMost(5)))
+                        .coerceAtMost(MAX_RECONNECT_DELAY_MS)
+                )
                 withContext(Dispatchers.Main) {
                     startBluetoothServer()
                 }
@@ -536,11 +791,25 @@ class MainActivity : ComponentActivity() {
             
             when (action) {
                 "display_text" -> {
-                    wakeScreen()
+                    runOnUiThread { wakeScreen() }
                     serverState.value = ServerState.CONNECTED
                     val title = obj.get("title")?.asString ?: "Porta AI"
+                    val newBody = obj.get("body")?.asString ?: ""
+
+                    // Append to message history before updating bodyText
+                    if (newBody.isNotBlank()) {
+                        messageHistory.add(newBody)
+                        if (messageHistory.size > MAX_HISTORY) {
+                            messageHistory.removeAt(0)
+                        }
+                    }
+
+                    // Jump to latest (exit history browsing)
+                    browsingHistory.value = false
+                    historyIndex.value = -1
+
                     titleText.value = title
-                    bodyText.value = obj.get("body")?.asString ?: ""
+                    bodyText.value = newBody
                     
                     // Approval if title starts with standard emoji
                     isApprovalActive.value = title.startsWith("⚠️") || title.startsWith("❓")
@@ -556,7 +825,7 @@ class MainActivity : ComponentActivity() {
                     obj.get("padding")?.asInt?.let { hudPadding.value = it }
                 }
                 "show_thinking" -> {
-                    wakeScreen()
+                    runOnUiThread { wakeScreen() }
                     serverState.value = ServerState.THINKING
                     isApprovalActive.value = false
                     toolbarAgentRunning.value = true
@@ -568,6 +837,13 @@ class MainActivity : ComponentActivity() {
                     isApprovalActive.value = false
                     toolbarAgentRunning.value = false
                     toolbarToolAction.value = null
+                    // Don't wake on clear — let screen dim naturally
+                }
+                "set_power" -> {
+                    obj.get("screen_timeout")?.asLong?.let { screenTimeoutSeconds = it.coerceIn(10, 300) }
+                    obj.get("screen_sleep")?.asLong?.let { screenSleepSeconds = it.coerceIn(30, 600) }
+                    Log.d(TAG, "Power config: dim=${screenTimeoutSeconds}s sleep=${screenSleepSeconds}s")
+                    resetIdleTimer()
                 }
                 "update_toolbar" -> {
                     obj.get("model")?.asString?.let { toolbarModel.value = it }
@@ -605,7 +881,27 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        // Any gesture wakes from dimmed/sleep state
+        if (screenDimmed.value || screenAsleep.value) {
+            wakeScreen()
+            return true  // Consume gesture as wake trigger
+        }
+        // Normal interaction also resets idle timer
+        resetIdleTimer()
+
         if (keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_DPAD_CENTER) {
+            // Double-tap detection
+            val now = System.currentTimeMillis()
+            if (now - lastEnterTapTime < DOUBLE_TAP_THRESHOLD_MS) {
+                // Double-tap detected — trigger mic
+                Log.d(TAG, "Double-tap detected - triggering voice input on phone")
+                sendJsonToPhone("trigger_mic", emptyMap())
+                statusLabel.value = "Status: Listening (Mic Active)"
+                lastEnterTapTime = 0L
+                return true
+            }
+            lastEnterTapTime = now
+
             event?.startTracking()
             return true
         }
@@ -613,6 +909,16 @@ class MainActivity : ComponentActivity() {
             if (isApprovalActive.value) {
                 Log.d(TAG, "Swipe forward/down detected - sending approve_action")
                 sendJsonToPhone("approve_action", emptyMap())
+            } else if (browsingHistory.value) {
+                // Swipe down = forward in history (toward latest)
+                val idx = historyIndex.value
+                if (idx < messageHistory.size - 1) {
+                    historyIndex.value = idx + 1
+                } else {
+                    // Exit history browsing, back to live
+                    browsingHistory.value = false
+                    historyIndex.value = -1
+                }
             } else {
                 Log.d(TAG, "Swipe forward/down detected - scrolling down")
                 composeScrollState?.let { state ->
@@ -627,6 +933,18 @@ class MainActivity : ComponentActivity() {
             if (isApprovalActive.value) {
                 Log.d(TAG, "Swipe backward/up detected - sending reject_action")
                 sendJsonToPhone("reject_action", emptyMap())
+            } else if (messageHistory.isNotEmpty()) {
+                // Swipe up = back in history
+                if (!browsingHistory.value) {
+                    // Enter history browsing mode at the latest item
+                    browsingHistory.value = true
+                    historyIndex.value = messageHistory.size - 1
+                } else {
+                    val idx = historyIndex.value
+                    if (idx > 0) {
+                        historyIndex.value = idx - 1
+                    }
+                }
             } else {
                 Log.d(TAG, "Swipe backward/up detected - scrolling up")
                 composeScrollState?.let { state ->
@@ -683,6 +1001,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // Unregister battery receiver
+        batteryReceiver?.let {
+            try { unregisterReceiver(it) } catch (_: Exception) {}
+        }
+        batteryReceiver = null
         closeConnection()
         scope.cancel()
     }

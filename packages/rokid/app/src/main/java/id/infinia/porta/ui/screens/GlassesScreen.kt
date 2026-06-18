@@ -13,6 +13,7 @@ import androidx.compose.material.icons.automirrored.filled.BluetoothSearching
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -326,6 +327,77 @@ fun GlassesScreen(viewModel: BridgeViewModel, onBack: () -> Unit) {
                         onValueChange = { viewModel.setGlassesPadding(it.toInt()) },
                         valueRange = 8f..48f,
                         steps = 4, // 8, 16, 24, 32, 40, 48
+                        colors = SliderDefaults.colors(
+                            thumbColor = PortaPrimary,
+                            activeTrackColor = PortaPrimary
+                        )
+                    )
+                }
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        "Power Management",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = PortaPrimary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    var dimTimeout by remember { mutableFloatStateOf(30f) }
+                    var sleepTimeout by remember { mutableFloatStateOf(120f) }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Screen Dim Timeout", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Text(
+                            if (dimTimeout < 60f) "${dimTimeout.toInt()}s" else "${(dimTimeout / 60).toInt()}m ${(dimTimeout % 60).toInt()}s",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = PortaPrimary
+                        )
+                    }
+                    Slider(
+                        value = dimTimeout,
+                        onValueChange = { dimTimeout = it },
+                        onValueChangeFinished = { viewModel.sendGlassesPowerConfig(dimTimeout.toInt(), sleepTimeout.toInt()) },
+                        valueRange = 10f..120f,
+                        steps = 10,
+                        colors = SliderDefaults.colors(
+                            thumbColor = PortaPrimary,
+                            activeTrackColor = PortaPrimary
+                        )
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Screen Sleep Timeout", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Text(
+                            if (sleepTimeout < 60f) "${sleepTimeout.toInt()}s" else "${(sleepTimeout / 60).toInt()}m",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = PortaPrimary
+                        )
+                    }
+                    Slider(
+                        value = sleepTimeout,
+                        onValueChange = { sleepTimeout = it },
+                        onValueChangeFinished = { viewModel.sendGlassesPowerConfig(dimTimeout.toInt(), sleepTimeout.toInt()) },
+                        valueRange = 30f..600f,
+                        steps = 18,
                         colors = SliderDefaults.colors(
                             thumbColor = PortaPrimary,
                             activeTrackColor = PortaPrimary
